@@ -68,7 +68,7 @@ You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and W
 **1. Start lastcall:**
 
 ```sh
-git clone https://github.com/ne0x86/lastcall && cd lastcall
+git clone --branch v0.2.0 https://github.com/ne0x86/lastcall && cd lastcall
 docker compose up -d
 ```
 
@@ -100,6 +100,13 @@ does. Pause it from the dashboard at any time, or start an audit yourself from t
 
 The web UI listens only on this machine. To open it from elsewhere, put a reverse proxy with HTTPS in front of it
 and set `LASTCALL_TRUST_PROXY=1`.
+
+To upgrade, check out the new release and pull its images; your settings and history stay in Docker volumes:
+
+```sh
+git fetch --tags && git checkout v0.2.0      # the release you want
+docker compose pull && docker compose up -d
+```
 
 <details>
 <summary>Prefer the terminal? Everything works from the command line too.</summary>
@@ -167,7 +174,8 @@ docker compose --profile build --profile cli --profile test build
 docker compose --profile test run --rm it
 ```
 
-How it all fits together: [DESIGN.md](DESIGN.md).
+A release sets the version in three places that a test keeps in agreement: `__version__`, the image tag in
+`compose.yaml` and the tag that the quickstart clones. How it all fits together: [DESIGN.md](DESIGN.md).
 
 ## 📄 License
 
