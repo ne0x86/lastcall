@@ -21,7 +21,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Protocol
 
-from lastcall import git
+from lastcall import git, i18n
 from lastcall.engines.base import Engine, StepResult, StepSpec
 from lastcall.pack import Pack
 from lastcall.quota import Gate, Reading
@@ -274,38 +274,52 @@ def deliver(
         message = f"{title}\n\n{out.get('summary') or ''}\n\nFindings: {', '.join(pr['ids'])}"
         git.commit(work, message, forge.author)
         forge.push(work, branch)
-        checked = describe(kind, last)
-        footer = (
-            f"\n\n---\n<sub>lastcall: audit of `{report.sha}` with {report.engine}; findings {', '.join(pr['ids'])}; "
-            f"implemented with {model} ({effort}); {checked}; secret scan: clean.</sub>"
-        )
+        checked = describe(kind, last, report.language)
+        footer = "\n\n---\n<sub>" + pr_footer(report, pr["ids"], model, effort, checked) + "</sub>"
         record |= {"status": "opened", "url": forge.open_pull_request(branch, title, body + footer), "check": checked}
 
     decide = [v for v in report.verdicts if v["verdict"] == "valid" and v["decision"] == "issue"]
     if decide and not report.issue_url:
         body = issue_body(report, decide, by_id)
         if not scan(body):
-            noun = "decision" if len(decide) == 1 else "decisions"
-            title = f"lastcall: {len(decide)} {noun} for {project} (audit of {report.sha})"
-            report.issue_url = forge.open_issue(title, body)
+            report.issue_url = forge.open_issue(issue_title(report, len(decide)), body)
     return report
 
 
+def pr_footer(report: AuditReport, ids: Sequence[str], model: str, effort: str | None, checked: str) -> str:
+    return i18n.text(
+        report.language,
+        "pr.footer",
+        sha=report.sha,
+        engine=report.engine,
+        ids=", ".join(ids),
+        model=model,
+        effort=effort or "-",
+        checked=checked,
+    )
+
+
+def issue_title(report: AuditReport, count: int) -> str:
+    noun = i18n.text(report.language, "issue.one" if count == 1 else "issue.many")
+    project = report.repo.split("/")[-1]
+    return i18n.text(report.language, "issue.title", count=count, noun=noun, project=project, sha=report.sha)
+
+
 def issue_body(report: AuditReport, decide: Sequence[Mapping[str, Any]], by_id: Mapping[str, Any]) -> str:
-    lines = [
-        "Valid findings that lastcall did not turn into a pull request: they need your decision, or they are too "
-        "large for one. Close this issue when you have decided.",
-        "",
-    ]
+    def say(key: str) -> str:
+        return i18n.text(report.language, key)
+
+    lines = [say("issue.intro"), ""]
     for v in decide:
         f = by_id[v["id"]]
         lines += [
             f"- [ ] **{v['id']}** {f['title']} ({v['severity']}), `{f['file']}:{f['lines']}`",
             f"  {f['why']}",
-            f"  *Proposed fix:* {f['fix']}",
-            f"  *Why it needs you:* {v['reason']}",
+            f"  *{say('issue.fix')}:* {f['fix']}",
+            f"  *{say('issue.why')}:* {v['reason']}",
         ]
-    return "\n".join([*lines, "", f"<sub>lastcall: audit of `{report.sha}` with {report.engine}</sub>"])
+    footer = i18n.text(report.language, "issue.footer", sha=report.sha, engine=report.engine)
+    return "\n".join([*lines, "", f"<sub>{footer}</sub>"])
 
 
 def markdown(report: AuditReport) -> str:
