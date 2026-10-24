@@ -5,8 +5,11 @@ from __future__ import annotations
 import base64
 import io
 import os
+import shutil
+import stat
 import subprocess
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -45,6 +48,61 @@ def snapshot(repo: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
         archive.extractall(dest, filter="data")
+
+
+def remove(path: Path) -> None:
+    """Delete a working copy. git marks its objects read-only, and Windows refuses to delete those as they are."""
+
+    def writable_then_retry(func: Callable[..., object], target: str, _exc: BaseException) -> None:
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    if path.exists():
+        shutil.rmtree(path, onexc=writable_then_retry)
+
+
+def branch_from(clone_dir: Path, dest: Path, branch: str) -> None:
+    """A fresh working copy of a local clone, on a new branch: one per pull request."""
+    subprocess.run(["git", "clone", "-q", str(clone_dir), str(dest)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(dest), "switch", "-q", "-c", branch], check=True, capture_output=True)
+
+
+def stage_all(repo: Path) -> str:
+    """Stage every change, new files included, and return the diff a commit would carry."""
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    return subprocess.run(
+        ["git", "-C", str(repo), "diff", "--cached"], check=True, capture_output=True, text=True, errors="replace"
+    ).stdout
+
+
+def files(repo: Path) -> list[str]:
+    """Tracked and new files, without what .gitignore excludes: what a clean verification copy gets."""
+    out = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "-co", "--exclude-standard", "-z"], check=True, capture_output=True
+    ).stdout
+    return [f for f in out.decode(errors="replace").split("\0") if f]
+
+
+def commit(repo: Path, message: str, author: tuple[str, str]) -> str:
+    name, email = author
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", f"user.name={name}", "-c", f"user.email={email}", "commit", "-q", "-F", "-"],
+        input=message.encode(),
+        check=True,
+        capture_output=True,
+    )
+    return head(repo)
+
+
+def push(repo_dir: Path, repo: str, branch: str, token: str) -> None:
+    """Push HEAD to a new branch on GitHub. Only lastcall's side does this; agents never hold a token."""
+    url = f"https://github.com/{repo}.git"
+    subprocess.run(
+        ["git", "-C", str(repo_dir), "push", "-q", url, f"HEAD:refs/heads/{branch}"],
+        env=env(token),
+        check=True,
+        capture_output=True,
+    )
 
 
 def history(repo: Path, n: int = 40) -> str:
