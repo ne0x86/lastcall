@@ -503,22 +503,25 @@ and signals. A plugin is a normal Python package. Recipes and reviewers are data
 
 ## 17. Roadmap
 
-**v0.1: audit end to end with two engines and one forge**
+**v0.1: the command line, audit end to end with two engines and one forge** (done, October 2026)
 
-- Service, supervisor, runners and egress proxy; `docker compose up` and the setup wizard.
-- Engines `claude-code` and `codex`, with the CLI login in a volume; exact quota readers with event fallback.
+- Supervisor, runners and egress proxy. Published images for amd64 and arm64, and `docker compose`, with logins
+  through compose.
+- Engines `claude-code` and `codex`, with the CLI login in a volume; exact quota readers.
 - Spend policies `before-reset` and `manual`, learned rate, reserve and paid-usage stop.
-- GitHub App through the manifest flow, repository suggestions and add by URL.
-- Recipe `audit` with the built-in reviewers; pull requests, decisions issue and memory of previous findings.
-- Environments: Python and Node.js defaults, and `.lastcall.yml`.
-- Web UI (English and Spanish), CLI and Apprise notifications.
+- GitHub App through the manifest flow, and repository suggestions.
+- Recipe `audit` with the built-in reviewers: pull requests, decisions issue, and the memory of earlier findings.
+- Environments: the runner's Python and Node.js, with dependencies from requirements, pyproject and Dockerfiles.
+- The service (`lastcall serve`) and the CLI.
 - `scripted` engine and CI.
 
-**v0.2: more of what works**
+**v0.2: see what it finds, from anywhere**
 
-- Recipe `improve`; project reviewers in the repository; devcontainer environments.
-- Fan-out across accounts with one judge; merge-on-approve.
-- Watch after the merge and revert pull request.
+- Scanners in the context pack: gitleaks, osv-scanner, semgrep and hadolint.
+- Web UI in English and Spanish, with the setup wizard, the state of accounts and projects, the decisions, and
+  notifications through Apprise.
+- Recipe `improve`; project reviewers in the repository; `.lastcall.yml` and devcontainer environments; add by URL.
+- Fan-out across accounts with one judge; merge-on-approve; watch after the merge and revert pull request.
 
 **v0.3: wider reach**
 

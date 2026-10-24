@@ -1,0 +1,59 @@
+# Development: build every image from this checkout instead of pulling the published ones.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml --profile build --profile cli --profile test build
+#   docker compose -f compose.yaml -f compose.dev.yaml --profile test run --rm it   # sandbox integration tests
+#
+# Tip: COMPOSE_FILE=compose.yaml:compose.dev.yaml (';' on Windows) saves typing the two -f.
+services:
+  egress:
+    build: egress
+    image: lastcall-egress:dev
+
+  supervisor:
+    build:
+      context: .
+      target: supervisor
+    image: lastcall-supervisor:dev
+    environment:
+      LASTCALL_RUNNER_IMAGE: lastcall-runner:dev
+
+  runner:  # only built: the supervisor starts one container per step from this image
+    build: runner
+    image: lastcall-runner:dev
+    profiles: [build]
+
+  cli:
+    build:
+      context: .
+      target: service
+    image: lastcall-service:dev
+
+  lastcall:
+    build:
+      context: .
+      target: service
+    image: lastcall-service:dev
+
+  login-claude-code:
+    image: lastcall-runner:dev
+
+  login-codex:
+    image: lastcall-runner:dev
+
+  it:  # the integration tests play lastcall's part against the real supervisor, proxy and runner
+    build:
+      context: .
+      target: test
+    image: lastcall-it:dev
+    profiles: [test]
+    network_mode: none
+    environment:
+      LASTCALL_SOCKET: /run/lastcall/supervisor.sock
+      LASTCALL_DATA_ROOT: /data
+    volumes:
+      - data:/data
+      - run:/run/lastcall
+    command: ["python", "-m", "pytest", "-p", "no:cacheprovider", "-m", "integration", "tests/integration"]
+    depends_on:
+      supervisor:
+        condition: service_healthy
