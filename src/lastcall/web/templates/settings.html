@@ -6,6 +6,11 @@
 {% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
 {% if error %}<p class="card notice error" role="alert">{{ error }}</p>{% endif %}
 
+<section class="card" aria-labelledby="github-title">
+  <h2 id="github-title">{{ t("web.github.title") }}</h2>
+  <p>{% if github %}{{ t("web.github.ready", name=github.name, owner=github.owner) }} <a href="{{ github.install_url }}">{{ t("web.github.install") }}</a>{% else %}{{ t("web.start.github") }} <a href="{{ url_for('github_page') }}">{{ t("web.github.title") }}</a>{% endif %}</p>
+</section>
+
 <section class="card" aria-labelledby="notify-title">
   <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
   <p>{{ t("web.notify.intro") }} <a href="https://github.com/caronc/apprise/wiki">{{ t("web.notify.help") }}</a></p>

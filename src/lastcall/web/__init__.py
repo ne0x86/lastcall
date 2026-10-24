@@ -12,8 +12,10 @@ proxy's X-Forwarded-* headers, or list the public origin in LASTCALL_WEB_ORIGIN 
 from __future__ import annotations
 
 import hmac
+import json
 import math
 import mimetypes
+import secrets as tokens
 import threading
 import time
 from collections.abc import Callable, Sequence
@@ -26,9 +28,13 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, i18n, projects
-from lastcall.github import App, GitHub, GitHubError
+from lastcall import __version__, engines, i18n, projects
+from lastcall.accounts import Account
+from lastcall.github import PERMISSIONS, App, GitHub, GitHubError
+from lastcall.github_setup import LOGIN, Exchange, exchange_code, form_action, manifest
 from lastcall.notify import EVENTS, Notifier, describe
+from lastcall.quota import QuotaError, Reading
+from lastcall.sandbox import SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
 from lastcall.web import auth, dashboard, project_views
@@ -37,6 +43,8 @@ COOKIE = "lastcall_session"
 LANGUAGE_COOKIE = "lastcall_language"
 LANGUAGES = (("en", "English"), ("es", "Español"))
 DOCS = "https://github.com/ne0x86/lastcall#readme"
+TERMS = "https://github.com/ne0x86/lastcall/blob/main/DESIGN.md#3-provider-terms-and-responsible-use"
+STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
 CSP = (
     "default-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; form-action 'self'; "
@@ -68,9 +76,13 @@ def create_app(
     github: Callable[[], GitHub | None] | None = None,
     background: Callable[[Callable[[], None]], None] | None = None,
     notifier: Notifier | None = None,
+    read_quota: Callable[[Account], Reading] | None = None,
+    exchange: Exchange = exchange_code,
 ) -> Flask:
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
-    `background` runs slow work, such as reading the installed repositories, outside the request."""
+    `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
+    reads an account's quota in the sandbox; without it, the web UI cannot check a new account's login.
+    `exchange` turns GitHub's one-time code into the App's credentials."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -82,6 +94,8 @@ def create_app(
         setup_code.issue()
     reading = threading.Event()  # the installed repositories are being read from GitHub
     notifications = notifier or Notifier(secrets, store, log=log)
+    app_states: dict[str, float] = {}  # manifest forms shown, by state, with when they were shown
+    quota_errors: dict[str, str] = {}  # the last failed quota reading of each account
 
     def connect() -> GitHub | None:
         if github is not None:
@@ -148,6 +162,10 @@ def create_app(
     @app.after_request
     def headers(response: Response) -> Response:
         response.headers.update(HEADERS)
+        if g.get("github_form"):  # the page whose form sends the App's manifest to GitHub
+            response.headers["Content-Security-Policy"] = CSP.replace(
+                "form-action 'self'", "form-action 'self' https://github.com"
+            )
         if response.mimetype == "text/html":
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -331,7 +349,7 @@ def create_app(
         done = request.args.get("done", "")
         known = ("saved", "notify_added", "notify_removed", "notify_sent", "notify_failed")
         message = t(f"web.done.{done}") if done in known and not error else ""
-        return page("settings.html", status, v=view, done=message, error=error)
+        return page("settings.html", status, v=view, done=message, error=error, github=App.load(secrets))
 
     @app.post("/settings/notify/add")
     @signed_in
@@ -366,6 +384,151 @@ def create_app(
     def test_notification() -> ResponseReturnValue:
         sent = notifications.test()
         return redirect(url_for("settings_page", done="notify_sent" if sent else "notify_failed"))
+
+    @app.get("/github")
+    @signed_in
+    def github_page() -> ResponseReturnValue:
+        found = App.load(secrets)
+        done = t("web.done.app_created") if request.args.get("done") == "app_created" else ""
+        return page("github.html", app=found, done=done)
+
+    @app.get("/github/new")
+    @signed_in
+    def github_new() -> ResponseReturnValue:
+        owner, org = request.args.get("owner", "").strip(), request.args.get("org") == "1"
+        if not LOGIN.fullmatch(owner):
+            return page("github.html", 400, app=None, error=t("web.github.bad_owner"), owner=owner)
+        now = clock()
+        for state, shown in list(app_states.items()):
+            if now - shown > STATE_SECONDS:
+                del app_states[state]
+        state = tokens.token_urlsafe(16)
+        app_states[state] = now
+        values = manifest(owner, url_for("github_callback", _external=True))
+        permissions = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in PERMISSIONS.items())
+        g.github_form = True
+        return page(
+            "github.html",
+            app=None,
+            owner=owner,
+            org=org,
+            confirm=t("web.github.confirm", name=values["name"], owner=owner, permissions=permissions),
+            action=form_action(owner, org, state),
+            manifest=json.dumps(values),
+        )
+
+    @app.get("/github/callback")
+    @signed_in
+    def github_callback() -> ResponseReturnValue:
+        code, state = request.args.get("code", ""), request.args.get("state", "")
+        shown = app_states.pop(state, None)
+        if not code or shown is None or clock() - shown > STATE_SECONDS:
+            return page("github.html", 400, app=App.load(secrets), error=t("web.github.bad_state"))
+        try:
+            data = exchange(code)
+            created = App(
+                int(data["id"]),
+                str(data["slug"]),
+                str(data["name"]),
+                str(data["owner"]["login"]),
+                str(data["html_url"]),
+                str(data["pem"]),
+            )
+        except (GitHubError, KeyError, TypeError, ValueError, OSError) as e:
+            return page("github.html", 502, app=None, error=t("web.github.failed", error=e))
+        created.save(secrets)
+        log(f"Web UI: GitHub App {created.name} created")
+        return redirect(url_for("github_page", done="app_created"))
+
+    @app.get("/accounts")
+    @signed_in
+    def accounts_page() -> ResponseReturnValue:
+        return show_accounts()
+
+    def show_accounts(status: int = 200, error: str = "") -> ResponseReturnValue:
+        now = clock()
+        working = {r["account"]: r for r in store.running()}
+        cards = [
+            {
+                "row": row,
+                "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
+                "error": quota_errors.get(row.id, ""),
+                "login": f"ACCOUNT={row.id} docker compose run --rm login-{row.engine}",
+                "login_ps": f'$env:ACCOUNT="{row.id}"; docker compose run --rm login-{row.engine}',
+            }
+            for row in store.accounts()
+        ]
+        done = request.args.get("done", "")
+        known = ("saved", "account_added", "reading")
+        message = t(f"web.done.{done}") if done in known and not error else ""
+        return page(
+            "accounts.html",
+            status,
+            cards=cards,
+            engines=[(name, t(f"web.engine.{name}")) for name in sorted(engines.BUILTIN)],
+            writing=[(name, dashboard.language_name(g.lang, name).capitalize()) for name in project_views.LANGUAGES],
+            known=project_views.LANGUAGES,
+            can_read=read_quota is not None,
+            terms=TERMS,
+            done=message,
+            error=error,
+        )
+
+    @app.post("/accounts/add")
+    @signed_in
+    def add_account() -> ResponseReturnValue:
+        form = request.form
+        try:
+            account = Account(form.get("id", "").strip(), form.get("engine", ""))
+            reserve = float(form.get("reserve", "10"))
+        except ValueError:
+            return show_accounts(400, t("web.accounts.bad"))
+        language = form.get("language", "English")
+        if language not in project_views.LANGUAGES or not 0 <= reserve <= 90:
+            return problem(400, "web.error.form")
+        if any(a.id == account.id for a in store.accounts()):
+            return show_accounts(400, t("web.accounts.exists"))
+        store.add_account(account.id, account.engine, language, reserve)
+        log(f"Web UI: account {account.id} ({account.engine}) added")
+        return redirect(url_for("accounts_page", done="account_added"))
+
+    @app.post("/accounts/<account_id>")
+    @signed_in
+    def account_settings(account_id: str) -> ResponseReturnValue:
+        row = next((a for a in store.accounts() if a.id == account_id), None)
+        if row is None:
+            return problem(404, "web.error.not_found")
+        language = request.form.get("language", "")
+        try:
+            reserve = float(request.form.get("reserve", ""))
+        except ValueError:
+            return problem(400, "web.error.form")
+        if language not in {*project_views.LANGUAGES, row.language} or not 0 <= reserve <= 90:
+            return problem(400, "web.error.form")
+        enabled = request.form.get("enabled") == "1"
+        store.update_account(row.id, enabled=enabled, language=language, reserve_pct=reserve)
+        return redirect(url_for("accounts_page", done="saved"))
+
+    @app.post("/accounts/<account_id>/quota")
+    @signed_in
+    def read_account_quota(account_id: str) -> ResponseReturnValue:
+        row = next((a for a in store.accounts() if a.id == account_id), None)
+        if row is None:
+            return problem(404, "web.error.not_found")
+        if read_quota is None:
+            return show_accounts(503, t("web.accounts.no_sandbox"))
+        reader, account = read_quota, Account(row.id, row.engine)
+
+        def work() -> None:
+            try:
+                store.record_reading(reader(account))
+                quota_errors.pop(account.id, None)
+            except (QuotaError, SandboxError, OSError) as e:
+                quota_errors[account.id] = str(e)[:300]
+                log(f"{account.id}: no quota reading: {e}")
+
+        later(work)
+        return redirect(url_for("accounts_page", done="reading"))
 
     @app.get("/language/<code>")
     def set_language(code: str) -> ResponseReturnValue:

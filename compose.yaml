@@ -1,13 +1,9 @@
 # lastcall with the published images. Everything happens through Docker; nothing to install on the host.
 #
-#   docker compose up -d                                                    # egress proxy and supervisor
-#   docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <login>
-#   ACCOUNT=<id> docker compose run --rm login-claude-code                  # or login-codex
-#   docker compose run --rm cli account add <id> --engine claude-code
-#   docker compose run --rm cli project add <owner/name>
-#   docker compose run --rm cli audit <owner/name> --account <id> --report-only
-#   docker compose --profile service up -d                                  # the service and its web UI
-#   docker compose logs lastcall                                            # the web UI's setup code, once
+#   docker compose up -d                                     # the sandbox, and lastcall with its web UI on :8080
+#   docker compose logs lastcall                             # the web UI's setup code, the first time
+#   ACCOUNT=<id> docker compose run --rm login-claude-code   # an account's own login (or login-codex)
+#   docker compose run --rm cli <command>                    # the command line: status, audit, pause...
 #
 # Development builds every image from the checkout: add `-f compose.yaml -f compose.dev.yaml`.
 name: lastcall
@@ -76,9 +72,8 @@ services:
     <<: *lastcall
     profiles: [cli]
 
-  lastcall:  # the service. Opt-in: `docker compose --profile service up -d` lets it spend unused quota
+  lastcall:  # the service and its web UI. It spends nothing until you add accounts and projects in the web UI
     <<: *lastcall
-    profiles: [service]
     command: ["serve"]
     ports:  # the web UI, on this machine only; to reach it from elsewhere, put a reverse proxy with HTTPS in front
       - "127.0.0.1:${LASTCALL_PORT:-8080}:8080"

@@ -90,6 +90,7 @@ p { margin: 0 0 .5rem; }
 }
 
 .narrow { max-width: 32rem; margin: 1rem auto; }
+.readable { max-width: 44rem; }
 .grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
 .status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
 .status p, .status form { margin: 0; }
@@ -184,6 +185,15 @@ button {
   cursor: pointer;
 }
 button.secondary { color: var(--accent); background: transparent; }
+a.button {
+  display: inline-block;
+  padding: .6rem 1.1rem;
+  color: var(--on-accent);
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--accent);
+  border-radius: .5rem;
+}
 button.link {
   min-height: 0;
   padding: .25rem;

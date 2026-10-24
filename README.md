@@ -65,65 +65,58 @@ flowchart LR
 
 You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and Windows with Docker Desktop.
 
-**1. Start the sandbox** (egress proxy and supervisor):
+**1. Start lastcall:**
 
 ```sh
 git clone https://github.com/ne0x86/lastcall && cd lastcall
 docker compose up -d
 ```
 
-**2. Create your GitHub App.** It takes one click, and it stays private to you. Open http://127.0.0.1:8765 when the
-command says `Ready`, then install the App on the repositories lastcall may work on.
-
-```sh
-docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-github-login>
-```
-
-**3. Sign in your AI accounts** with their own official login. lastcall never sees it.
-
-```sh
-ACCOUNT=claude-max docker compose run --rm login-claude-code   # Claude: paste the code back
-ACCOUNT=chatgpt docker compose run --rm login-codex            # Codex: a device code
-```
-
-On PowerShell: `$env:ACCOUNT="claude-max"; docker compose run --rm login-claude-code`.
-
-**4. Tell lastcall about them** and check what is left this week:
-
-```sh
-docker compose run --rm cli account add claude-max --engine claude-code --language English
-docker compose run --rm cli quota claude-max
-```
-
-**5. Choose your projects.** lastcall suggests them and says why:
-
-```sh
-docker compose run --rm cli github repos
-docker compose run --rm cli project add <owner/name>
-```
-
-**6. Audit.** Read the findings first, open the pull requests, or let lastcall run on its own:
-
-```sh
-docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
-docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
-docker compose --profile service up -d                                               # 🤖 on its own from now on
-```
-
-**7. Open the dashboard** 🖥️ at http://127.0.0.1:8080. The first time, it asks for the setup code that the service
-writes to its log, and you choose your password:
+**2. Open http://127.0.0.1:8080** 🖥️ and choose your password. To show that the instance is yours, copy the setup
+code from the log:
 
 ```sh
 docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 ```
 
-The dashboard shows your accounts, the next burst, what is running and what waits for you, and it pauses or resumes
-the bursts. The **Projects** page suggests repositories and says why, adds one by its address, changes each
-project's priority and language, and starts an audit when you ask. In **Settings**, add where lastcall should
-notify you (an [Apprise URL](https://github.com/caronc/apprise/wiki) per destination) and choose what about. From
-the terminal, `docker compose run --rm cli status` shows the same, and `cli pause` and
-`cli resume` hold or release the bursts. The dashboard listens only on this machine; to open it from elsewhere, put
-a reverse proxy with HTTPS in front of it and set `LASTCALL_TRUST_PROXY=1`.
+**3. Follow the dashboard.** It walks you through the rest:
+
+- 🐙 **GitHub App.** One click creates it, private to you. Then install it on the repositories lastcall may work on.
+- 🤖 **Accounts.** Add your Claude or ChatGPT plan, and sign it in with its own official login. lastcall never
+  sees it:
+
+  ```sh
+  ACCOUNT=claude-max docker compose run --rm login-claude-code   # Claude: paste the code back
+  ACCOUNT=chatgpt docker compose run --rm login-codex            # Codex: a device code
+  ```
+
+  On PowerShell: `$env:ACCOUNT="claude-max"; docker compose run --rm login-claude-code`.
+- 📁 **Projects.** lastcall suggests your repositories and says why. Add the ones you want, or any by its address.
+- 🔔 **Settings.** Where lastcall should notify you: Telegram, ntfy, Discord, email and many more, each as an
+  [Apprise URL](https://github.com/caronc/apprise/wiki).
+
+That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
+does. Pause it from the dashboard at any time, or start an audit yourself from the Projects page.
+
+The web UI listens only on this machine. To open it from elsewhere, put a reverse proxy with HTTPS in front of it
+and set `LASTCALL_TRUST_PROXY=1`.
+
+<details>
+<summary>Prefer the terminal? Everything works from the command line too.</summary>
+
+```sh
+docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-github-login>
+docker compose run --rm cli account add claude-max --engine claude-code --language English
+docker compose run --rm cli quota claude-max
+docker compose run --rm cli github repos
+docker compose run --rm cli project add <owner/name>
+docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
+docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
+docker compose run --rm cli status                                                   # accounts, bursts, findings
+docker compose run --rm cli pause                                                    # or resume
+```
+
+</details>
 
 ## ⚖️ Provider terms and responsible use
 
@@ -143,8 +136,10 @@ advice.
   - Engines: Claude Code and Codex. Forge: GitHub.
   - Memory of findings, and the service that bursts on its own.
   - Scanners in the context pack: gitleaks, osv-scanner, semgrep and hadolint.
-- 🔜 **v0.2.**
-  - A web UI in English and Spanish, with notifications: Telegram, ntfy, Discord, email and more.
+- 🚧 **v0.2.**
+  - ✅ A web UI in English and Spanish: setup, dashboard, projects, accounts.
+  - ✅ Notifications: Telegram, ntfy, Discord, email and more.
+  - 🔜 The `improve` recipe, `.lastcall.yml` in your repositories, and fan-out across accounts.
 - 🔭 **v0.3.**
   - API keys and local models: opencode, OpenRouter, Ollama.
   - More recipes: issues, tests, dependencies.

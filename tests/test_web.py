@@ -1,13 +1,16 @@
+import html
 import re
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from flask.testing import FlaskClient
 
-from lastcall.github import GitHub
+from lastcall.accounts import Account
+from lastcall.github import App, GitHub
 from lastcall.notify import Notifier
-from lastcall.quota import HOUR, Reading, Window
+from lastcall.quota import HOUR, QuotaError, Reading, Window
 from lastcall.recipes.audit import AuditReport
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
@@ -42,7 +45,9 @@ class Clock:
 
 
 class Web:
-    def __init__(self, tmp_path: Path, origins: tuple[str, ...] = (), github: FakeGitHub | None = None) -> None:
+    def __init__(
+        self, tmp_path: Path, origins: tuple[str, ...] = (), github: FakeGitHub | None = None, **options: Any
+    ) -> None:
         self.clock = Clock()
         self.store = Store(tmp_path / "state" / "lastcall.db")
         self.secrets = SecretStore(tmp_path / "secrets")
@@ -59,6 +64,7 @@ class Web:
             github=(lambda: cast(GitHub, github)) if github else None,
             background=lambda work: work(),
             notifier=Notifier(self.secrets, self.store, send=self.outbox, log=self.logs.append),
+            **options,
         )
         self.client = self.app.test_client()
 
@@ -418,3 +424,102 @@ def test_notification_settings(web: Web) -> None:
     assert web.secrets.get_json("notify") == {"urls": []}
     wrong = web.client.post("/settings/notify/remove", data={"csrf": csrf, "index": "x"}, headers=SITE)
     assert wrong.status_code == 400
+
+
+def test_create_the_github_app_from_the_web(tmp_path: Path) -> None:
+    codes: list[str] = []
+
+    def exchange(code: str) -> dict[str, Any]:
+        codes.append(code)
+        return {
+            "id": 42,
+            "slug": "lastcall-acme",
+            "name": "lastcall-acme",
+            "owner": {"login": "acme"},
+            "html_url": "https://github.com/apps/lastcall-acme",
+            "pem": "-----BEGIN RSA PRIVATE KEY-----",
+        }
+
+    web = Web(tmp_path, exchange=exchange)
+    web.set_up()
+    assert '<a href="/github">GitHub App</a>' in web.client.get("/").get_data(as_text=True)
+    assert 'name="owner"' in web.client.get("/github").get_data(as_text=True)
+    assert web.client.get("/github/new?owner=not%20a%20login").status_code == 400
+
+    response = web.client.get("/github/new?owner=acme&org=1")
+    page = response.get_data(as_text=True)
+    assert "form-action 'self' https://github.com" in response.headers["Content-Security-Policy"]
+    action = re.search(r'<form method="post" action="(https://github\.com[^"]+)"', page)
+    assert action and action.group(1).startswith("https://github.com/organizations/acme/settings/apps/new?state=")
+    state = parse_qs(urlsplit(action.group(1).replace("&amp;", "&")).query)["state"][0]
+    assert "http://localhost/github/callback" in page  # where GitHub brings the owner back
+    assert "contents: write" in page
+    assert web.client.get("/").headers["Content-Security-Policy"] == CSP  # only that page may post to GitHub
+
+    assert web.client.get("/github/callback?code=abc&state=forged").status_code == 400
+    done = web.client.get(f"/github/callback?code=abc&state={state}")
+    assert done.headers["Location"] == "/github?done=app_created"
+    app = App.load(web.secrets)
+    assert app and (app.id, app.owner) == (42, "acme") and codes == ["abc"]
+    assert web.client.get(f"/github/callback?code=abc&state={state}").status_code == 400  # a state works once
+    page = web.client.get("/github?done=app_created").get_data(as_text=True)
+    assert 'href="https://github.com/apps/lastcall-acme/installations/new"' in page
+
+
+def test_accounts_page(tmp_path: Path) -> None:
+    readings: list[Account] = []
+
+    def read(account: Account) -> Reading:
+        readings.append(account)
+        if account.id == "broken":
+            raise QuotaError("not signed in")
+        return Reading(account.id, (Window("week", 12, NOW + 30 * HOUR, "expiring", 168.0),), False, "exact", NOW)
+
+    web = Web(tmp_path, read_quota=read)
+    web.set_up()
+    csrf = web.csrf()
+    assert '<a href="/accounts">Accounts</a>' in web.client.get("/").get_data(as_text=True)
+    header = web.client.get("/accounts").get_data(as_text=True)
+    assert 'hreflang="es">Español</a>' in header  # the page's own lists never replace the header's
+
+    def add(**form: str) -> tuple[int, str]:
+        response = web.client.post("/accounts/add", data={"csrf": csrf, **form}, headers=SITE)
+        return response.status_code, response.get_data(as_text=True)
+
+    status, page = add(id="Not Valid", engine="claude-code", language="English", reserve="10")
+    assert status == 400 and "lowercase letters, digits and dashes" in page
+    assert add(id="max", engine="nothing", language="English", reserve="10")[0] == 400
+    assert add(id="max", engine="claude-code", language="English", reserve="10")[0] == 302
+    assert add(id="max", engine="codex", language="English", reserve="10")[0] == 400  # the name is taken
+    assert add(id="broken", engine="codex", language="Spanish", reserve="20")[0] == 302
+    assert [(a.id, a.engine, a.language, a.reserve_pct) for a in web.store.accounts()] == [
+        ("broken", "codex", "Spanish", 20),
+        ("max", "claude-code", "English", 10),
+    ]
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert "ACCOUNT=max docker compose run --rm login-claude-code" in page
+    assert '$env:ACCOUNT="broken"; docker compose run --rm login-codex' in html.unescape(page)
+
+    for name in ("max", "broken"):
+        response = web.client.post(f"/accounts/{name}/quota", data={"csrf": csrf}, headers=SITE)
+        assert response.headers["Location"] == "/accounts?done=reading"
+    assert [a.id for a in readings] == ["max", "broken"]
+    assert web.store.last_reading("max") is not None
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert "The last reading failed: not signed in" in page and "12% used" in page
+
+    form = {"csrf": csrf, "language": "Spanish", "reserve": "15"}
+    assert web.client.post("/accounts/max", data=form, headers=SITE).status_code == 302
+    row = next(a for a in web.store.accounts() if a.id == "max")
+    assert (row.enabled, row.language, row.reserve_pct) == (False, "Spanish", 15)
+    assert web.client.post("/accounts/max", data={**form, "reserve": "95"}, headers=SITE).status_code == 400
+    assert web.client.post("/accounts/nobody", data=form, headers=SITE).status_code == 404
+
+
+def test_without_the_sandbox_the_quota_cannot_be_read(web: Web) -> None:
+    web.set_up()
+    web.store.add_account("max", "claude-code")
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert "Read the quota now" not in page
+    response = web.client.post("/accounts/max/quota", data={"csrf": web.csrf()}, headers=SITE)
+    assert response.status_code == 503 and "The sandbox is not available here" in response.get_data(as_text=True)
