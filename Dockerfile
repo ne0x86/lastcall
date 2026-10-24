@@ -1,6 +1,6 @@
 # lastcall images. Targets:
 #   supervisor  the only container with the Docker socket; starts one runner container per step
-#   service     lastcall itself, as user 1000 like the runners (for now: the command line)
+#   service     lastcall itself, as user 1000 like the runners: the service, its web UI and the command line
 #   test        the service image plus the integration tests
 FROM docker:28-cli AS docker-cli
 
@@ -17,6 +17,8 @@ FROM app AS service
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 lastcall && mkdir -m 700 /secrets /state && chown 1000:1000 /secrets /state
 USER 1000:1000
+ENV LASTCALL_WEB_HOST=0.0.0.0
+EXPOSE 8080
 ENTRYPOINT ["python", "-m", "lastcall"]
 
 FROM service AS test

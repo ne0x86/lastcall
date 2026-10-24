@@ -73,6 +73,7 @@ class Service:
 
     def tick(self) -> None:
         now = self.clock()
+        self.inst.store.set_setting("heartbeat", f"{now:.0f}")  # the web UI tells whether the service is alive
         if now - self.last_read >= READ_EVERY:
             self.read_quotas(now)
         if now - self.last_sync >= SYNC_EVERY:

@@ -1,6 +1,6 @@
 import string
 
-from lastcall.i18n import MESSAGES, code, text
+from lastcall.i18n import MESSAGES, code, number, plural, text
 from lastcall.recipes.audit import AuditReport, issue_body, issue_title, pr_footer
 from lastcall.verify import describe
 
@@ -37,3 +37,13 @@ def test_published_texts_follow_the_run_language() -> None:
     body = issue_body(report, [{"id": "B4", "severity": "low", "reason": "r"}], {"B4": finding})
     assert body.startswith("Hallazgos válidos que lastcall no ha convertido en pull request")
     assert "*Arreglo propuesto:* f" in body and "*Por qué necesita tu decisión:* r" in body
+
+
+def test_numbers_and_counts() -> None:
+    assert (number("en", 1.5), number("es", 1.5), number("es", 62.04)) == ("1.5", "1,5", "62")
+    assert plural("Spanish", "web.time.days", 1) == "1 día"
+    assert plural("Spanish", "web.time.days", 3) == "3 días"
+    keys = set(MESSAGES["en"])
+    for key in keys:  # a key with a count has both forms
+        if key.endswith(".one"):
+            assert key.removesuffix(".one") + ".other" in keys, key

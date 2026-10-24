@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ t("web.error.title") }}{% endblock %}
+{% block main %}
+<section class="card narrow">
+  <h1>{{ t("web.error.title") }}</h1>
+  <p role="alert">{{ message }}</p>
+  <p><a href="{{ url_for('home') }}">{{ t("web.error.back") }}</a></p>
+</section>
+{% endblock %}

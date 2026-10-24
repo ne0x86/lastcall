@@ -24,6 +24,10 @@ for you to decide. Nothing reaches your default branch without your approval. �
   time.
 - ⏳ **Picks its moment.** It spends only capacity that would otherwise expire. It keeps a reserve for you and stops
   before any paid usage.
+- 🖥️ **Shows you everything.** A dashboard in English and Spanish: what is left of every quota, the next burst, the
+  pull requests to review and the decisions waiting for you.
+
+<p align="center"><img src="docs/dashboard.png" width="760" alt="The lastcall dashboard: the quota left on two accounts, the next burst, and the pull requests and decisions waiting for review"></p>
 
 ## 🔁 How it works
 
@@ -104,8 +108,17 @@ docker compose run --rm cli deliver <run> --account claude-max                  
 docker compose --profile service up -d                                               # 🤖 on its own from now on
 ```
 
-`docker compose run --rm cli status` shows your accounts, the next burst and what happened to every finding.
-`cli pause` and `cli resume` hold or release the service.
+**7. Open the dashboard** 🖥️ at http://127.0.0.1:8080. The first time, it asks for the setup code that the service
+writes to its log, and you choose your password:
+
+```sh
+docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
+```
+
+The dashboard shows your accounts, the next burst, what is running and what waits for you, and it pauses or resumes
+the service. From the terminal, `docker compose run --rm cli status` shows the same, and `cli pause` and
+`cli resume` hold or release the service. The dashboard listens only on this machine; to open it from elsewhere, put
+a reverse proxy with HTTPS in front of it and set `LASTCALL_TRUST_PROXY=1`.
 
 ## ⚖️ Provider terms and responsible use
 

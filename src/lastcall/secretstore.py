@@ -33,6 +33,13 @@ class SecretStore:
             f.write(value)
         os.replace(tmp, path)  # a reader sees the old value or the new one, never half of it
 
+    def delete(self, name: str) -> bool:
+        path = self._path(name)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def get_json(self, name: str) -> dict[str, Any] | None:
         raw = self.get(name)
         if raw is None:

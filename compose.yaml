@@ -6,13 +6,15 @@
 #   docker compose run --rm cli account add <id> --engine claude-code
 #   docker compose run --rm cli project add <owner/name>
 #   docker compose run --rm cli audit <owner/name> --account <id> --report-only
-#   docker compose --profile service up -d                                  # the service: bursts on its own
+#   docker compose --profile service up -d                                  # the service and its web UI
+#   docker compose logs lastcall                                            # the web UI's setup code, once
 #
 # Development builds every image from the checkout: add `-f compose.yaml -f compose.dev.yaml`.
 name: lastcall
 
 x-lastcall: &lastcall
   image: ghcr.io/ne0x86/lastcall-service:${LASTCALL_VERSION:-latest}
+  init: true  # stops at once on `docker compose stop`
   networks: [outside]  # lastcall itself talks to GitHub; agents never do
   environment:
     LASTCALL_SOCKET: /run/lastcall/supervisor.sock
@@ -78,6 +80,12 @@ services:
     <<: *lastcall
     profiles: [service]
     command: ["serve"]
+    ports:  # the web UI, on this machine only; to reach it from elsewhere, put a reverse proxy with HTTPS in front
+      - "127.0.0.1:${LASTCALL_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      retries: 3
     restart: unless-stopped
 
   login-claude-code:  # ACCOUNT=<id> docker compose run --rm login-claude-code
