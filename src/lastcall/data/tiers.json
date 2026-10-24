@@ -1,0 +1,13 @@
+{
+  "_about": "Default model and effort for each tier, per engine (DESIGN.md, section 6). Catalogs change every month: update this file, not the code. An account can override any tier.",
+  "claude-code": {
+    "fast": ["haiku", "medium"],
+    "balanced": ["sonnet", "high"],
+    "deep": ["opus", "high"]
+  },
+  "codex": {
+    "fast": ["gpt-6-luna", "high"],
+    "balanced": ["gpt-6.1-sol", "high"],
+    "deep": ["gpt-6.1-sol", "high"]
+  }
+}

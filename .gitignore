@@ -13,8 +13,8 @@ dist/
 htmlcov/
 
 # lastcall runtime data, local configuration and secrets
-data/
-secrets/
+/data/
+/secrets/
 .env
 *.env
 
