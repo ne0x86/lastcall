@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ t("web.settings.title") }}{% endblock %}
+{% block main %}
+<h1>{{ t("web.settings.title") }}</h1>
+
+{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
+{% if error %}<p class="card notice error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="card" aria-labelledby="notify-title">
+  <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
+  <p>{{ t("web.notify.intro") }} <a href="https://github.com/caronc/apprise/wiki">{{ t("web.notify.help") }}</a></p>
+
+  <h3>{{ t("web.notify.destinations") }}</h3>
+  {%- if v.destinations %}
+  <ul class="plain">
+    {%- for index, text in v.destinations %}
+    <li class="row spread">
+      <code>{{ text }}</code>
+      <form method="post" action="{{ url_for('remove_destination') }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="index" value="{{ index }}">
+        <button class="secondary">{{ t("web.notify.remove") }}</button>
+      </form>
+    </li>
+    {%- endfor %}
+  </ul>
+  {%- else %}
+  <p class="muted">{{ t("web.notify.none") }}</p>
+  {%- endif %}
+  <form method="post" action="{{ url_for('add_destination') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="url">{{ t("web.notify.url") }}</label>
+    <div class="row">
+      <input id="url" name="url" type="text" placeholder="ntfy://ntfy.sh/your-topic" autocomplete="off" spellcheck="false" required>
+      <button>{{ t("web.notify.add") }}</button>
+    </div>
+  </form>
+
+  <form method="post" action="{{ url_for('notify_settings') }}" class="settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset>
+      <legend>{{ t("web.notify.events") }}</legend>
+      {%- for value, label, checked in v.events %}
+      <label class="check plain"><input type="checkbox" name="events" value="{{ value }}"{% if checked %} checked{% endif %}> {{ label }}</label>
+      {%- endfor %}
+    </fieldset>
+    <div>
+      <label for="notify-language">{{ t("web.notify.language") }}</label>
+      <select id="notify-language" name="language">
+        {%- for code, name, selected in v.languages %}<option value="{{ code }}"{% if selected %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+    </div>
+    <button class="secondary">{{ t("web.notify.save") }}</button>
+  </form>
+
+  {%- if v.destinations %}
+  <form method="post" action="{{ url_for('test_notification') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button>{{ t("web.notify.test") }}</button>
+  </form>
+  {%- endif %}
+</section>
+{% endblock %}

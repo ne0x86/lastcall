@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -6,9 +6,11 @@ import pytest
 
 from lastcall.accounts import Account
 from lastcall.github import GitHub
+from lastcall.notify import Notifier
 from lastcall.quota import HOUR, QuotaError, Reading, Window
 from lastcall.runs import Instance
 from lastcall.sandbox import Sandbox
+from lastcall.secretstore import SecretStore
 from lastcall.service import READ_EVERY, SYNC_EVERY, Service
 from lastcall.store import AccountRow, Store
 
@@ -152,3 +154,36 @@ def test_the_owners_orders_start_on_a_free_account_even_when_paused(store: Store
     started.pop()()
     assert audits == [("claude", "ne0x86/a (manual)"), ("chatgpt", "ne0x86/a (manual)")]
     assert store.orders() == []
+
+
+def test_problems_and_bursts_are_told_once(store: Store, tmp_path: Path) -> None:
+    told: list[str] = []
+
+    def send(urls: Sequence[str], title: str, body: str) -> bool:
+        told.append(title)
+        return True
+
+    notifier = Notifier(SecretStore(tmp_path / "secrets"), store, send=send, log=lambda m: None)
+    notifier.add_url("ntfy://ntfy.sh/lastcall-topic")
+    notifier.choose(["quota", "paid", "burst"], "en")
+    paid = Reading("chatgpt", reading("chatgpt", 30, 150).windows, True, "exact", NOW)
+    readings: dict[str, Reading | Exception] = {"claude": QuotaError("not signed in"), "chatgpt": paid}
+
+    def read(account: Account, now: float) -> Reading:
+        value = readings[account.id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    inst = Instance(cast(Sandbox, None), cast(GitHub, NoGitHub()), store, notifier)
+    svc = Service(inst, read=read, audit=lambda *a: None, start=lambda w: None, clock=Clock(), log=lambda m: None)
+    svc.read_quotas(NOW)
+    svc.read_quotas(NOW + READ_EVERY)
+    assert told == ["lastcall: paid usage on chatgpt", "lastcall: cannot read the quota of claude"]
+    readings["claude"] = reading("claude", 30, 20)  # signed in again, and the reset is close
+    svc.read_quotas(NOW + 2 * READ_EVERY)
+    assert told[-1] == "lastcall: claude starts a burst"
+    readings["claude"] = QuotaError("expired")
+    svc.read_quotas(NOW + 3 * READ_EVERY)
+    assert told[-1] == "lastcall: cannot read the quota of claude"  # a new problem is told again
+    assert len(told) == 4

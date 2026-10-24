@@ -33,6 +33,7 @@ from lastcall import engines, projects, web
 from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
 from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
+from lastcall.notify import Notifier
 from lastcall.quota import QuotaError, Reading, SpendPolicy, learned_rate, plan
 from lastcall.recipes.audit import AuditReport, StepRecord
 from lastcall.runs import Instance, Options, audit_repo, deliver_report, save
@@ -205,6 +206,11 @@ def secret_store() -> SecretStore:
     return SecretStore(Path(os.environ.get("LASTCALL_SECRETS", "/secrets")))
 
 
+def instance(client: GitHub, st: Store | None = None) -> Instance:
+    st = st or store()
+    return Instance(sandbox(), client, st, Notifier(secret_store(), st, log=log))
+
+
 def sandbox() -> Sandbox:
     return Sandbox(
         Path(os.environ.get("LASTCALL_SOCKET", "/run/lastcall/supervisor.sock")),
@@ -243,7 +249,7 @@ def audit(repo: str, acc: Account, max_prs: int, report_only: bool) -> int:
     client = github_client()
     if client is None:
         return 1
-    inst = Instance(sandbox(), client, store())
+    inst = instance(client)
     try:
         run_dir, report = audit_repo(
             inst, repo, acc, options(acc, repo, max_prs=max_prs, report_only=report_only), progress, log
@@ -259,7 +265,7 @@ def deliver_run(run: str, acc: Account, max_prs: int | None) -> int:
     client = github_client()
     if client is None:
         return 1
-    inst = Instance(sandbox(), client, store())
+    inst = instance(client)
     run_dir = inst.box.data_root / "runs" / run
     if not RUN_NAME.fullmatch(run) or not (run_dir / "report.json").exists():
         print(f"No report in run {run!r}.", file=sys.stderr)
@@ -279,7 +285,12 @@ def serve(host: str, port: int, scheduler: bool) -> int:
     st, secrets = store(), secret_store()
     origins = [o.strip() for o in os.environ.get("LASTCALL_WEB_ORIGIN", "").split(",") if o.strip()]
     app = web.create_app(
-        st, secrets, log=log, trust_proxy=os.environ.get("LASTCALL_TRUST_PROXY") == "1", origins=origins
+        st,
+        secrets,
+        log=log,
+        trust_proxy=os.environ.get("LASTCALL_TRUST_PROXY") == "1",
+        origins=origins,
+        notifier=Notifier(secrets, st, log=log),
     )
     if scheduler:
         threading.Thread(target=schedule, args=(st, secrets), name="service", daemon=True).start()
@@ -295,7 +306,7 @@ def schedule(st: Store, secrets: SecretStore) -> None:
     while (app := App.load(secrets)) is None:
         st.set_setting("heartbeat", f"{time.time():.0f}")
         time.sleep(60)
-    Service(Instance(sandbox(), GitHub(app), st), log=log).serve()
+    Service(instance(GitHub(app), st), log=log).serve()
 
 
 def import_reports(acc: Account) -> int:

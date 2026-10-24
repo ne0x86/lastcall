@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from lastcall import engines, git, pack, scanners
 from lastcall.accounts import Account, read_quota
@@ -31,6 +32,9 @@ from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.store import Store
 from lastcall.tiers import defaults
 
+if TYPE_CHECKING:
+    from lastcall.notify import Notifier
+
 VERIFY_TIMEOUT = 25 * 60.0
 Log = Callable[[str], None]
 
@@ -42,6 +46,7 @@ class Instance:
     box: Sandbox
     client: GitHub
     store: Store
+    notify: Notifier | None = None
 
 
 @dataclass(frozen=True)
@@ -155,10 +160,16 @@ def audit_repo(
         save(run_dir, report)
         if not opts.report_only and report.status == "ok" and report.prs:
             deliver_report(inst, run_dir, report, account, opts, None, on_step, log)
-    except Exception:
+    except Exception as e:
         inst.store.finish_run(run_dir.name, "failed", None)
+        if inst.notify:
+            inst.notify.notify("failed", repo=repo, reason=f"{type(e).__name__}: {e}"[:400])
         raise
     inst.store.finish_run(run_dir.name, report.status, report.sha)
+    if inst.notify and report.status in ("failed", "partial"):
+        error = next((s.error for s in reversed(report.steps) if s.error), None)
+        reason = report.stopped or error or f"run {run_dir.name}"
+        inst.notify.notify("failed", report.status, repo=repo, reason=reason[:400])
     return run_dir, report
 
 
@@ -176,6 +187,8 @@ def deliver_report(
     planned = report.prs[:max_prs] if max_prs else report.prs
     log(f"Delivering {len(planned)} pull request(s) for {report.repo} as {forge.author[0]}.")
     run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+    opened = {d.get("url") for d in report.deliveries if d.get("status") == "opened"}
+    issue = report.issue_url
     deliver(
         report=report,
         run_dir=run_dir,
@@ -190,4 +203,11 @@ def deliver_report(
     )
     inst.store.record_deliveries(run_dir.name, report)
     save(run_dir, report)
+    if inst.notify:
+        for d in report.deliveries:
+            if d.get("status") == "opened" and d.get("url") not in opened:
+                inst.notify.notify("pr", repo=report.repo, title=d["title"], url=d["url"])
+        if report.issue_url and report.issue_url != issue:
+            count = sum(v["verdict"] == "valid" and v["decision"] == "issue" for v in report.verdicts)
+            inst.notify.notify("decisions", repo=report.repo, count=count, url=report.issue_url)
     return report

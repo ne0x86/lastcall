@@ -6,6 +6,7 @@ import pytest
 from flask.testing import FlaskClient
 
 from lastcall.github import GitHub
+from lastcall.notify import Notifier
 from lastcall.quota import HOUR, Reading, Window
 from lastcall.recipes.audit import AuditReport
 from lastcall.secretstore import SecretStore
@@ -23,6 +24,7 @@ from lastcall.web.auth import (
     hash_password,
     start_session,
 )
+from test_notify import TELEGRAM, Outbox
 from test_projects import FakeGitHub
 
 NOW = 1_800_000_000.0
@@ -47,6 +49,7 @@ class Web:
         self.logs: list[str] = []
         if github is not None:
             github.app.save(self.secrets)
+        self.outbox = Outbox()
         self.app = create_app(
             self.store,
             self.secrets,
@@ -55,6 +58,7 @@ class Web:
             origins=origins,
             github=(lambda: cast(GitHub, github)) if github else None,
             background=lambda work: work(),
+            notifier=Notifier(self.secrets, self.store, send=self.outbox, log=self.logs.append),
         )
         self.client = self.app.test_client()
 
@@ -381,3 +385,36 @@ def test_suggestions_in_spanish(github_web: Web) -> None:
 def test_the_dashboard_sends_to_the_projects_page(github_web: Web) -> None:
     page = github_web.client.get("/").get_data(as_text=True)
     assert 'Choose your projects: lastcall suggests them and says why. <a href="/projects">Projects</a>' in page
+
+
+def test_notification_settings(web: Web) -> None:
+    web.set_up()
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "No destinations yet" in page and 'aria-current="page">Settings' in page
+    assert "Send a test notification" not in page
+    csrf = web.csrf()
+    bad = web.client.post("/settings/notify/add", data={"csrf": csrf, "url": "nonsense"}, headers=SITE)
+    assert bad.status_code == 400 and "Apprise does not understand that URL." in bad.get_data(as_text=True)
+    added = web.client.post(
+        "/settings/notify/add", data={"csrf": csrf, "url": TELEGRAM}, headers={**SITE, "Accept-Language": "es"}
+    )
+    assert added.headers["Location"] == "/settings?done=notify_added"
+    assert web.store.setting("notify_language") == "es"  # the first destination takes the page's language
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "Telegram: tgram://" in page and "AAHabcdefghijklmnopqrstuvwxyz" not in page
+
+    form = {"csrf": csrf, "events": ["pr", "burst"], "language": "es"}
+    assert web.client.post("/settings/notify", data=form, headers=SITE).status_code == 302
+    assert (web.store.setting("notify_events"), web.store.setting("notify_language")) == ("pr,burst", "es")
+    assert web.client.post("/settings/notify", data={**form, "language": "xx"}, headers=SITE).status_code == 400
+    sent = web.client.post("/settings/notify/test", data={"csrf": csrf}, headers=SITE)
+    assert sent.headers["Location"] == "/settings?done=notify_sent"
+    assert web.outbox.sent[-1][1] == "lastcall: notificación de prueba"
+    web.outbox.ok = False
+    failed = web.client.post("/settings/notify/test", data={"csrf": csrf}, headers=SITE)
+    assert failed.headers["Location"] == "/settings?done=notify_failed"
+
+    web.client.post("/settings/notify/remove", data={"csrf": csrf, "index": "0"}, headers=SITE)
+    assert web.secrets.get_json("notify") == {"urls": []}
+    wrong = web.client.post("/settings/notify/remove", data={"csrf": csrf, "index": "x"}, headers=SITE)
+    assert wrong.status_code == 400

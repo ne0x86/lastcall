@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from lastcall.i18n import LANGUAGES, MESSAGES, number, plural, text
+from lastcall.i18n import LANGUAGES, MESSAGES, number, percent, plural, span, text
 from lastcall.quota import Plan, SpendPolicy, learned_rate, plan
 from lastcall.service import DEFAULT_RATE, RATE_WINDOW
 from lastcall.store import AccountRow, Store
@@ -217,15 +217,6 @@ def run_view(run: dict[str, Any], lang: str, now: float) -> RunView:
 # formats
 
 
-def span(lang: str, seconds: float) -> str:
-    s = abs(seconds)
-    if s < HOUR:
-        return text(lang, "web.time.min", n=max(1, round(s / 60)))
-    if s < 48 * HOUR:
-        return text(lang, "web.time.hours", n=round(s / HOUR))
-    return plural(lang, "web.time.days", round(s / (24 * HOUR)))
-
-
 def ago(lang: str, when: float, now: float) -> str:
     if now - when < 60:
         return text(lang, "web.time.now")
@@ -238,10 +229,6 @@ def until(lang: str, when: float, now: float) -> str:
 
 def opened(lang: str, when: float, now: float) -> str:
     return text(lang, "web.review.opened", when=ago(lang, when, now))
-
-
-def percent(lang: str, value: float) -> str:
-    return text(lang, "web.percent", n=number(lang, value))
 
 
 def window_label(lang: str, name: str) -> str:
