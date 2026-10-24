@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from lastcall import engines, git, pack
+from lastcall import engines, git, pack, scanners
 from lastcall.accounts import Account, read_quota
 from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
 from lastcall.github import GitHub, GitHubForge
@@ -131,7 +131,9 @@ def audit_repo(
     inst.store.start_run(run_dir.name, repo, account.id, opts.trigger)
     try:
         git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
-        context = pack.build(run_dir / "clone", run_dir, repo)
+        log(f"Scanning {repo}: gitleaks, osv-scanner, semgrep and hadolint, in the sandbox.")
+        found = scanners.scan(inst.box, account.engine, run_dir / "clone")
+        context = pack.build(run_dir / "clone", run_dir, repo, extra=found)
         log(
             f"Auditing {repo} @ {context.sha} with {account.id} ({account.engine}): {context.files} files, "
             f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}"
