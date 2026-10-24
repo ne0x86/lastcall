@@ -4,7 +4,6 @@
 <h1>{{ t("web.settings.title") }}</h1>
 
 {% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
-{% if error %}<p class="card notice error" role="alert">{{ error }}</p>{% endif %}
 
 <section class="card" aria-labelledby="github-title">
   <h2 id="github-title">{{ t("web.github.title") }}</h2>
@@ -21,42 +20,172 @@
     {%- for index, text in v.destinations %}
     <li class="row spread">
       <code>{{ text }}</code>
-      <form method="post" action="{{ url_for('remove_destination') }}">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="index" value="{{ index }}">
-        <button class="secondary">{{ t("web.notify.remove") }}</button>
-      </form>
+      <span class="row">
+        <form method="post" action="{{ url_for('test_destination', index=index) }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="secondary">{{ t("web.dest.test") }}</button>
+        </form>
+        <form method="post" action="{{ url_for('remove_destination') }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="index" value="{{ index }}">
+          <button class="secondary">{{ t("web.notify.remove") }}</button>
+        </form>
+      </span>
     </li>
     {%- endfor %}
   </ul>
   {%- else %}
   <p class="muted">{{ t("web.notify.none") }}</p>
   {%- endif %}
-  <details class="howto"{% if not v.destinations %} open{% endif %}>
-    <summary>{{ t("web.notify.howto") }}</summary>
-    <p>{{ t("web.notify.howto.intro") }}</p>
-    <dl>
-      <dt>ntfy</dt>
-      <dd>{{ t("web.notify.howto.ntfy") }} <code>{{ t("web.notify.howto.ntfy.example") }}</code></dd>
-      <dt>Telegram</dt>
-      <dd>{{ t("web.notify.howto.telegram") }} <code>{{ t("web.notify.howto.telegram.example") }}</code></dd>
-      <dt>Discord</dt>
-      <dd>{{ t("web.notify.howto.discord") }} <code>https://discord.com/api/webhooks/…</code></dd>
-      <dt>Slack</dt>
-      <dd>{{ t("web.notify.howto.slack") }} <code>https://hooks.slack.com/services/…</code></dd>
-      <dt>Email</dt>
-      <dd>{{ t("web.notify.howto.email") }} <code>{{ t("web.notify.howto.email.example") }}</code></dd>
-    </dl>
-    <p>{{ t("web.notify.howto.others") }} <a href="{{ services }}">{{ t("web.notify.howto.list") }}</a>.</p>
-  </details>
-  <form method="post" action="{{ url_for('add_destination') }}">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label for="url">{{ t("web.notify.url") }}</label>
-    <div class="row">
-      <input id="url" name="url" type="text" placeholder="https://ntfy.sh/…" autocomplete="off" spellcheck="false" required>
-      <button>{{ t("web.notify.add") }}</button>
+
+  <h3 id="add">{{ t("web.dest.title") }}</h3>
+  {%- if error %}
+  <div class="card notice" role="alert">
+    <p class="error">{{ error }}</p>
+    {%- if details %}<pre><code>{{ details }}</code></pre>{% endif %}
+  </div>
+  {%- endif %}
+  {%- set val = v.filled %}
+  <div class="picker-wrap">
+    <label for="service">{{ t("web.dest.service") }}</label>
+    <select id="service" class="picker">
+      <option value="">{{ t("web.dest.choose") }}</option>
+      {%- for value, label in v.services %}
+      <option value="{{ value }}"{% if value == v.service %} selected{% endif %}>{{ label }}</option>
+      {%- endfor %}
+    </select>
+
+    <div class="dest dest-telegram">
+      <h4>Telegram</h4>
+      <ol class="steps">
+        <li>{{ t("web.dest.telegram.step1") }}</li>
+        <li>{{ t("web.dest.telegram.step2") }}</li>
+        <li>{{ t("web.dest.telegram.step3") }}</li>
+      </ol>
+      <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="service" value="telegram">
+        <div>
+          <label for="telegram-token">{{ t("web.dest.telegram.token") }}</label>
+          <input id="telegram-token" name="token" type="password" value="{{ val.token if v.service == 'telegram' else '' }}" autocomplete="off" spellcheck="false" required>
+        </div>
+        <button class="secondary" formaction="{{ url_for('find_telegram_chats') }}#add" formnovalidate>{{ t("web.dest.telegram.find") }}</button>
+        {%- if v.chats %}
+        <fieldset>
+          <legend>{{ tn("web.dest.telegram.found", v.chats|length) }}</legend>
+          {%- for id, name in v.chats %}
+          <label class="check plain"><input type="radio" name="chat" value="{{ id }}"{% if loop.first %} checked{% endif %}> {{ name }} · {{ id }}</label>
+          {%- endfor %}
+        </fieldset>
+        {%- else %}
+        <div>
+          <label for="telegram-chat">{{ t("web.dest.telegram.chat") }}</label>
+          <input id="telegram-chat" name="chat" type="text" value="{{ val.chat if v.service == 'telegram' else '' }}" autocomplete="off" spellcheck="false" aria-describedby="telegram-chat-hint">
+          <p id="telegram-chat-hint" class="hint muted">{{ t("web.dest.telegram.chat_hint") }}</p>
+        </div>
+        {%- endif %}
+        <button>{{ t("web.dest.save") }}</button>
+      </form>
     </div>
-  </form>
+
+    <div class="dest dest-ntfy">
+      <h4>ntfy</h4>
+      <ol class="steps">
+        <li>{{ t("web.dest.ntfy.step1") }}</li>
+        <li>{{ t("web.dest.ntfy.step2") }}</li>
+      </ol>
+      <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="service" value="ntfy">
+        <div>
+          <label for="ntfy-topic">{{ t("web.dest.ntfy.topic") }}</label>
+          <input id="ntfy-topic" name="topic" type="text" value="{{ v.topic }}" autocomplete="off" spellcheck="false" required>
+        </div>
+        <div>
+          <label for="ntfy-server">{{ t("web.dest.ntfy.server") }}</label>
+          <input id="ntfy-server" name="server" type="url" value="{{ val.server if v.service == 'ntfy' and val.server else 'https://ntfy.sh' }}" autocomplete="off" spellcheck="false" aria-describedby="ntfy-server-hint">
+          <p id="ntfy-server-hint" class="hint muted">{{ t("web.dest.ntfy.server_hint") }}</p>
+        </div>
+        <button>{{ t("web.dest.save") }}</button>
+      </form>
+    </div>
+
+    <div class="dest dest-discord">
+      <h4>Discord</h4>
+      <ol class="steps">
+        <li>{{ t("web.dest.discord.step1") }}</li>
+        <li>{{ t("web.dest.discord.step2") }}</li>
+      </ol>
+      <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="service" value="discord">
+        <div>
+          <label for="discord-webhook">{{ t("web.dest.webhook") }}</label>
+          <input id="discord-webhook" name="webhook" type="url" value="{{ val.webhook if v.service == 'discord' else '' }}" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false" required>
+        </div>
+        <button>{{ t("web.dest.save") }}</button>
+      </form>
+    </div>
+
+    <div class="dest dest-slack">
+      <h4>Slack</h4>
+      <ol class="steps">
+        <li>{{ t("web.dest.slack.step1") }}</li>
+        <li>{{ t("web.dest.slack.step2") }}</li>
+      </ol>
+      <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="service" value="slack">
+        <div>
+          <label for="slack-webhook">{{ t("web.dest.webhook") }}</label>
+          <input id="slack-webhook" name="webhook" type="url" value="{{ val.webhook if v.service == 'slack' else '' }}" placeholder="https://hooks.slack.com/services/…" autocomplete="off" spellcheck="false" required>
+        </div>
+        <button>{{ t("web.dest.save") }}</button>
+      </form>
+    </div>
+
+    <div class="dest dest-email">
+      <h4>{{ t("web.dest.email.name") }}</h4>
+      <ol class="steps">
+        <li>{{ t("web.dest.email.step1") }}</li>
+      </ol>
+      <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="service" value="email">
+        <div>
+          <label for="email-address">{{ t("web.dest.email.address") }}</label>
+          <input id="email-address" name="address" type="email" value="{{ val.address if v.service == 'email' else '' }}" autocomplete="off" required>
+        </div>
+        <div>
+          <label for="email-password">{{ t("web.dest.email.password") }}</label>
+          <input id="email-password" name="password" type="password" value="{{ val.password if v.service == 'email' else '' }}" autocomplete="off" required>
+        </div>
+        <div>
+          <label for="email-to">{{ t("web.dest.email.to") }}</label>
+          <input id="email-to" name="to" type="email" value="{{ val.to if v.service == 'email' else '' }}" autocomplete="off">
+        </div>
+        <div>
+          <label for="email-smtp">{{ t("web.dest.email.smtp") }}</label>
+          <input id="email-smtp" name="smtp" type="text" value="{{ val.smtp if v.service == 'email' else '' }}" placeholder="smtp.example.com" autocomplete="off" spellcheck="false">
+        </div>
+        <button>{{ t("web.dest.save") }}</button>
+      </form>
+    </div>
+
+    <div class="dest dest-apprise">
+      <h4>{{ t("web.dest.apprise.name") }}</h4>
+      <p>{{ t("web.dest.apprise.step1") }} <a href="{{ services }}">{{ t("web.dest.apprise.list") }}</a></p>
+      <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="service" value="apprise">
+        <div>
+          <label for="apprise-url">{{ t("web.dest.apprise.url") }}</label>
+          <input id="apprise-url" name="url" type="text" value="{{ val.url if v.service == 'apprise' else '' }}" autocomplete="off" spellcheck="false" required>
+        </div>
+        <button>{{ t("web.dest.save") }}</button>
+      </form>
+    </div>
+  </div>
 
   <form method="post" action="{{ url_for('notify_settings') }}" class="settings">
     <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -74,12 +203,5 @@
     </div>
     <button class="secondary">{{ t("web.notify.save") }}</button>
   </form>
-
-  {%- if v.destinations %}
-  <form method="post" action="{{ url_for('test_notification') }}">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button>{{ t("web.notify.test") }}</button>
-  </form>
-  {%- endif %}
 </section>
 {% endblock %}

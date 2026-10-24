@@ -1,4 +1,5 @@
 import html
+import json
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -27,13 +28,14 @@ from lastcall.web.auth import (
     hash_password,
     start_session,
 )
-from test_notify import TELEGRAM, Outbox
+from test_notify import Outbox
 from test_projects import FakeGitHub
 
 NOW = 1_800_000_000.0
 DAY = 86_400.0
 SITE = {"Origin": "http://localhost"}
 PASSWORD = "correct horse battery staple"
+BOT = "123456789:AAHabcdefghijklmnopqrstuvwxyz0123456"
 
 
 class Clock:
@@ -397,36 +399,80 @@ def test_notification_settings(web: Web) -> None:
     web.set_up()
     page = web.client.get("/settings").get_data(as_text=True)
     assert "No destinations yet" in page and 'aria-current="page">Settings' in page
-    assert "Send a test notification" not in page
-    assert '<details class="howto" open>' in page  # the help is open until there is a destination
-    assert "https://ntfy.sh/your-long-secret-topic" in page and "apprise#supported-notifications" in page
+    assert '<option value="telegram">Telegram</option>' in page and "Find my chat" in page
+    assert re.search(r'name="topic" type="text" value="lastcall-[a-z0-9]{16}"', page)  # a random ntfy topic, ready
     assert "apprise/wiki" not in page
     csrf = web.csrf()
-    bad = web.client.post("/settings/notify/add", data={"csrf": csrf, "url": "nonsense"}, headers=SITE)
-    assert bad.status_code == 400 and "Apprise does not understand that address." in bad.get_data(as_text=True)
-    added = web.client.post(
-        "/settings/notify/add", data={"csrf": csrf, "url": TELEGRAM}, headers={**SITE, "Accept-Language": "es"}
-    )
+
+    def add(**form: str) -> Any:
+        return web.client.post(
+            "/settings/notify/add", data={"csrf": csrf, **form}, headers={**SITE, "Accept-Language": "es"}
+        )
+
+    bad = add(service="telegram", token="12345", chat="1")
+    assert bad.status_code == 400 and "Telegram no acepta ese token" in bad.get_data(as_text=True)
+    assert add(service="telegram", token=BOT, chat="").status_code == 400  # the chat is needed
+    web.outbox.ok = False
+    failed = add(service="telegram", token=BOT, chat="12345")
+    page = failed.get_data(as_text=True)
+    assert failed.status_code == 400 and "no se ha guardado" in page
+    assert "There were not Telegram chat_ids to notify." in page  # what Apprise said
+    assert '<option value="telegram" selected>' in page and f'value="{BOT}"' in page  # the form keeps its values
+    assert web.secrets.get_json("notify") is None
+    web.outbox.ok = True
+    added = add(service="telegram", token=BOT, chat="12345")
     assert added.headers["Location"] == "/settings?done=notify_added"
+    assert web.outbox.sent[-1] == (
+        [f"tgram://{BOT}/12345"],
+        "lastcall: notificación de prueba",
+        web.outbox.sent[-1][2],
+    )
     assert web.store.setting("notify_language") == "es"  # the first destination takes the page's language
     page = web.client.get("/settings").get_data(as_text=True)
-    assert "Telegram: tgram://" in page and "AAHabcdefghijklmnopqrstuvwxyz" not in page
+    assert "Telegram: tgram://" in page and BOT not in page
 
     form = {"csrf": csrf, "events": ["pr", "burst"], "language": "es"}
     assert web.client.post("/settings/notify", data=form, headers=SITE).status_code == 302
     assert (web.store.setting("notify_events"), web.store.setting("notify_language")) == ("pr,burst", "es")
     assert web.client.post("/settings/notify", data={**form, "language": "xx"}, headers=SITE).status_code == 400
-    sent = web.client.post("/settings/notify/test", data={"csrf": csrf}, headers=SITE)
+    sent = web.client.post("/settings/notify/test/0", data={"csrf": csrf}, headers=SITE)
     assert sent.headers["Location"] == "/settings?done=notify_sent"
-    assert web.outbox.sent[-1][1] == "lastcall: notificación de prueba"
     web.outbox.ok = False
-    failed = web.client.post("/settings/notify/test", data={"csrf": csrf}, headers=SITE)
-    assert failed.headers["Location"] == "/settings?done=notify_failed"
+    failed = web.client.post("/settings/notify/test/0", data={"csrf": csrf}, headers=SITE)
+    assert failed.status_code == 502 and "There were not Telegram chat_ids" in failed.get_data(as_text=True)
+    assert web.client.post("/settings/notify/test/9", data={"csrf": csrf}, headers=SITE).status_code == 404
 
     web.client.post("/settings/notify/remove", data={"csrf": csrf, "index": "0"}, headers=SITE)
     assert web.secrets.get_json("notify") == {"urls": []}
     wrong = web.client.post("/settings/notify/remove", data={"csrf": csrf, "index": "x"}, headers=SITE)
     assert wrong.status_code == 400
+
+
+def test_find_the_telegram_chat(tmp_path: Path) -> None:
+    replies: list[tuple[int, bytes]] = []
+
+    def fetch(request: Any) -> tuple[int, dict[str, str], bytes]:
+        assert request.full_url == f"https://api.telegram.org/bot{BOT}/getUpdates"
+        status, body = replies.pop(0)
+        return status, {}, body
+
+    web = Web(tmp_path, fetch=fetch)
+    web.set_up()
+    csrf = web.csrf()
+
+    def find(token: str = BOT) -> str:
+        response = web.client.post("/settings/notify/telegram", data={"csrf": csrf, "token": token}, headers=SITE)
+        return response.get_data(as_text=True)
+
+    replies.append((401, b'{"ok": false}'))
+    assert "Telegram does not accept that token" in find()
+    replies.append((200, b'{"ok": true, "result": []}'))
+    assert "Your bot has no recent messages" in find()
+    update = {"update_id": 1, "message": {"chat": {"id": 987654321, "type": "private", "first_name": "Ana"}}}
+    replies.append((200, json.dumps({"ok": True, "result": [update]}).encode()))
+    page = find()
+    assert 'type="radio" name="chat" value="987654321" checked' in page and "Ana (private)" in page
+    assert '<option value="telegram" selected>' in page and f'value="{BOT}"' in page
 
 
 def test_create_the_github_app_from_the_web(tmp_path: Path) -> None:

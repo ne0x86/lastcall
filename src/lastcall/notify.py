@@ -8,6 +8,7 @@ lastcall.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -21,14 +22,17 @@ from lastcall.store import Store
 SECRET = "notify"
 EVENTS = ("pr", "decisions", "failed", "paid", "quota", "burst")
 DEFAULT_EVENTS = ("pr", "decisions", "failed", "paid", "quota")
-Send = Callable[[Sequence[str], str, str], bool]
+Send = Callable[[Sequence[str], str, str], tuple[bool, str]]  # (delivered everywhere, what Apprise said)
 
 
-def apprise_send(urls: Sequence[str], title: str, body: str) -> bool:
+def apprise_send(urls: Sequence[str], title: str, body: str) -> tuple[bool, str]:
     sender = apprise.Apprise()
     for url in urls:
         sender.add(url)
-    return bool(sender.notify(body=body, title=title))
+    capture = apprise.LogCapture(level=logging.WARNING, fmt="%(message)s")  # type: ignore[no-untyped-call]
+    with capture as said:
+        ok = bool(sender.notify(body=body, title=title))
+    return ok, said.getvalue().strip()
 
 
 def describe(url: str) -> str | None:
@@ -90,26 +94,28 @@ class Notifier:
         it. Never raises."""
         if event not in self.events():
             return False
-        return self._send(key or event, values)
+        return self._send(key or event, values)[0]
 
-    def test(self) -> bool:
-        return self._send("test", {})
+    def test(self, url: str | None = None) -> tuple[bool, str]:
+        """The test notification, to one destination (saved or not yet) or to all of them: whether it got through,
+        and what Apprise said when it did not."""
+        return self._send("test", {}, [url] if url else None)
 
-    def _send(self, key: str, values: dict[str, Any]) -> bool:
-        urls = self.urls()
+    def _send(self, key: str, values: dict[str, Any], urls: list[str] | None = None) -> tuple[bool, str]:
+        urls = urls or self.urls()
         if not urls:
-            return False
+            return False, ""
         lang = self.language()
         try:
             title = say(lang, f"notify.{key}.title", values)
             body = say(lang, f"notify.{key}.body", values)
-            ok = self.send(urls, title, body)
+            ok, said = self.send(urls, title, body)
         except Exception as e:  # a notification never stops lastcall
             self.log(f"notification {key}: {e}")
-            return False
+            return False, str(e)
         if not ok:
-            self.log(f"notification {key}: Apprise could not deliver it to every destination")
-        return ok
+            self.log(f"notification {key}: not delivered to every destination" + (f": {said}" if said else ""))
+        return ok, said
 
 
 def say(lang: str, key: str, values: dict[str, Any]) -> str:

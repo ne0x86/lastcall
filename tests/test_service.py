@@ -159,9 +159,9 @@ def test_the_owners_orders_start_on_a_free_account_even_when_paused(store: Store
 def test_problems_and_bursts_are_told_once(store: Store, tmp_path: Path) -> None:
     told: list[str] = []
 
-    def send(urls: Sequence[str], title: str, body: str) -> bool:
+    def send(urls: Sequence[str], title: str, body: str) -> tuple[bool, str]:
         told.append(title)
-        return True
+        return True, ""
 
     notifier = Notifier(SecretStore(tmp_path / "secrets"), store, send=send, log=lambda m: None)
     notifier.add_url("ntfy://ntfy.sh/lastcall-topic")

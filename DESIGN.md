@@ -483,7 +483,9 @@ resume, and a notice when the service stops writing its heartbeat) and the proje
 an audit on demand, adding a repository by its address, and the suggestions, which the service reads from GitHub
 every 6 hours and the owner can read again at any time. Pause holds the bursts only: an audit the owner orders
 still starts, on the free account with the most quota left before its reset. The settings page holds the
-notifications: the destinations (Apprise URLs, kept in the secret store and shown with their secrets hidden), the
+notifications: the destinations, chosen by service with only the fields that service needs (Telegram finds the
+owner's chat from the bot's recent messages) or as any Apprise URL, saved only when their test notification gets
+through, kept in the secret store and shown with their secrets hidden; the
 events (a pull request opens, decisions wait, an audit fails or stops early, an account has paid usage on or its
 quota cannot be read, and, if the owner wants, a burst starts) and their language. A problem is told once when it
 starts, and a notification that fails is logged and never stops lastcall. Behind a reverse

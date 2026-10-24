@@ -92,9 +92,10 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 
   On PowerShell: `$env:ACCOUNT="claude-max"; docker compose run --rm login-claude-code`.
 - 📁 **Projects.** lastcall suggests your repositories and says why. Add the ones you want, or any by its address.
-- 🔔 **Settings.** Where lastcall should notify you. Paste the address that the service gives you: ntfy, Telegram,
-  Discord, Slack, email and [many more](https://github.com/caronc/apprise#supported-notifications). The page shows
-  how for the common ones.
+- 🔔 **Settings.** Where lastcall should notify you. Choose the service and fill in what it asks for: Telegram (paste
+  your bot's token and lastcall finds your chat), ntfy, Discord, Slack or email, or any of the
+  [services that Apprise reaches](https://github.com/caronc/apprise#supported-notifications). lastcall saves a
+  destination only once its test notification gets through.
 
 That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
 does. Pause it from the dashboard at any time, or start an audit yourself from the Projects page.
