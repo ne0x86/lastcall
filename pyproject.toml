@@ -17,7 +17,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = []
+dependencies = [
+    "cryptography>=43",
+]
 
 [project.scripts]
 lastcall = "lastcall.cli:main"

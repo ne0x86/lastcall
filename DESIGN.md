@@ -282,12 +282,14 @@ Rules for engines:
 ### Onboarding
 
 1. **Connect GitHub.** The wizard creates the instance's GitHub App through the manifest flow. Permissions: contents,
-   pull requests and issues read and write, metadata read; no workflows and no administration. The owner installs
-   the App on all repositories or on selected ones. The installation is the security boundary: lastcall cannot touch
-   anything else.
+   pull requests and issues read and write, metadata read; no workflows, no administration and no webhooks (lastcall
+   asks GitHub when it needs to). The owner installs the App on all repositories or on selected ones. The
+   installation is the security boundary: lastcall cannot touch anything else. Until the web UI exists,
+   `lastcall github setup` serves the one-button page on the owner's machine.
 2. **Suggestions.** For each installed repository, lastcall works out whether it is worth activating and says why,
    without any model call: recent activity, tests or CI, supported language, size, open issues, not a fork and not
-   archived. Each suggestion shows the estimated cost of an audit and how many fit in the current leftover, for
+   archived. The points are in `lastcall.suggest`. Each suggestion shows the size of the code an audit reads. Once
+   audits are measured per account, it will also show their cost and how many fit in the current leftover, for
    example "about 1.5% of your week per audit; about 12 fit".
 3. **Add by URL.** If the App is not installed on that repository, lastcall links to the install page. A repository
    that the owner does not control can only run in report-only mode: lastcall never opens pull requests on other
@@ -447,8 +449,9 @@ gets a build or compile check instead, and the pull request says so.
 | Unexpected bills | Hard stop when paid usage is active, and a reserve per account. |
 | Takeover of the web UI | Login with lockout; signed `HttpOnly`, `Secure`, `SameSite=Strict` cookies; CSRF token and `Origin` check on every POST; strict CSP. |
 
-The secrets that lastcall does hold (the GitHub App key, API keys, notification URLs) are encrypted at rest with a
-key from the environment, or kept in an external secret store through a plugin.
+The secrets that lastcall does hold (the GitHub App key, API keys, notification URLs) live in their own volume, one
+file each, readable only by lastcall's user (mode 0600). Planned: encryption at rest with a key from the environment,
+or an external secret store through a plugin.
 
 ## 13. Web UI and CLI
 
