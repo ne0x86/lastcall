@@ -13,7 +13,7 @@
 
 <section class="card" aria-labelledby="notify-title">
   <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
-  <p>{{ t("web.notify.intro") }} <a href="https://github.com/caronc/apprise/wiki">{{ t("web.notify.help") }}</a></p>
+  <p>{{ t("web.notify.intro") }}</p>
 
   <h3>{{ t("web.notify.destinations") }}</h3>
   {%- if v.destinations %}
@@ -32,11 +32,28 @@
   {%- else %}
   <p class="muted">{{ t("web.notify.none") }}</p>
   {%- endif %}
+  <details class="howto"{% if not v.destinations %} open{% endif %}>
+    <summary>{{ t("web.notify.howto") }}</summary>
+    <p>{{ t("web.notify.howto.intro") }}</p>
+    <dl>
+      <dt>ntfy</dt>
+      <dd>{{ t("web.notify.howto.ntfy") }} <code>{{ t("web.notify.howto.ntfy.example") }}</code></dd>
+      <dt>Telegram</dt>
+      <dd>{{ t("web.notify.howto.telegram") }} <code>{{ t("web.notify.howto.telegram.example") }}</code></dd>
+      <dt>Discord</dt>
+      <dd>{{ t("web.notify.howto.discord") }} <code>https://discord.com/api/webhooks/…</code></dd>
+      <dt>Slack</dt>
+      <dd>{{ t("web.notify.howto.slack") }} <code>https://hooks.slack.com/services/…</code></dd>
+      <dt>Email</dt>
+      <dd>{{ t("web.notify.howto.email") }} <code>{{ t("web.notify.howto.email.example") }}</code></dd>
+    </dl>
+    <p>{{ t("web.notify.howto.others") }} <a href="{{ services }}">{{ t("web.notify.howto.list") }}</a>.</p>
+  </details>
   <form method="post" action="{{ url_for('add_destination') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label for="url">{{ t("web.notify.url") }}</label>
     <div class="row">
-      <input id="url" name="url" type="text" placeholder="ntfy://ntfy.sh/your-topic" autocomplete="off" spellcheck="false" required>
+      <input id="url" name="url" type="text" placeholder="https://ntfy.sh/…" autocomplete="off" spellcheck="false" required>
       <button>{{ t("web.notify.add") }}</button>
     </div>
   </form>

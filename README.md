@@ -92,8 +92,9 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 
   On PowerShell: `$env:ACCOUNT="claude-max"; docker compose run --rm login-claude-code`.
 - 📁 **Projects.** lastcall suggests your repositories and says why. Add the ones you want, or any by its address.
-- 🔔 **Settings.** Where lastcall should notify you: Telegram, ntfy, Discord, email and many more, each as an
-  [Apprise URL](https://github.com/caronc/apprise/wiki).
+- 🔔 **Settings.** Where lastcall should notify you. Paste the address that the service gives you: ntfy, Telegram,
+  Discord, Slack, email and [many more](https://github.com/caronc/apprise#supported-notifications). The page shows
+  how for the common ones.
 
 That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
 does. Pause it from the dashboard at any time, or start an audit yourself from the Projects page.
