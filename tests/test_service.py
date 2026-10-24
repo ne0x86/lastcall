@@ -42,6 +42,9 @@ class NoGitHub:
     def repository_token(self, repo: str) -> str:
         raise OSError("offline")
 
+    def installations(self) -> list[dict[str, Any]]:
+        raise OSError("offline")
+
 
 @pytest.fixture
 def store(tmp_path: Path) -> Store:
@@ -66,8 +69,8 @@ def service(
             raise value
         return value
 
-    def audit(repo: str, account: AccountRow) -> Any:
-        audits.append((account.id, repo))
+    def audit(repo: str, account: AccountRow, trigger: str) -> Any:
+        audits.append((account.id, repo) if trigger == "burst" else (account.id, f"{repo} ({trigger})"))
 
     inst = Instance(cast(Sandbox, None), cast(GitHub, NoGitHub()), store)
     return Service(inst, read=read, audit=audit, start=started.append, clock=clock, log=lambda m: None)
@@ -127,3 +130,25 @@ def test_quota_and_sync_have_their_own_rhythm(store: Store) -> None:
     assert len(store.readings("claude", 0)) == 2
     assert svc.last_sync == NOW + READ_EVERY - 1  # 899 s after the first sync is over 10 min: synced again
     assert READ_EVERY - 1 >= SYNC_EVERY
+
+
+def test_the_owners_orders_start_on_a_free_account_even_when_paused(store: Store) -> None:
+    audits: list[tuple[str, str]] = []
+    started: list[Callable[[], None]] = []
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 30, 150),  # far from the reset: no burst
+        "chatgpt": reading("chatgpt", 70, 150),
+    }
+    store.set_setting("paused", "yes")
+    store.add_order("audit", "ne0x86/a", None, NOW)
+    store.add_order("audit", "ne0x86/a", "chatgpt", NOW)
+    svc = service(store, readings, audits, Clock(), started)
+    svc.tick()
+    assert svc.running == {"claude": "ne0x86/a"}  # the account with the most left before its reset
+    assert len(store.orders()) == 1  # the same project waits for the first run to end
+    started.pop()()
+    svc.tick()
+    assert svc.running == {"chatgpt": "ne0x86/a"}
+    started.pop()()
+    assert audits == [("claude", "ne0x86/a (manual)"), ("chatgpt", "ne0x86/a (manual)")]
+    assert store.orders() == []

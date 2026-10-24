@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ t("web.projects.title") }}{% endblock %}
+{% block main %}
+<h1>{{ t("web.projects.title") }}</h1>
+
+{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
+{% if error %}
+<div class="card notice" role="alert">
+  <p class="error">{{ error }}</p>
+  {%- if install %}<p><a href="{{ install }}">{{ t("web.add.install") }}</a></p>{% endif %}
+</div>
+{% endif %}
+
+{% if v.projects %}
+<section aria-label="{{ t('web.projects.title') }}">
+  <div class="grid">
+    {%- for p in v.projects %}
+    {%- set n = loop.index %}
+    <article class="card project">
+      <h3><a href="{{ p.url }}">{{ p.repo }}</a> <span class="badge">{{ p.state }}</span></h3>
+      <ul class="facts">
+        {%- for line in p.summary %}<li>{{ line }}</li>{% endfor %}
+      </ul>
+      <form method="post" action="{{ url_for('project_settings', owner=p.owner, name=p.name) }}" class="settings" aria-label="{{ t('web.project.settings', repo=p.repo) }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="check"><input type="checkbox" name="active" value="1"{% if p.active %} checked{% endif %}> {{ t("web.project.active") }}</label>
+        <div class="fields">
+          <div>
+            <label for="weight-{{ n }}">{{ t("web.project.weight") }}</label>
+            <select id="weight-{{ n }}" name="weight">
+              {%- for o in p.weights %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div>
+            <label for="language-{{ n }}">{{ t("web.project.language") }}</label>
+            <select id="language-{{ n }}" name="language">
+              {%- for o in p.languages %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div>
+            <label for="max-prs-{{ n }}">{{ t("web.project.max_prs") }}</label>
+            <select id="max-prs-{{ n }}" name="max_prs">
+              {%- for o in p.max_prs %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+        <button class="secondary">{{ t("web.project.save") }}</button>
+      </form>
+      {%- if p.running %}
+      <p class="working">{{ t("web.project.running") }}</p>
+      {%- elif p.queued %}
+      <p class="working">{{ t("web.project.queued") }}</p>
+      {%- elif v.accounts|length > 1 %}
+      <form method="post" action="{{ url_for('audit_now', owner=p.owner, name=p.name) }}" class="audit">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="account-{{ n }}">{{ t("web.project.account") }}</label>
+        <div class="row">
+          <select id="account-{{ n }}" name="account">
+            {%- for o in v.accounts %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+          </select>
+          <button>{{ t("web.project.audit") }}</button>
+        </div>
+      </form>
+      {%- else %}
+      <p class="muted">{{ t("web.project.no_accounts") }}</p>
+      {%- endif %}
+    </article>
+    {%- endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="add-title">
+  <h2 id="add-title">{{ t("web.add.title") }}</h2>
+  <form method="post" action="{{ url_for('add_project') }}" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="repo">{{ t("web.add.label") }}</label>
+    <div class="row">
+      <input id="repo" name="repo" type="text" placeholder="owner/name" autocomplete="off" spellcheck="false" required>
+      <button>{{ t("web.add.submit") }}</button>
+    </div>
+  </form>
+  <h3>{{ t("web.suggest.title") }}</h3>
+  {%- if not v.github_ready %}
+  <p>{{ t("web.add.no_app") }} <a href="{{ url_for('home') }}">{{ t("web.nav.dashboard") }}</a></p>
+  {%- else %}
+  <p class="muted">{{ t("web.suggest.intro") }}</p>
+  <div class="status">
+    <p class="muted small">{{ v.refreshed }}</p>
+    <form method="post" action="{{ url_for('refresh_projects') }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="secondary">{{ t("web.suggest.refresh") }}</button>
+    </form>
+  </div>
+  {%- if v.all_added %}<p>{{ t("web.suggest.all_added") }}</p>{% endif %}
+  {%- macro suggestion(s) %}
+  <li>
+    <div class="row spread">
+      <p><a href="{{ s.url }}">{{ s.repo }}</a>{% if s.suggested %} <span class="badge">{{ t("web.suggest.suggested") }}</span>{% endif %}<br>
+        <span class="muted small">{{ s.score }}{% if s.details %} · {{ s.details }}{% endif %}</span></p>
+      <form method="post" action="{{ url_for('add_project') }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="repo" value="{{ s.repo }}">
+        <button class="secondary" aria-label="{{ t('web.suggest.add') }} {{ s.repo }}">{{ t("web.suggest.add") }}</button>
+      </form>
+    </div>
+    <p class="small">{{ s.reasons|join(" · ") }}</p>
+  </li>
+  {%- endmacro %}
+  {%- if v.suggested %}
+  <ul class="plain">{% for s in v.suggested %}{{ suggestion(s) }}{% endfor %}</ul>
+  {%- endif %}
+  {%- if v.others %}
+  <details>
+    <summary>{{ tn("web.suggest.others", v.others|length) }}</summary>
+    <ul class="plain">{% for s in v.others %}{{ suggestion(s) }}{% endfor %}</ul>
+  </details>
+  {%- endif %}
+  <p><a href="{{ v.install_url }}">{{ t("web.suggest.install") }}</a></p>
+  {%- endif %}
+</section>
+{% endblock %}

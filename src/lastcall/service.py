@@ -5,11 +5,14 @@ Every minute it ticks:
 - every 15 minutes it reads the quota of each enabled account (no model call), learns the burst rate from the
   account's readings and plans whether to burst;
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
+- every 6 hours it refreshes the suggestions for the installed repositories;
+- the owner's orders ("audit this project now", from the web UI) start on a free account;
 - each bursting account that is free starts a full audit of the project the ranking puts first. One run per account
   at a time, and never the same project by two accounts at once. Inside a run, a full 5-hour window makes the run
   wait for its reset; the reserve or any paid usage stops it.
 
-`lastcall pause` stops new runs (a running one finishes); `lastcall resume` lets them start again.
+`lastcall pause` stops new bursts (a running one finishes, and the owner's orders still start); `lastcall resume`
+lets them start again.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import traceback
 from collections.abc import Callable
 from typing import Any
 
+from lastcall import projects
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, SpendPolicy, learned_rate, plan
@@ -43,7 +47,7 @@ class Service:
         inst: Instance,
         *,
         read: Callable[[Account, float], Reading] | None = None,
-        audit: Callable[[str, AccountRow], Any] | None = None,
+        audit: Callable[[str, AccountRow, str], Any] | None = None,
         start: Callable[[Callable[[], None]], None] | None = None,
         clock: Callable[[], float] = time.time,
         log: Log = print,
@@ -54,7 +58,7 @@ class Service:
         self.start = start or (lambda work: threading.Thread(target=work, daemon=True).start())
         self.running: dict[str, str] = {}  # account id -> repository
         self.plans: dict[str, Plan] = {}
-        self.last_read = self.last_sync = 0.0
+        self.last_read = self.last_sync = self.last_refresh = 0.0
         self.lock = threading.Lock()
 
     # the loop
@@ -82,6 +86,13 @@ class Service:
                 sync(self.inst.store, self.inst.client, self.log)
             except (GitHubError, OSError) as e:
                 self.log(f"sync: {e}")
+        if now - self.last_refresh >= projects.REFRESH_EVERY:
+            self.last_refresh = now
+            try:
+                projects.refresh(self.inst.store, self.inst.client, now)
+            except (GitHubError, OSError) as e:
+                self.log(f"suggestions: {e}")
+        self.take_orders(now)
         if self.inst.store.setting("paused") == "yes":
             return
         for account in self.inst.store.accounts(enabled_only=True):
@@ -116,6 +127,27 @@ class Service:
             if reading.paid_usage:
                 self.log(f"{account.id}: paid usage is active on this account: lastcall spends nothing from it")
 
+    # the owner's orders
+
+    def take_orders(self, now: float) -> None:
+        """Start the owner's orders on a free account: the one the order names, or the one with the most quota left
+        before its reset. An order waits while its project is running or no account is free."""
+        store = self.inst.store
+        accounts = store.accounts(enabled_only=True)
+        for order in store.orders():
+            with self.lock:
+                busy, free = set(self.running.values()), [a for a in accounts if a.id not in self.running]
+            if order["repo"] in busy:
+                continue
+            if order["account"]:
+                free = [a for a in free if a.id == order["account"]]
+            if not free:
+                continue
+            account = max(free, key=lambda a: self.plans[a.id].leftover_pct if a.id in self.plans else -1.0)
+            store.start_order(order["id"], now)
+            self.log(f"{account.id}: audit of {order['repo']} ordered by the owner")
+            self.launch(account, order["repo"], "manual")
+
     # projects
 
     def pick(self, account: AccountRow, now: float) -> str | None:
@@ -146,13 +178,13 @@ class Service:
         except (GitHubError, OSError, ValueError):
             return None
 
-    def launch(self, account: AccountRow, repo: str) -> None:
+    def launch(self, account: AccountRow, repo: str, trigger: str = "burst") -> None:
         with self.lock:
             self.running[account.id] = repo
 
         def work() -> None:
             try:
-                self.audit(repo, account)
+                self.audit(repo, account, trigger)
             except Exception:
                 self.log(f"{account.id} on {repo}: {traceback.format_exc()}")
             finally:
@@ -161,14 +193,14 @@ class Service:
 
         self.start(work)
 
-    def _audit(self, repo: str, account: AccountRow) -> Any:
+    def _audit(self, repo: str, account: AccountRow, trigger: str) -> Any:
         project = self.inst.store.project(repo)
         opts = Options(
             language=(project.language if project and project.language else None) or account.language,
             max_prs=project.max_prs if project else 3,
             policy=SpendPolicy(reserve_pct=account.reserve_pct),
             wait=True,
-            trigger="burst",
+            trigger=trigger,
         )
         prefix = f"[{account.id} {repo}]"
         return audit_repo(

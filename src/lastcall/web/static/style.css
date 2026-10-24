@@ -68,6 +68,9 @@ header.top {
   text-decoration: none;
 }
 
+.pages { display: flex; gap: 1rem; order: 3; width: 100%; }
+.pages a { padding: .25rem 0; color: var(--muted); font-weight: 600; text-decoration: none; }
+.pages a[aria-current] { color: var(--text); box-shadow: inset 0 -3px 0 var(--accent); }
 .languages { display: flex; gap: .75rem; }
 .languages a[aria-current] { color: var(--text); font-weight: 700; text-decoration: none; }
 header form { margin: 0; }
@@ -141,6 +144,31 @@ input {
   border-radius: .5rem;
 }
 
+select {
+  min-height: 44px;
+  padding: .4rem .5rem;
+  color: var(--text);
+  font: inherit;
+  background: var(--surface);
+  border: 1px solid var(--muted);
+  border-radius: .5rem;
+}
+
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.row input, .row select { flex: 1 1 12rem; width: auto; }
+.spread { justify-content: space-between; flex-wrap: nowrap; }
+.spread p { margin: 0; overflow-wrap: anywhere; }
+.facts { margin: 0 0 .75rem; padding: 0; list-style: none; color: var(--muted); }
+.settings { display: grid; gap: .75rem; margin: 0 0 1rem; padding: .75rem 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.settings .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; }
+.settings select { width: 100%; }
+.settings button { justify-self: start; }
+.check { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
+.check input { width: 1.25rem; min-height: 1.25rem; margin: 0; }
+form + h3 { margin-top: 1.5rem; }
+details { margin: .5rem 0 1rem; }
+summary { padding: .5rem 0; color: var(--accent); cursor: pointer; }
+
 button {
   min-height: 44px;
   padding: .5rem 1.1rem;
@@ -192,6 +220,9 @@ tbody th { font-weight: 600; }
 footer.bottom { padding: 2rem 1rem; color: var(--muted); font-size: .9rem; text-align: center; }
 
 @media (min-width: 48rem) {
+  .pages { order: 0; width: auto; }
+  .brand { margin-right: 0; }
+  .languages { margin-left: auto; }
   main { padding: 1.5rem; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   tbody th { white-space: nowrap; }
