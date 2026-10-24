@@ -137,3 +137,28 @@ def test_nothing_found(tmp_path: Path) -> None:
     assert report.status == "ok"
     assert report.summary == "The reviewers found nothing worth a finding."
     assert len(report.steps) == 4
+
+
+def test_a_pending_finding_from_an_earlier_run_joins_a_pull_request(tmp_path: Path) -> None:
+    earlier = [{"id": "#7", "state": "pending", **finding("Retry without backoff")}]
+    script = dict(SCRIPT)
+    script["judge"] = ok(
+        {
+            "summary": "",
+            "verdicts": [verdict("B1", "pr")],
+            "prs": [{"title": "Guard and retry", "ids": ["B1", "#7", "#9"], "risk": "low", "plan": "p"}],
+        }
+    )
+    report = run_audit(
+        repo="ne0x86/demo",
+        pack=pack(tmp_path),
+        engine=Scripted(script),
+        tiers=TIERS,
+        run_step=runner,
+        check_quota=always,
+        earlier=earlier,
+    )
+    assert report.prs[0]["ids"] == ["B1", "#7"]  # unknown #9 dropped
+    joined = next(f for f in report.findings if f["id"] == "#7")
+    assert joined["reviewer"] == "earlier run"
+    assert joined["title"] == "Retry without backoff"

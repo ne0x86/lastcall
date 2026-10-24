@@ -149,7 +149,7 @@ def run_audit(
     language: str = "English",
     max_prs: int = 3,
     max_per_pr: int = 3,
-    previous: str = "None yet.",
+    earlier: Sequence[Mapping[str, Any]] = (),
     team: Sequence[Reviewer] | None = None,
     on_step: Callable[[StepRecord], None] | None = None,
 ) -> AuditReport:
@@ -177,7 +177,7 @@ def run_audit(
         max_prs=str(max_prs),
         max_per_pr=str(max_per_pr),
         language=language,
-        previous=previous,
+        previous=json.dumps(list(earlier), ensure_ascii=False, indent=1) if earlier else "[]",
         findings=json.dumps(report.findings, ensure_ascii=False, indent=1),
     )
     res = steps.run("judge", "deep", text, "verdicts", pack.src)
@@ -188,10 +188,14 @@ def run_audit(
         return report
     out = res.output or {}
     known = {f["id"] for f in report.findings}
+    pending = {str(e["id"]): e for e in earlier if e.get("state") == "pending"}
     report.summary = str(out.get("summary") or "")
     report.verdicts = [v for v in out.get("verdicts") or [] if v.get("id") in known]
     for pr in (out.get("prs") or [])[:max_prs]:
-        ids = [i for i in pr.get("ids") or [] if i in known][:max_per_pr]
+        ids = [i for i in pr.get("ids") or [] if i in known or i in pending][:max_per_pr]
+        for i in ids:  # a pending finding from an earlier run joins this report, for its pull request
+            if i in pending and all(f["id"] != i for f in report.findings):
+                report.findings.append({**pending[i], "reviewer": "earlier run"})
         if ids:
             report.prs.append({**pr, "ids": ids})
     return report

@@ -1,0 +1,291 @@
+"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings and pull requests.
+
+Findings keep their story across runs, so the judge never proposes again what the owner rejected:
+    pending    valid, meant for a pull request, not opened yet (it did not fit, or delivery failed)
+    in_pr      in an open lastcall pull request
+    merged     its pull request was merged
+    rejected   its pull request was closed without merging
+    decide     valid, waiting for the owner's decision in the run's issue
+    resolved   the owner closed that issue as done
+    dismissed  the owner closed that issue as not planned
+    discarded  the judge discarded it
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import time
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from lastcall.quota import Reading, Window
+
+if TYPE_CHECKING:
+    from lastcall.recipes.audit import AuditReport
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS accounts (
+    id TEXT PRIMARY KEY, engine TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+    language TEXT NOT NULL DEFAULT 'English', reserve_pct REAL NOT NULL DEFAULT 10, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS projects (
+    repo TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 0, weight REAL NOT NULL DEFAULT 1, language TEXT,
+    max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS readings (
+    account TEXT NOT NULL, taken_at REAL NOT NULL, windows TEXT NOT NULL, paid INTEGER NOT NULL,
+    fidelity TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS readings_by_account ON readings (account, taken_at);
+CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY, repo TEXT NOT NULL, account TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL,
+    sha TEXT, started REAL NOT NULL, ended REAL);
+CREATE TABLE IF NOT EXISTS findings (
+    id INTEGER PRIMARY KEY, repo TEXT NOT NULL, run TEXT NOT NULL, fid TEXT NOT NULL, data TEXT NOT NULL,
+    verdict TEXT, decision TEXT, severity TEXT, reason TEXT, status TEXT NOT NULL, pr_url TEXT, issue_url TEXT,
+    created REAL NOT NULL, UNIQUE (run, fid));
+CREATE TABLE IF NOT EXISTS prs (
+    url TEXT PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, run TEXT NOT NULL, title TEXT NOT NULL,
+    state TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL);
+"""
+REMEMBERED = ("pending", "in_pr", "merged", "rejected", "decide", "resolved", "dismissed")
+
+
+@dataclass(frozen=True)
+class AccountRow:
+    id: str
+    engine: str
+    enabled: bool
+    language: str
+    reserve_pct: float
+
+
+@dataclass(frozen=True)
+class ProjectRow:
+    repo: str
+    active: bool
+    weight: float
+    language: str | None
+    max_prs: int
+
+
+class Store:
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.executescript(SCHEMA)
+        self.lock = threading.Lock()
+
+    def x(self, sql: str, args: Sequence[Any] = ()) -> sqlite3.Cursor:
+        with self.lock:
+            return self.db.execute(sql, args)
+
+    def q(self, sql: str, args: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        with self.lock:
+            return [dict(r) for r in self.db.execute(sql, args).fetchall()]
+
+    # accounts and projects
+
+    def add_account(self, account_id: str, engine: str, language: str = "English", reserve_pct: float = 10) -> None:
+        self.x(
+            "INSERT INTO accounts (id, engine, language, reserve_pct, created) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (id) DO UPDATE SET engine = excluded.engine, language = excluded.language, "
+            "reserve_pct = excluded.reserve_pct",
+            (account_id, engine, language, reserve_pct, time.time()),
+        )
+
+    def accounts(self, enabled_only: bool = False) -> list[AccountRow]:
+        rows = self.q("SELECT * FROM accounts" + (" WHERE enabled = 1" if enabled_only else "") + " ORDER BY id")
+        return [AccountRow(r["id"], r["engine"], bool(r["enabled"]), r["language"], r["reserve_pct"]) for r in rows]
+
+    def add_project(self, repo: str, active: bool = True, weight: float = 1, language: str | None = None) -> None:
+        self.x(
+            "INSERT INTO projects (repo, active, weight, language, created) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (repo) DO UPDATE SET active = excluded.active, weight = excluded.weight, "
+            "language = excluded.language",
+            (repo, int(active), weight, language, time.time()),
+        )
+
+    def projects(self, active_only: bool = False) -> list[ProjectRow]:
+        where = " WHERE active = 1 AND weight > 0" if active_only else ""
+        rows = self.q("SELECT * FROM projects" + where + " ORDER BY repo")
+        return [ProjectRow(r["repo"], bool(r["active"]), r["weight"], r["language"], r["max_prs"]) for r in rows]
+
+    def project(self, repo: str) -> ProjectRow | None:
+        return next((p for p in self.projects() if p.repo.lower() == repo.lower()), None)
+
+    # quota readings
+
+    def record_reading(self, reading: Reading) -> None:
+        windows = json.dumps([w.__dict__ for w in reading.windows])
+        self.x(
+            "INSERT INTO readings VALUES (?, ?, ?, ?, ?)",
+            (reading.account, reading.taken_at, windows, int(reading.paid_usage), reading.fidelity),
+        )
+
+    def readings(self, account: str, since: float) -> list[Reading]:
+        rows = self.q(
+            "SELECT * FROM readings WHERE account = ? AND taken_at >= ? ORDER BY taken_at", (account, since)
+        )
+        return [
+            Reading(
+                r["account"],
+                tuple(Window(**w) for w in json.loads(r["windows"])),
+                bool(r["paid"]),
+                r["fidelity"],
+                r["taken_at"],
+            )
+            for r in rows
+        ]
+
+    # runs
+
+    def start_run(self, run: str, repo: str, account: str, trigger: str) -> None:
+        self.x(
+            "INSERT INTO runs (id, repo, account, trigger, status, started) VALUES (?, ?, ?, ?, 'running', ?)",
+            (run, repo, account, trigger, time.time()),
+        )
+
+    def finish_run(self, run: str, status: str, sha: str | None) -> None:
+        self.x("UPDATE runs SET status = ?, sha = ?, ended = ? WHERE id = ?", (status, sha, time.time(), run))
+
+    def interrupt_running(self) -> int:
+        """At start-up: runs that were going when lastcall stopped are not going any more."""
+        return self.x(
+            "UPDATE runs SET status = 'interrupted', ended = ? WHERE status = 'running'", (time.time(),)
+        ).rowcount
+
+    def last_run(self, repo: str, account: str) -> dict[str, Any] | None:
+        rows = self.q(
+            "SELECT * FROM runs WHERE repo = ? AND account = ? AND status IN ('ok', 'partial') "
+            "ORDER BY started DESC LIMIT 1",
+            (repo, account),
+        )
+        return rows[0] if rows else None
+
+    # findings and pull requests
+
+    def record_findings(self, run: str, report: AuditReport) -> None:
+        """The findings of a judged report, once. Later changes come from deliveries and from GitHub."""
+        verdicts = {v["id"]: v for v in report.verdicts}
+        for f in report.findings:
+            if f["id"].startswith("#"):  # a finding from an earlier run: it already has its row
+                continue
+            v = verdicts.get(f["id"]) or {}
+            if v.get("verdict") != "valid" or v.get("decision") == "discard":
+                status = "discarded"
+            else:
+                status = "decide" if v.get("decision") == "issue" else "pending"
+            self.x(
+                "INSERT INTO findings (repo, run, fid, data, verdict, decision, severity, reason, status, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (run, fid) DO NOTHING",
+                (
+                    report.repo,
+                    run,
+                    f["id"],
+                    json.dumps(f, ensure_ascii=False),
+                    v.get("verdict"),
+                    v.get("decision"),
+                    v.get("severity", f.get("severity")),
+                    v.get("reason"),
+                    status,
+                    time.time(),
+                ),
+            )
+
+    def record_deliveries(self, run: str, report: AuditReport) -> None:
+        """Opened pull requests and the decisions issue of a report."""
+        for d in report.deliveries:
+            if d.get("status") != "opened":
+                continue
+            url = str(d["url"])
+            number = int(url.rstrip("/").rsplit("/", 1)[1])
+            now = time.time()
+            self.x(
+                "INSERT INTO prs (url, repo, number, run, title, state, created, updated) "
+                "VALUES (?, ?, ?, ?, ?, 'open', ?, ?) ON CONFLICT (url) DO NOTHING",
+                (url, report.repo, number, run, d["title"], now, now),
+            )
+            for fid in d["ids"]:
+                self._finding(run, fid, "UPDATE findings SET status = 'in_pr', pr_url = ? WHERE {where}", (url,))
+        if report.issue_url:
+            self.x(
+                "UPDATE findings SET issue_url = ? WHERE run = ? AND status = 'decide' AND issue_url IS NULL",
+                (report.issue_url, run),
+            )
+
+    def _finding(self, run: str, fid: str, sql: str, args: tuple[Any, ...]) -> None:
+        if fid.startswith("#") and fid[1:].isdigit():
+            self.x(sql.format(where="id = ?"), (*args, int(fid[1:])))
+        else:
+            self.x(sql.format(where="run = ? AND fid = ?"), (*args, run, fid))
+
+    def earlier(self, repo: str) -> list[dict[str, Any]]:
+        """What the judge must know from earlier runs, with ids #<n> (no reviewer prefix starts with #). Pending
+        ones carry everything, because the judge may put them in a pull request of this run."""
+        rows = self.q(
+            f"SELECT * FROM findings WHERE repo = ? AND status IN ({','.join('?' * len(REMEMBERED))}) ORDER BY id",
+            (repo, *REMEMBERED),
+        )
+        out = []
+        for r in rows:
+            data = json.loads(r["data"])
+            if r["status"] == "pending":
+                out.append({**data, "id": f"#{r['id']}", "state": "pending"})
+            else:
+                keep = ("title", "file", "lines", "why")
+                out.append({"id": f"#{r['id']}", "state": r["status"], **{k: data.get(k) for k in keep}})
+        return out
+
+    def open_prs(self, repo: str | None = None) -> list[dict[str, Any]]:
+        if repo is None:
+            return self.q("SELECT * FROM prs WHERE state = 'open' ORDER BY created")
+        return self.q("SELECT * FROM prs WHERE state = 'open' AND repo = ? ORDER BY created", (repo,))
+
+    def pending_count(self, repo: str) -> int:
+        return int(
+            self.q("SELECT count(*) AS n FROM findings WHERE repo = ? AND status = 'pending'", (repo,))[0]["n"]
+        )
+
+    def close_pr(self, url: str, merged: bool) -> None:
+        state = "merged" if merged else "closed"
+        self.x("UPDATE prs SET state = ?, updated = ? WHERE url = ?", (state, time.time(), url))
+        self.x(
+            "UPDATE findings SET status = ? WHERE pr_url = ? AND status = 'in_pr'",
+            ("merged" if merged else "rejected", url),
+        )
+
+    def open_issues(self) -> list[str]:
+        return [
+            r["issue_url"]
+            for r in self.q(
+                "SELECT DISTINCT issue_url FROM findings WHERE status = 'decide' AND issue_url IS NOT NULL"
+            )
+        ]
+
+    def close_issue(self, url: str, completed: bool) -> int:
+        status = "resolved" if completed else "dismissed"
+        return self.x(
+            "UPDATE findings SET status = ? WHERE issue_url = ? AND status = 'decide'", (status, url)
+        ).rowcount
+
+    def statuses(self, repo: str) -> dict[str, int]:
+        rows = self.q("SELECT status, count(*) AS n FROM findings WHERE repo = ? GROUP BY status", (repo,))
+        return {r["status"]: int(r["n"]) for r in rows}
+
+
+def import_runs(store: Store, runs: Iterable[tuple[str, AuditReport, str]]) -> int:
+    """Bring reports written before the store existed into it: (run name, report, account)."""
+    count = 0
+    for run, report, account in runs:
+        if store.q("SELECT 1 FROM runs WHERE id = ?", (run,)):
+            continue
+        store.start_run(run, report.repo, account, "manual")
+        store.finish_run(run, report.status, report.sha)
+        store.record_findings(run, report)
+        store.record_deliveries(run, report)
+        count += 1
+    return count
