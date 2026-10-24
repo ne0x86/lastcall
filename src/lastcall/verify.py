@@ -15,6 +15,8 @@ import shlex
 from pathlib import Path
 from typing import Literal
 
+from lastcall.i18n import text
+
 Kind = Literal["tests", "build", "none"]
 PYTEST = "python -m pytest -q -p no:cacheprovider"
 NPM_DEFAULT_TEST = "no test specified"
@@ -100,10 +102,6 @@ def summary_line(output: str) -> str:
     return next((line for line in reversed(lines) if SUMMARY.search(line)), lines[-1] if lines else "")
 
 
-def describe(kind: Kind, last_line: str) -> str:
-    """One line for the pull request: what the clean-container check proved."""
-    if kind == "tests":
-        return f"tests run again in a clean container: `{last_line or 'passed'}`"
-    if kind == "build":
-        return "the project has no tests: a clean container only checked that the code compiles"
-    return "no automatic verification was possible"
+def describe(kind: Kind, last_line: str, language: str = "English") -> str:
+    """One line for the pull request, in the run's language: what the clean-container check proved."""
+    return text(language, f"check.{kind}", line=last_line or "passed")
