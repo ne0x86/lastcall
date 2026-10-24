@@ -30,6 +30,8 @@ jobs:
   sandbox:
     name: Sandbox
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: compose.yaml:compose.dev.yaml  # build from this checkout, not the published images
     steps:
       - uses: actions/checkout@v7
       - run: docker compose --profile build --profile test build
