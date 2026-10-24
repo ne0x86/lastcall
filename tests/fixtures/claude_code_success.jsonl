@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","model":"claude-sonnet","tools":["Read","Grep","Glob"]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Reading the code."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/work/app.py"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"..."}]}}
+Warning: a line that is not JSON
+{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":12},"seven_day":{"utilization":40}}}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Grep","input":{"pattern":"retry"}},{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/work/db.py"}}]}}
+{"type":"result","subtype":"success","is_error":false,"num_turns":4,"total_cost_usd":0.42,"result":"","structured_output":{"summary":"One bug.","findings":[{"title":"Retry without backoff","file":"db.py","lines":"10-14"}]},"modelUsage":{"claude-sonnet":{"inputTokens":1200,"outputTokens":300,"cacheReadInputTokens":90000}}}

@@ -157,9 +157,9 @@ A quota reading is a list of windows, and each window has a role:
 ```python
 @dataclass
 class Window:
-    name: str                              # "5h", "week", "day", "month"
+    name: str  # "5h", "week", "day", "month"
     used_pct: float
-    resets_at: float | None                # epoch seconds
+    resets_at: float | None  # epoch seconds
     role: Literal["expiring", "throttle"]
 ```
 
@@ -238,12 +238,13 @@ therefore fan out across accounts, and one judge merges the results.
 ```python
 class Engine(Protocol):
     name: str
-    capabilities: frozenset[str]     # "json_schema", "system_prompt_file", "effort", "resume"
-    egress: tuple[str, ...]          # domains the CLI needs
+    capabilities: frozenset[str]  # "json_schema", "system_prompt_file", "effort"
+    egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist
+    home: str  # where the CLI keeps its login; the account's credential volume is mounted here
 
-    def invocation(self, step: StepSpec) -> Invocation: ...   # argv, env, stdin
-    def parse(self, line: str) -> Event | None: ...           # tool use, usage, cost, rate limit, result, error
-    def result(self, events: Sequence[Event]) -> StepResult: ...
+    def invocation(self, step: StepSpec) -> Invocation: ...  # argv, stdin, env, files and mounts
+    def parse(self, line: str) -> Event | None: ...  # tool use, message, usage, rate limit, result, error
+    def result(self, step: StepSpec, events: Sequence[Event]) -> StepResult: ...
 ```
 
 Rules for engines:
@@ -510,4 +511,7 @@ and signals. A plugin is a normal Python package. Recipes and reviewers are data
    breakage early?
 4. Windows and macOS hosts: the runner sandbox needs testing on Docker Desktop.
 5. Tier names and the default model table: who maintains them, and how often?
-6. Packaging: Python version and dependency policy. The prototype used only the standard library.
+6. ~~Packaging: Python version and dependency policy.~~ Decided in October 2026: Python 3.12 or later. A runtime
+   dependency comes in only when a feature needs it, and its pull request says why. Few and well known: PyYAML for
+   recipes, Apprise for notifications and cryptography for secrets are expected. Development uses uv; CI runs ruff,
+   mypy (strict) and pytest on the oldest and the newest supported Python.
