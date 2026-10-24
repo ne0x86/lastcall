@@ -25,11 +25,9 @@
   <h2 id="start-title">{{ t("web.start.title") }}</h2>
   <ol class="steps">
     {%- for step in v.start %}
-    <li><p>{{ step.text }}{% if step.link %} <a href="{{ url_for(step.link) }}">{{ t("web.nav.projects") }}</a>{% endif %}</p>
-      {%- if step.command %}<pre><code>{{ step.command }}</code></pre>{% endif %}</li>
+    <li><p>{{ step.text }} <a href="{{ url_for(step.link) }}">{{ step.label }}</a></p></li>
     {%- endfor %}
   </ol>
-  <p><a href="{{ quickstart }}">{{ t("web.start.more") }}</a></p>
 </section>
 {% endif %}
 

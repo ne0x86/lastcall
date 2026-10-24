@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ t("web.nav.accounts") }}{% endblock %}
+{% block main %}
+<h1>{{ t("web.nav.accounts") }}</h1>
+
+{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
+{% if error %}<p class="card notice error" role="alert">{{ error }}</p>{% endif %}
+
+{% if cards %}
+<div class="grid">
+  {%- for c in cards %}
+  {%- set n = loop.index %}
+  {%- set a = c.view %}
+  <article class="card">
+    <h2>{{ a.id }} <span class="badge">{{ a.engine }}</span></h2>
+    {%- for w in a.windows %}
+    <div class="window">
+      <p class="window-label"><span id="window-{{ n }}-{{ loop.index }}">{{ w.label }}</span> <span>{{ w.used_text }}{% if w.resets %} · {{ w.resets }}{% endif %}</span></p>
+      <meter aria-labelledby="window-{{ n }}-{{ loop.index }}" min="0" max="100" low="70" high="90" optimum="0" value="{{ w.used }}">{{ w.used_text }}</meter>
+    </div>
+    {%- endfor %}
+    {%- if a.paid %}<p class="error">{{ t("web.accounts.paid") }}</p>{% endif %}
+    {%- if a.plan %}<p>{{ a.plan }}</p>{% endif %}
+    {%- if a.working %}<p class="working">{{ a.working }}</p>{% endif %}
+    <p class="muted small">{{ a.read }}</p>
+    {%- if c.error %}<p class="error small">{{ t("web.accounts.error", error=c.error) }}</p>{% endif %}
+    {%- if can_read %}
+    <form method="post" action="{{ url_for('read_account_quota', account_id=a.id) }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="secondary">{{ t("web.accounts.check") }}</button>
+    </form>
+    {%- endif %}
+    <details>
+      <summary>{{ t("web.accounts.login_title") }}</summary>
+      <p class="small">{{ t("web.accounts.login") }}</p>
+      <pre><code>{{ c.login }}</code></pre>
+      <p class="small">{{ t("web.accounts.login_ps") }}</p>
+      <pre><code>{{ c.login_ps }}</code></pre>
+    </details>
+    <form method="post" action="{{ url_for('account_settings', account_id=a.id) }}" class="settings">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="check"><input type="checkbox" name="enabled" value="1"{% if c.row.enabled %} checked{% endif %}> {{ t("web.accounts.enabled") }}</label>
+      <div class="fields">
+        <div>
+          <label for="language-{{ n }}">{{ t("web.accounts.language_label") }}</label>
+          <select id="language-{{ n }}" name="language">
+            {%- for name, label in writing %}<option value="{{ name }}"{% if name == c.row.language %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            {%- if c.row.language not in known %}<option value="{{ c.row.language }}" selected>{{ c.row.language }}</option>{% endif %}
+          </select>
+        </div>
+        <div>
+          <label for="reserve-{{ n }}">{{ t("web.accounts.reserve_label") }}</label>
+          <input id="reserve-{{ n }}" name="reserve" type="number" min="0" max="90" step="1" value="{{ '%g'|format(c.row.reserve_pct) }}" required>
+        </div>
+      </div>
+      <button class="secondary">{{ t("web.accounts.save") }}</button>
+    </form>
+  </article>
+  {%- endfor %}
+</div>
+{% else %}
+<p class="muted">{{ t("web.accounts.none") }}</p>
+{% endif %}
+
+<section class="card" aria-labelledby="add-title">
+  <h2 id="add-title">{{ t("web.accounts.add") }}</h2>
+  <p class="small">{{ t("web.accounts.terms") }} <a href="{{ terms }}">{{ t("web.accounts.terms_link") }}</a></p>
+  <form method="post" action="{{ url_for('add_account') }}" class="settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="fields">
+      <div>
+        <label for="id">{{ t("web.accounts.id") }}</label>
+        <input id="id" name="id" type="text" pattern="[a-z0-9][a-z0-9-]{0,39}" placeholder="claude-max" autocomplete="off" spellcheck="false" required aria-describedby="id-hint">
+        <p id="id-hint" class="muted hint">{{ t("web.accounts.id_hint") }}</p>
+      </div>
+      <div>
+        <label for="engine">{{ t("web.accounts.engine") }}</label>
+        <select id="engine" name="engine">
+          {%- for name, label in engines %}<option value="{{ name }}">{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="language">{{ t("web.accounts.language_label") }}</label>
+        <select id="language" name="language">
+          {%- for name, label in writing %}<option value="{{ name }}"{% if (lang == 'es') == (name == 'Spanish') %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="reserve">{{ t("web.accounts.reserve_label") }}</label>
+        <input id="reserve" name="reserve" type="number" min="0" max="90" step="1" value="10" required>
+      </div>
+    </div>
+    <button>{{ t("web.accounts.submit") }}</button>
+  </form>
+</section>
+{% endblock %}

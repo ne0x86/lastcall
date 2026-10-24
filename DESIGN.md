@@ -284,8 +284,8 @@ Rules for engines:
 1. **Connect GitHub.** The wizard creates the instance's GitHub App through the manifest flow. Permissions: contents,
    pull requests and issues read and write, metadata read; no workflows, no administration and no webhooks (lastcall
    asks GitHub when it needs to). The owner installs the App on all repositories or on selected ones. The
-   installation is the security boundary: lastcall cannot touch anything else. Until the web UI exists,
-   `lastcall github setup` serves the one-button page on the owner's machine.
+   installation is the security boundary: lastcall cannot touch anything else. The web UI does it from its GitHub
+   App page; `lastcall github setup` serves the same one-button page from the command line.
 2. **Suggestions.** For each installed repository, lastcall works out whether it is worth activating and says why,
    without any model call: recent activity, tests or CI, supported language, size, open issues, not a fork and not
    archived. The points are in `lastcall.suggest`. Each suggestion shows the size of the code an audit reads. Once
@@ -476,7 +476,9 @@ is running, pull requests to review), projects, runs, decisions, statistics, acc
 
 It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
 (`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the
-language is the browser's, until the owner picks one. So far it has the sign-in, the dashboard (with pause and
+language is the browser's, until the owner picks one. So far it has the sign-in, the GitHub App page (the
+manifest flow, whose page alone may post a form to github.com), the accounts page (add an account, the exact login
+command for it, and a quota reading on demand to check the login), the dashboard (with pause and
 resume, and a notice when the service stops writing its heartbeat) and the projects page: each project's settings,
 an audit on demand, adding a repository by its address, and the suggestions, which the service reads from GitHub
 every 6 hours and the owner can read again at any time. Pause holds the bursts only: an audit the owner orders

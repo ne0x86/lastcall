@@ -117,6 +117,12 @@ class Store:
             (account_id, engine, language, reserve_pct, time.time()),
         )
 
+    def update_account(self, account_id: str, *, enabled: bool, language: str, reserve_pct: float) -> None:
+        self.x(
+            "UPDATE accounts SET enabled = ?, language = ?, reserve_pct = ? WHERE id = ?",
+            (int(enabled), language, reserve_pct, account_id),
+        )
+
     def accounts(self, enabled_only: bool = False) -> list[AccountRow]:
         rows = self.q("SELECT * FROM accounts" + (" WHERE enabled = 1" if enabled_only else "") + " ORDER BY id")
         return [AccountRow(r["id"], r["engine"], bool(r["enabled"]), r["language"], r["reserve_pct"]) for r in rows]

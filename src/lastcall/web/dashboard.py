@@ -21,8 +21,8 @@ ENGINES = {"claude-code": "Claude Code", "codex": "Codex"}
 @dataclass(frozen=True)
 class Step:
     text: str
-    command: str = ""
-    link: str = ""  # a page of the web UI, by endpoint
+    link: str  # the page of the web UI that does it, by endpoint
+    label: str
 
 
 @dataclass(frozen=True)
@@ -101,22 +101,11 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
     accounts = store.accounts()
     projects = store.projects()
     if not github_ready:
-        view.start.append(
-            Step(
-                text(lang, "web.start.github"),
-                "docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <login>",
-            )
-        )
+        view.start.append(Step(text(lang, "web.start.github"), "github_page", text(lang, "web.github.title")))
     if not accounts:
-        view.start.append(
-            Step(
-                text(lang, "web.start.accounts"),
-                "ACCOUNT=claude-max docker compose run --rm login-claude-code\n"
-                "docker compose run --rm cli account add claude-max --engine claude-code",
-            )
-        )
+        view.start.append(Step(text(lang, "web.start.accounts"), "accounts_page", text(lang, "web.nav.accounts")))
     if not any(p.active for p in projects):
-        view.start.append(Step(text(lang, "web.start.projects"), link="projects_page"))
+        view.start.append(Step(text(lang, "web.start.projects"), "projects_page", text(lang, "web.nav.projects")))
     working = {r["account"]: r for r in store.running()}
     view.accounts = [account_view(store, a, lang, now, working.get(a.id)) for a in accounts]
     view.prs = [

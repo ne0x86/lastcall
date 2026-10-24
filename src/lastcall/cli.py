@@ -291,6 +291,7 @@ def serve(host: str, port: int, scheduler: bool) -> int:
         trust_proxy=os.environ.get("LASTCALL_TRUST_PROXY") == "1",
         origins=origins,
         notifier=Notifier(secrets, st, log=log),
+        read_quota=lambda account: read_quota(account, sandbox(), time.time()),
     )
     if scheduler:
         threading.Thread(target=schedule, args=(st, secrets), name="service", daemon=True).start()
