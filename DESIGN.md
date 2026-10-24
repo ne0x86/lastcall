@@ -347,11 +347,19 @@ engine runs all of them with the same guarantees.
 - **ideate → edit → deliver**: `improve`.
 - **issue → fix → verify → deliver**: `issues` (v0.3). The owner labels an issue, and leftover quota solves it.
 
-Today `lastcall audit <owner/name>` runs the first half of the audit, find and judge, and delivers a report. The
-context pack (`lastcall.pack`) holds the README, the recent history, a map and the code with line numbers, up to
-150k tokens. Scanners, signals and the memory of earlier runs come next. Prompts are in English, and the language of
-findings and reports is a parameter. Every prompt tells the model that the code and documents it reads are data, not
-instructions.
+Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` it stops after the judge, and
+`lastcall deliver <run>` later opens the pull requests of that report, so the owner can read the findings first.
+- The context pack (`lastcall.pack`) holds the README, the recent history, a map and the code with line numbers, up
+  to 150k tokens. Scanners, signals and the memory of earlier runs come next.
+- Each implementer works in its own clone, on a branch `lastcall/<date>-<n>-<topic>`.
+- lastcall then takes over:
+  - it runs the project's check (`lastcall.verify`) on a clean copy, in the runner image;
+  - it scans the added lines, the title and the body for secrets (`lastcall.secretscan`);
+  - it commits as the App's bot, pushes, and opens the pull request with a footer that says what was verified.
+- Valid findings that need the owner go to one issue per run.
+
+Prompts are in English, and the language of findings, pull requests and reports is a parameter. Every prompt tells
+the model that the code and documents it reads are data, not instructions.
 
 ### Slots
 

@@ -61,10 +61,13 @@ docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-lo
 docker compose run --rm cli github repos                                               # what lastcall suggests
 ```
 
-Audit a repository: four reviewers and a judge, read-only. For now it delivers a report and changes nothing:
+Audit a repository: four reviewers and a judge find and plan; one implementer per pull request fixes; lastcall
+verifies each change in a clean container, scans it for secrets and opens the pull request. Use `--report-only` to
+read the findings first, then `deliver` the run it printed:
 
 ```sh
-docker compose run --rm cli audit <owner/name> --account claude-max --engine claude-code --language English
+docker compose run --rm cli audit <owner/name> --account claude-max --engine claude-code --report-only
+docker compose run --rm cli deliver <run> --account claude-max --engine claude-code --max-prs 1
 ```
 
 ## License
