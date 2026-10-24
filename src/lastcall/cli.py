@@ -66,7 +66,11 @@ def github_setup(owner: str, org: bool, port: int) -> int:
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
-    print(f"Open http://127.0.0.1:{port}/ in your browser and create the App. Waiting for GitHub...", flush=True)
+    print(
+        f"Ready: open http://127.0.0.1:{port}/ in your browser now (the page answers from this moment on).\n"
+        "Keep this command running until GitHub brings you back to that page.",
+        flush=True,
+    )
     app = run_setup(server)
     print(f"App {app.name} created. Install it on the repositories lastcall may work on:\n  {app.install_url}")
     return 0
