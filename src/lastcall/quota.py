@@ -10,12 +10,28 @@ from __future__ import annotations
 import itertools
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 Role = Literal["expiring", "throttle"]
 Fidelity = Literal["exact", "events", "ledger", "none"]
 
 HOUR = 3600.0
+
+
+class QuotaError(RuntimeError):
+    """The quota could not be read. Without a reading nothing is spent."""
+
+
+def epoch(value: object) -> float | None:
+    """Epoch seconds from what providers send: an ISO 8601 string or a number."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        return datetime.fromisoformat(value).timestamp()
+    raise QuotaError(f"not a time: {value!r}")
 
 
 @dataclass(frozen=True)

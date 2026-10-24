@@ -5,11 +5,12 @@ from __future__ import annotations
 import http.client
 import json
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from lastcall.engines.base import Engine, Event, StepResult, StepSpec
+from lastcall.engines.base import Engine, Event, Invocation, StepResult, StepSpec
 from lastcall.process import Outcome
 from lastcall.runner import STEP_TIMEOUT, finish
 
@@ -44,21 +45,52 @@ class Sandbox:
         account_volume: str | None = None,
         timeout: float = STEP_TIMEOUT,
     ) -> StepResult:
-        inv = engine.invocation(step)
+        """One agent step: the engine builds the command and reads its events."""
+        events: list[Event] = []
+
+        def on_line(line: str) -> None:
+            ev = engine.parse(line)
+            if ev is not None:
+                events.append(ev)
+
+        outcome = self.call(
+            engine.name,
+            engine.invocation(step),
+            on_line,
+            workspace=workspace,
+            account_volume=account_volume,
+            home=engine.home if account_volume else None,
+            writable=step.writable,
+            timeout=timeout,
+        )
+        return finish(engine, step, events, outcome, timeout)
+
+    def call(
+        self,
+        engine: str,
+        inv: Invocation,
+        on_line: Callable[[str], None],
+        *,
+        workspace: Path,
+        account_volume: str | None = None,
+        home: str | None = None,
+        writable: bool = False,
+        timeout: float = STEP_TIMEOUT,
+    ) -> Outcome:
+        """Run any invocation in the runner image of `engine` and pass on each line it prints."""
         body = {
-            "engine": engine.name,
+            "engine": engine,
             "argv": list(inv.argv),
             "stdin": inv.stdin,
             "env": dict(inv.env),
             "files": dict(inv.files),
             "copies": {dest: self._relative(src) for dest, src in inv.mounts.items()},
             "workspace": self._relative(workspace),
-            "writable": step.writable,
+            "writable": writable,
             "account_volume": account_volume,
-            "home": engine.home if account_volume else None,
+            "home": home,
             "timeout": timeout,
         }
-        events: list[Event] = []
         final: dict[str, Any] = {}
         conn = _UnixConnection(str(self.socket_path), timeout + 120)
         try:
@@ -69,17 +101,14 @@ class Sandbox:
             for raw in resp:
                 frame = json.loads(raw)
                 if "out" in frame:
-                    ev = engine.parse(frame["out"])
-                    if ev is not None:
-                        events.append(ev)
+                    on_line(str(frame["out"]))
                 else:
                     final = frame
         except OSError as e:
             raise SandboxError(f"supervisor unreachable at {self.socket_path}: {e}") from e
         finally:
             conn.close()
-        outcome = Outcome(int(final.get("exit", -1)), bool(final.get("timed_out")), str(final.get("stderr") or ""))
-        return finish(engine, step, events, outcome, timeout)
+        return Outcome(int(final.get("exit", -1)), bool(final.get("timed_out")), str(final.get("stderr") or ""))
 
     def _relative(self, path: Path) -> str:
         try:

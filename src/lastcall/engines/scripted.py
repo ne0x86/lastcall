@@ -23,6 +23,8 @@ class Scripted:
     capabilities: frozenset[str] = frozenset({"json_schema"})
     egress: tuple[str, ...] = ()
     home: str = "/home/runner"
+    home_env: str = "HOME"
+    login: tuple[str, ...] = ()
 
     def __init__(self, script: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
         self.script = script
