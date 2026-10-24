@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS findings (
 CREATE TABLE IF NOT EXISTS prs (
     url TEXT PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, run TEXT NOT NULL, title TEXT NOT NULL,
     state TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 REMEMBERED = ("pending", "in_pr", "merged", "rejected", "decide", "resolved", "dismissed")
 
@@ -86,6 +87,17 @@ class Store:
     def q(self, sql: str, args: Sequence[Any] = ()) -> list[dict[str, Any]]:
         with self.lock:
             return [dict(r) for r in self.db.execute(sql, args).fetchall()]
+
+    # settings
+
+    def setting(self, key: str, default: str = "") -> str:
+        rows = self.q("SELECT value FROM settings WHERE key = ?", (key,))
+        return str(rows[0]["value"]) if rows else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.x(
+            "INSERT INTO settings VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", (key, value)
+        )
 
     # accounts and projects
 

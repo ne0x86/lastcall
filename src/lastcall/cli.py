@@ -10,6 +10,8 @@ lastcall audit <owner/name> --account <account> # find, judge, fix, verify, open
 lastcall deliver <run> --account <account>      # the pull requests of a report-only audit
 lastcall sync                                   # what the owner did with lastcall's pull requests and issues
 lastcall status                                 # accounts, projects and what happened to their findings
+lastcall serve                                  # the service: bursts on its own when quota would go unused
+lastcall pause | resume                         # stop or allow new runs of the service
 """
 
 from __future__ import annotations
@@ -28,11 +30,13 @@ from lastcall import engines
 from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
 from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
-from lastcall.quota import QuotaError, Reading, SpendPolicy, plan
+from lastcall.quota import QuotaError, Reading, SpendPolicy, learned_rate, plan
 from lastcall.recipes.audit import AuditReport, StepRecord
 from lastcall.runs import Instance, Options, audit_repo, deliver_report, save
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
+from lastcall.service import DEFAULT_RATE as SERVICE_RATE
+from lastcall.service import RATE_WINDOW, Service
 from lastcall.store import Store, import_runs
 from lastcall.suggest import Suggestion, suggest
 from lastcall.supervisor import Config
@@ -92,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
 
     commands.add_parser("sync", help="what the owner did with lastcall's pull requests and issues")
     commands.add_parser("status", help="accounts, projects and what happened to their findings")
+    commands.add_parser("serve", help="run the service: it spends quota that would go unused, on active projects")
+    commands.add_parser("pause", help="the service starts no new runs (a running one finishes)")
+    commands.add_parser("resume", help="the service may start runs again")
     import_cmd = commands.add_parser("import", help="bring reports of runs made before the store into it")
     import_cmd.add_argument("--account", required=True, help="the account those runs spent")
 
@@ -148,6 +155,16 @@ def dispatch(args: argparse.Namespace) -> int:
             return 0
         case "status", _:
             print(status(store()))
+            return 0
+        case "serve", _:
+            client = github_client()
+            if client is None:
+                return 1
+            Service(Instance(sandbox(), client, store()), log=log).serve()
+            return 0
+        case "pause" | "resume", _:
+            store().set_setting("paused", "yes" if args.command == "pause" else "no")
+            print("Paused: no new runs." if args.command == "pause" else "Resumed.")
             return 0
         case "import", _:
             return import_reports(account(args.account))
@@ -249,8 +266,9 @@ def import_reports(acc: Account) -> int:
 
 
 def status(st: Store) -> str:
-    lines = ["Accounts"]
     now = time.time()
+    lines = ["New runs: paused (lastcall resume)" if st.setting("paused") == "yes" else "New runs: allowed"]
+    lines.append("Accounts")
     for a in st.accounts():
         readings = st.readings(a.id, now - 7 * 86_400)
         last = readings[-1] if readings else None
@@ -261,6 +279,12 @@ def status(st: Store) -> str:
             else "no reading yet"
         )
         lines.append(f"  {a.id} ({a.engine}, {a.language}, reserve {a.reserve_pct:g}%): {quota_text}")
+        if last:
+            policy = SpendPolicy(reserve_pct=a.reserve_pct)
+            rate = learned_rate(st.readings(a.id, now - RATE_WINDOW), policy, "week", "5h", SERVICE_RATE)
+            next_burst = plan(last, policy, rate, now)
+            when = "now" if next_burst.burst else "no"
+            lines.append(f"    burst: {when} ({next_burst.reason}; {rate:.1f}% of the week per hour)")
     lines.append("Projects")
     for p in st.projects():
         counts = st.statuses(p.repo)
