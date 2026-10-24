@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["done", "summary", "changes", "tests", "pr_title", "pr_body", "risks", "pending"],
+  "properties": {
+    "done": {"type": "boolean"},
+    "summary": {"type": "string"},
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "what"],
+        "properties": {"file": {"type": "string"}, "what": {"type": "string"}}
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "result", "new"],
+      "properties": {
+        "command": {"type": "string"},
+        "result": {"type": "string"},
+        "new": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "pr_title": {"type": "string"},
+    "pr_body": {"type": "string"},
+    "risks": {"type": "string"},
+    "pending": {"type": "string"}
+  }
+}

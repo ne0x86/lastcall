@@ -4,13 +4,15 @@ lastcall login <account> --engine claude-code   # on the host: the CLI's own log
 lastcall quota <account> --engine claude-code   # where the supervisor socket is: read the account's quota
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
 lastcall github repos                           # installed repositories, with lastcall's suggestions
-lastcall audit <owner/name> --account <account> --engine claude-code   # reviewers and judge; a report, no changes
+lastcall audit <owner/name> --account <account> --engine claude-code   # find, judge, fix, verify, open PRs
+lastcall deliver <run> --account <account> --engine claude-code        # the PRs of a report-only audit
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,11 +22,20 @@ from pathlib import Path
 
 from lastcall import engines, git, pack
 from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
-from lastcall.engines.base import Engine, StepResult, StepSpec
-from lastcall.github import App, GitHub, GitHubError
+from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
+from lastcall.github import App, GitHub, GitHubError, GitHubForge
 from lastcall.github_setup import SetupServer, run_setup
 from lastcall.quota import Gate, QuotaError, Reading, SpendPolicy, gate, plan
-from lastcall.recipes.audit import StepRecord, markdown, run_audit
+from lastcall.recipes.audit import (
+    AuditReport,
+    QuotaCheck,
+    StepRecord,
+    StepRunner,
+    Verifier,
+    deliver,
+    markdown,
+    run_audit,
+)
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.suggest import Suggestion, suggest
@@ -32,6 +43,8 @@ from lastcall.supervisor import Config
 from lastcall.tiers import defaults
 
 DEFAULT_RATE = 2.0  # % of the week per hour until the rate is learned from readings
+VERIFY_TIMEOUT = 25 * 60.0
+RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,12 +63,17 @@ def main(argv: list[str] | None = None) -> int:
     setup.add_argument("--org", action="store_true", help="the owner is an organization")
     setup.add_argument("--port", type=int, default=8765, help="port of the setup page (default 8765)")
     gh.add_parser("repos", help="installed repositories, with lastcall's suggestions")
-    audit_cmd = commands.add_parser("audit", help="audit a repository: reviewers and judge; a report, no changes")
+    audit_cmd = commands.add_parser("audit", help="audit a repository and open pull requests for what it finds")
     audit_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
-    audit_cmd.add_argument("--account", required=True, help="the account whose quota the audit spends")
-    audit_cmd.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
-    audit_cmd.add_argument("--language", default="English", help="language of findings and reports")
+    audit_cmd.add_argument("--language", default="English", help="language of findings, pull requests and reports")
     audit_cmd.add_argument("--max-prs", type=int, default=3, help="pull requests the judge may plan (default 3)")
+    audit_cmd.add_argument("--report-only", action="store_true", help="stop after the judge: change nothing")
+    deliver_cmd = commands.add_parser("deliver", help="implement, verify and open the pull requests of a report")
+    deliver_cmd.add_argument("run", help="the run folder name that `audit --report-only` printed")
+    deliver_cmd.add_argument("--max-prs", type=int, default=None, help="open only the first N planned pull requests")
+    for cmd in (audit_cmd, deliver_cmd):
+        cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
+        cmd.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
     args = parser.parse_args(argv)
     if args.command == "github":
         return github_setup(args.owner, args.org, args.port) if args.action == "setup" else github_repos()
@@ -64,7 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         parser.error(str(e))
     if args.command == "audit":
-        return audit(args.repo, account, args.language, args.max_prs)
+        return audit(args.repo, account, args.language, args.max_prs, args.report_only)
+    if args.command == "deliver":
+        return deliver_report(args.run, account, args.max_prs)
     return login(account) if args.command == "login" else quota(account)
 
 
@@ -79,12 +99,73 @@ def sandbox() -> Sandbox:
     )
 
 
-def audit(repo: str, account: Account, language: str, max_prs: int) -> int:
+def github_client() -> GitHub | None:
     app = App.load(secret_store())
     if app is None:
         print("No GitHub App yet: run `lastcall github setup --owner <login>` first.", file=sys.stderr)
+        return None
+    return GitHub(app)
+
+
+def agent_hooks(box: Sandbox, account: Account) -> tuple[StepRunner, QuotaCheck]:
+    """How a recipe runs agent steps for this account: in the sandbox, behind the quota gate."""
+
+    def run_step(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
+        return box.run(engine, step, workspace=workspace, account_volume=account.volume)
+
+    def check_quota() -> tuple[Gate, Reading | None]:
+        try:
+            reading = read_quota(account, box, time.time())
+        except (QuotaError, SandboxError) as e:
+            return Gate(False, f"no quota reading: {e}"), None
+        return gate(reading, SpendPolicy(), time.time()), reading
+
+    return run_step, check_quota
+
+
+def verifier(box: Sandbox, engine: str) -> Verifier:
+    """Runs the check command on a clean copy of the change, in the runner image, outside the agent."""
+
+    def verify(work: Path, command: str) -> tuple[bool, str]:
+        copy = work.with_name(f"{work.name}-verify")
+        git.remove(copy)
+        for rel in git.files(work):
+            target = copy / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(work / rel, target, follow_symlinks=False)
+        copy.mkdir(parents=True, exist_ok=True)
+        tail: list[str] = []
+
+        def keep(line: str) -> None:
+            tail.append(line)
+            del tail[:-40]
+
+        outcome = box.call(
+            engine, Invocation(("sh", "-c", command)), keep, workspace=copy, writable=True, timeout=VERIFY_TIMEOUT
+        )
+        output = "\n".join([*tail, outcome.stderr_tail.strip()]).strip()
+        return outcome.exit_code == 0 and not outcome.timed_out, output
+
+    return verify
+
+
+def progress(s: StepRecord) -> None:
+    state = "ok" if s.ok else f"FAILED: {(s.error or '')[:200]}"
+    print(f"  {s.role}: {s.model} {s.effort or ''}, {s.seconds:g} s, {s.tool_uses} tools, {state}", flush=True)
+
+
+def save(run_dir: Path, report: AuditReport) -> str:
+    (run_dir / "report.json").write_text(report.to_json(), encoding="utf-8")
+    text = markdown(report)
+    (run_dir / "report.md").write_text(text, encoding="utf-8")
+    return text
+
+
+def audit(repo: str, account: Account, language: str, max_prs: int, report_only: bool) -> int:
+    client = github_client()
+    if client is None:
         return 1
-    box, client = sandbox(), GitHub(app)
+    box = sandbox()
     try:
         token = client.repository_token(repo)
         meta = client.repository(token, repo)
@@ -100,21 +181,7 @@ def audit(repo: str, account: Account, language: str, max_prs: int) -> int:
         f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}",
         flush=True,
     )
-
-    def run_step(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
-        return box.run(engine, step, workspace=workspace, account_volume=account.volume)
-
-    def check_quota() -> tuple[Gate, Reading | None]:
-        try:
-            reading = read_quota(account, box, time.time())
-        except (QuotaError, SandboxError) as e:
-            return Gate(False, f"no quota reading: {e}"), None
-        return gate(reading, SpendPolicy(), time.time()), reading
-
-    def progress(s: StepRecord) -> None:
-        state = "ok" if s.ok else f"FAILED: {(s.error or '')[:200]}"
-        print(f"  {s.role}: {s.model} {s.effort or ''}, {s.seconds:g} s, {s.tool_uses} tools, {state}", flush=True)
-
+    run_step, check_quota = agent_hooks(box, account)
     report = run_audit(
         repo=repo,
         pack=context,
@@ -126,11 +193,51 @@ def audit(repo: str, account: Account, language: str, max_prs: int) -> int:
         max_prs=max_prs,
         on_step=progress,
     )
-    (run_dir / "report.json").write_text(report.to_json(), encoding="utf-8")
-    text = markdown(report)
-    (run_dir / "report.md").write_text(text, encoding="utf-8")
-    print("\n" + text)
-    return 1 if report.status == "failed" else 0
+    text = save(run_dir, report)
+    if report_only or report.status != "ok" or not report.prs:
+        print("\n" + text)
+        return 1 if report.status == "failed" else 0
+    return deliver_run(run_dir, report, account, client, box, None)
+
+
+def deliver_report(run: str, account: Account, max_prs: int | None) -> int:
+    client = github_client()
+    if client is None:
+        return 1
+    box = sandbox()
+    run_dir = box.data_root / "runs" / run
+    if not RUN_NAME.fullmatch(run) or not (run_dir / "report.json").exists():
+        print(f"No report in run {run!r}.", file=sys.stderr)
+        return 1
+    report = AuditReport.from_json((run_dir / "report.json").read_text(encoding="utf-8"))
+    return deliver_run(run_dir, report, account, client, box, max_prs)
+
+
+def deliver_run(
+    run_dir: Path, report: AuditReport, account: Account, client: GitHub, box: Sandbox, max_prs: int | None
+) -> int:
+    try:
+        forge = GitHubForge.connect(client, report.repo)
+    except GitHubError as e:
+        print(e, file=sys.stderr)
+        return 1
+    planned = report.prs[:max_prs] if max_prs else report.prs
+    print(f"Delivering {len(planned)} pull request(s) for {report.repo} as {forge.author[0]}.", flush=True)
+    run_step, check_quota = agent_hooks(box, account)
+    deliver(
+        report=report,
+        run_dir=run_dir,
+        engine=engines.get(account.engine),
+        tiers=defaults(account.engine),
+        run_step=run_step,
+        check_quota=check_quota,
+        verify=verifier(box, account.engine),
+        forge=forge,
+        max_prs=max_prs,
+        on_step=progress,
+    )
+    print("\n" + save(run_dir, report))
+    return 0
 
 
 def github_setup(owner: str, org: bool, port: int) -> int:

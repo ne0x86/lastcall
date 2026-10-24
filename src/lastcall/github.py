@@ -14,11 +14,13 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from lastcall import git
 from lastcall.secretstore import SecretStore
 
 API = "https://api.github.com"
@@ -116,6 +118,21 @@ class GitHub:
     def repository(self, token: str, repo: str) -> dict[str, Any]:
         return dict(self.request("GET", f"/repos/{repo}", token))
 
+    def bot_author(self, token: str) -> tuple[str, str]:
+        """Name and email that make commits show as the App's bot on GitHub."""
+        login = f"{self.app.slug}[bot]"
+        user = self.request("GET", f"/users/{urllib.parse.quote(login)}", token)
+        return login, f"{user['id']}+{login}@users.noreply.github.com"
+
+    def open_pull_request(self, token: str, repo: str, head: str, base: str, title: str, body: str) -> str:
+        pr = self.request(
+            "POST", f"/repos/{repo}/pulls", token, {"title": title, "head": head, "base": base, "body": body}
+        )
+        return str(pr["html_url"])
+
+    def open_issue(self, token: str, repo: str, title: str, body: str) -> str:
+        return str(self.request("POST", f"/repos/{repo}/issues", token, {"title": title, "body": body})["html_url"])
+
     def repositories(self, token: str) -> list[dict[str, Any]]:
         repos: list[dict[str, Any]] = []
         page = 1
@@ -137,3 +154,28 @@ class GitHub:
             raise
         blobs = [(str(t["path"]), int(t.get("size") or 0)) for t in tree.get("tree") or [] if t.get("type") == "blob"]
         return blobs, bool(tree.get("truncated"))
+
+
+@dataclass(frozen=True)
+class GitHubForge:
+    """Where the audit delivers. Every call gets a fresh installation token: a run can outlast one (one hour)."""
+
+    client: GitHub
+    repo: str
+    base: str  # the branch pull requests target
+    author: tuple[str, str]  # the App's bot, so commits show as lastcall's
+
+    @classmethod
+    def connect(cls, client: GitHub, repo: str) -> GitHubForge:
+        token = client.repository_token(repo)
+        return cls(client, repo, str(client.repository(token, repo)["default_branch"]), client.bot_author(token))
+
+    def push(self, workdir: Path, branch: str) -> None:
+        git.push(workdir, self.repo, branch, self.client.repository_token(self.repo))
+
+    def open_pull_request(self, branch: str, title: str, body: str) -> str:
+        token = self.client.repository_token(self.repo)
+        return self.client.open_pull_request(token, self.repo, branch, self.base, title, body)
+
+    def open_issue(self, title: str, body: str) -> str:
+        return self.client.open_issue(self.client.repository_token(self.repo), self.repo, title, body)

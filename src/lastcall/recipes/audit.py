@@ -1,29 +1,49 @@
-"""The audit recipe, first half: find and judge (DESIGN.md, section 9).
+"""The audit recipe (DESIGN.md, section 9), in two halves.
 
-Reviewers read the shared context pack, one after another so that the provider's cache serves all but the first,
-and report findings with evidence. The judge checks every finding against the code and decides what becomes a pull
-request, what needs the owner, and what is discarded. The second half (implement, verify, deliver) starts from
-this report.
+Find and judge (`run_audit`): reviewers read the shared context pack, one after another so that the provider's
+cache serves all but the first, and report findings with evidence. The judge checks every finding against the code
+and decides what becomes a pull request, what needs the owner, and what is discarded.
+
+Fix, verify and deliver (`deliver`): one implementer per planned pull request, each in its own clone. lastcall, not
+the agent, checks the change in a clean container, scans what it would publish for secrets, commits, pushes and
+opens the pull request. Findings that need the owner go to one issue per run.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
+from lastcall import git
 from lastcall.engines.base import Engine, StepResult, StepSpec
 from lastcall.pack import Pack
 from lastcall.quota import Gate, Reading
 from lastcall.recipes import front_matter, prompt, render, schema
+from lastcall.secretscan import added_lines, scan
 from lastcall.tiers import TIERS
+from lastcall.verify import check_command, describe, summary_line
 
 StepRunner = Callable[[Engine, StepSpec, Path], StepResult]  # (engine, step, workspace)
 QuotaCheck = Callable[[], tuple[Gate, Reading | None]]
+Verifier = Callable[[Path, str], tuple[bool, str]]  # (the change, check command) -> (passed, last lines of output)
+
+
+class Forge(Protocol):
+    @property
+    def author(self) -> tuple[str, str]: ...  # name and email of the commits
+
+    def push(self, workdir: Path, branch: str) -> None: ...
+
+    def open_pull_request(self, branch: str, title: str, body: str) -> str: ...
+
+    def open_issue(self, title: str, body: str) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -73,9 +93,49 @@ class AuditReport:
     verdicts: list[dict[str, Any]] = field(default_factory=list)
     prs: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
+    deliveries: list[dict[str, Any]] = field(default_factory=list)  # one per planned pull request, once tried
+    issue_url: str | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=1)
+
+    @classmethod
+    def from_json(cls, text: str) -> AuditReport:
+        data = json.loads(text)
+        data["steps"] = [StepRecord(**s) for s in data.get("steps") or []]
+        return cls(**data)
+
+
+@dataclass
+class _Steps:
+    """Runs the agent steps of a report: the gate before each one, and a record of what it cost."""
+
+    report: AuditReport
+    engine: Engine
+    tiers: Mapping[str, tuple[str, str | None]]
+    run_step: StepRunner
+    check_quota: QuotaCheck
+    shared: Path
+    on_step: Callable[[StepRecord], None] | None = None
+
+    def run(
+        self, role: str, tier: str, text: str, schema_name: str, workspace: Path, writable: bool = False
+    ) -> StepResult | None:
+        gate, reading = self.check_quota()
+        if not gate.ok:
+            self.report.status, self.report.stopped = "partial", gate.reason
+            return None
+        model, effort = self.tiers[tier]
+        spec = StepSpec(role, model, text, effort, self.shared, schema(schema_name), writable)
+        t0 = time.monotonic()
+        res = self.run_step(self.engine, spec, workspace)
+        usage = {w.name: w.used_pct for w in reading.windows} if reading else None
+        seconds = round(time.monotonic() - t0, 1)
+        record = StepRecord(role, model, effort, res.ok, seconds, res.tool_uses, res.cost_usd, res.error, usage)
+        self.report.steps.append(record)
+        if self.on_step:
+            self.on_step(record)
+        return res
 
 
 def run_audit(
@@ -93,38 +153,14 @@ def run_audit(
     team: Sequence[Reviewer] | None = None,
     on_step: Callable[[StepRecord], None] | None = None,
 ) -> AuditReport:
+    """First half: find and judge."""
     report = AuditReport(repo, pack.sha, engine.name, language)
+    steps = _Steps(report, engine, tiers, run_step, check_quota, pack.path, on_step)
     project = repo.split("/")[-1]
-
-    def step(role: str, tier: str, text: str, schema_name: str) -> StepResult | None:
-        gate, reading = check_quota()
-        if not gate.ok:
-            report.status, report.stopped = "partial", gate.reason
-            return None
-        model, effort = tiers[tier]
-        spec = StepSpec(role, model, text, effort, pack.path, schema(schema_name))
-        t0 = time.monotonic()
-        res = run_step(engine, spec, pack.src)
-        usage = {w.name: w.used_pct for w in reading.windows} if reading else None
-        record = StepRecord(
-            role,
-            model,
-            effort,
-            res.ok,
-            round(time.monotonic() - t0, 1),
-            res.tool_uses,
-            res.cost_usd,
-            res.error,
-            usage,
-        )
-        report.steps.append(record)
-        if on_step:
-            on_step(record)
-        return res
 
     for rv in team if team is not None else reviewers():
         text = render(prompt("reviewer.md"), role=rv.name, project=project, focus=rv.focus, language=language)
-        res = step(f"reviewer:{rv.name}", rv.tier, text, "findings")
+        res = steps.run(f"reviewer:{rv.name}", rv.tier, text, "findings", pack.src)
         if res is None:
             return report
         if res.ok:  # a reviewer that fails costs its findings, not the run
@@ -144,7 +180,7 @@ def run_audit(
         previous=previous,
         findings=json.dumps(report.findings, ensure_ascii=False, indent=1),
     )
-    res = step("judge", "deep", text, "verdicts")
+    res = steps.run("judge", "deep", text, "verdicts", pack.src)
     if res is None:
         return report
     if not res.ok:
@@ -159,6 +195,117 @@ def run_audit(
         if ids:
             report.prs.append({**pr, "ids": ids})
     return report
+
+
+def slug(title: str, size: int = 40) -> str:
+    plain = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-")[:size].rstrip("-") or "change"
+
+
+def deliver(
+    *,
+    report: AuditReport,
+    run_dir: Path,
+    engine: Engine,
+    tiers: Mapping[str, tuple[str, str | None]],
+    run_step: StepRunner,
+    check_quota: QuotaCheck,
+    verify: Verifier,
+    forge: Forge,
+    max_prs: int | None = None,
+    on_step: Callable[[StepRecord], None] | None = None,
+) -> AuditReport:
+    """Second half: implement each planned pull request, verify it outside the agent, and open it. Pull requests
+    already opened for this report are not opened again."""
+    steps = _Steps(report, engine, tiers, run_step, check_quota, run_dir / "shared.md", on_step)
+    by_id = {f["id"]: f for f in report.findings}
+    verdict = {v["id"]: v for v in report.verdicts}
+    opened = {d["title"] for d in report.deliveries if d["status"] == "opened"}
+    project, stamp = report.repo.split("/")[-1], time.strftime("%Y%m%d-%H%M")
+
+    for n, pr in enumerate(report.prs[:max_prs] if max_prs else report.prs, 1):
+        if pr["title"] in opened:
+            continue
+        branch = f"lastcall/{stamp}-{n}-{slug(pr['title'])}"
+        work = run_dir / f"pr{n}"
+        git.remove(work)
+        git.branch_from(run_dir / "clone", work, branch)
+        command, _ = check_command(work)
+        with_tests, _ = check_command(work, assume_tests=True)  # what verification runs once tests exist
+        covered = [dict(by_id[i], judge=verdict.get(i)) for i in pr["ids"]]
+        text = render(
+            prompt("implementer.md"),
+            project=project,
+            branch=branch,
+            title=pr["title"],
+            risk=pr["risk"],
+            plan=pr["plan"],
+            findings=json.dumps(covered, ensure_ascii=False, indent=1),
+            test_command=command,
+            verify_command=with_tests,
+            language=report.language,
+        )
+        record: dict[str, Any] = {"title": pr["title"], "ids": pr["ids"], "branch": branch}
+        report.deliveries = [d for d in report.deliveries if d["title"] != pr["title"]] + [record]
+        res = steps.run("implementer", "deep", text, "implementation", work, writable=True)
+        if res is None:  # a gate closed: the rest waits for the next run
+            record |= {"status": "stopped", "note": report.stopped}
+            break
+        out = res.output or {}
+        if not res.ok or not out.get("done"):
+            record |= {"status": "not_done", "note": str(out.get("pending") or res.error or "")[:800]}
+            continue
+        diff = git.stage_all(work)
+        if not diff.strip():
+            record |= {"status": "unchanged", "note": "the implementer reported done but changed nothing"}
+            continue
+        command, kind = check_command(work)  # the implementer may have added the project's first tests
+        passed, tail = verify(work, command)
+        last = summary_line(tail)
+        if not passed:
+            record |= {"status": "red", "note": tail[-1500:]}
+            continue
+        title, body = str(out["pr_title"]), str(out["pr_body"])
+        leaks = scan(f"{added_lines(diff)}\n{title}\n{body}")
+        if leaks:
+            record |= {"status": "secrets", "note": f"blocked by the secret scan: {', '.join(leaks)}"}
+            continue
+        model, effort = tiers["deep"]
+        message = f"{title}\n\n{out.get('summary') or ''}\n\nFindings: {', '.join(pr['ids'])}"
+        git.commit(work, message, forge.author)
+        forge.push(work, branch)
+        checked = describe(kind, last)
+        footer = (
+            f"\n\n---\n<sub>lastcall: audit of `{report.sha}` with {report.engine}; findings {', '.join(pr['ids'])}; "
+            f"implemented with {model} ({effort}); {checked}; secret scan: clean.</sub>"
+        )
+        record |= {"status": "opened", "url": forge.open_pull_request(branch, title, body + footer), "check": checked}
+
+    decide = [v for v in report.verdicts if v["verdict"] == "valid" and v["decision"] == "issue"]
+    if decide and not report.issue_url:
+        body = issue_body(report, decide, by_id)
+        if not scan(body):
+            noun = "decision" if len(decide) == 1 else "decisions"
+            title = f"lastcall: {len(decide)} {noun} for {project} (audit of {report.sha})"
+            report.issue_url = forge.open_issue(title, body)
+    return report
+
+
+def issue_body(report: AuditReport, decide: Sequence[Mapping[str, Any]], by_id: Mapping[str, Any]) -> str:
+    lines = [
+        "Valid findings that lastcall did not turn into a pull request: they need your decision, or they are too "
+        "large for one. Close this issue when you have decided.",
+        "",
+    ]
+    for v in decide:
+        f = by_id[v["id"]]
+        lines += [
+            f"- [ ] **{v['id']}** {f['title']} ({v['severity']}), `{f['file']}:{f['lines']}`",
+            f"  {f['why']}",
+            f"  *Proposed fix:* {f['fix']}",
+            f"  *Why it needs you:* {v['reason']}",
+        ]
+    return "\n".join([*lines, "", f"<sub>lastcall: audit of `{report.sha}` with {report.engine}</sub>"])
 
 
 def markdown(report: AuditReport) -> str:
@@ -176,6 +323,15 @@ def markdown(report: AuditReport) -> str:
     out.append(f"Status: **{report.status}**" + (f" ({report.stopped})" if report.stopped else ""))
     if report.summary:
         out += ["", report.summary]
+    if report.deliveries or report.issue_url:
+        out += ["", "## Delivered", ""]
+        for d in report.deliveries:
+            out.append(
+                f"- {d['title']} ({', '.join(d['ids'])}): **{d.get('status', 'pending')}** "
+                + (d.get("url") or d.get("note") or "")[:300]
+            )
+        if report.issue_url:
+            out.append(f"- Decisions issue: {report.issue_url}")
     out += ["", f"## Pull requests planned ({len(report.prs)})"]
     for n, pr in enumerate(report.prs, 1):
         out += ["", f"### {n}. {pr['title']} (risk {pr['risk']})", "", pr["plan"], ""]
