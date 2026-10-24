@@ -24,7 +24,9 @@ from lastcall.engines.base import (
     count_tools,
     json_line,
     last,
+    probe_source,
 )
+from lastcall.quota import QuotaError, Reading, Window, epoch
 
 READ_TOOLS = "Read,Grep,Glob"
 WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
@@ -35,6 +37,8 @@ class ClaudeCode:
     capabilities: frozenset[str] = frozenset({"json_schema", "system_prompt_file", "effort"})
     egress: tuple[str, ...] = ("api.anthropic.com", "platform.claude.com")  # inference; login token exchange
     home: str = "/home/runner/.claude"
+    home_env: str = "CLAUDE_CONFIG_DIR"
+    login: tuple[str, ...] = ("claude", "auth", "login")  # Claude subscription; the code is pasted back
 
     def invocation(self, step: StepSpec) -> Invocation:
         argv = ["claude", "-p", "--model", step.model, "--output-format", "stream-json", "--verbose"]
@@ -51,7 +55,7 @@ class ClaudeCode:
             argv += ["--append-system-prompt-file", f"{CONTEXT_DIR}/shared.md"]
         if step.schema is not None:
             argv += ["--json-schema", json.dumps(step.schema)]
-        return Invocation(tuple(argv), stdin=step.prompt, env={"CLAUDE_CONFIG_DIR": self.home}, mounts=mounts)
+        return Invocation(tuple(argv), stdin=step.prompt, env={self.home_env: self.home}, mounts=mounts)
 
     def parse(self, line: str) -> Event | None:
         ev = json_line(line)
@@ -86,3 +90,32 @@ class ClaudeCode:
             usage=res.get("modelUsage") or res.get("usage"),
             rate_limits=limits.get("info") if limits else None,
         )
+
+    def quota_invocation(self) -> Invocation:
+        """The get_usage control request: plan usage without calling the model (experimental in the CLI)."""
+        probe = f"{CONTEXT_DIR}/probe.py"
+        env = {self.home_env: self.home, "NO_COLOR": "1"}
+        return Invocation(("python3", probe), env=env, files={probe: probe_source("claude_usage")})
+
+    def quota_reading(self, account: str, lines: Sequence[str], now: float) -> Reading:
+        msg = next(
+            (m for line in reversed(lines) if (m := json_line(line)) and m.get("type") == "control_response"), None
+        )
+        if msg is None:
+            raise QuotaError("Claude Code gave no usage answer")
+        response = msg.get("response") or {}
+        if response.get("subtype") != "success":
+            raise QuotaError(f"the usage request failed: {response.get('error')}")
+        body = response.get("response") or {}
+        if body.get("rate_limits_available") is False:  # not signed in, or signed in with an API key
+            raise QuotaError("no plan limits: sign in with a Claude subscription (lastcall login), not an API key")
+        limits = body.get("rate_limits") or {}
+        five, week = limits.get("five_hour") or {}, limits.get("seven_day") or {}
+        if week.get("utilization") is None:
+            raise QuotaError("the answer has no weekly usage")
+        extra = body.get("extra_usage") or limits.get("extra_usage") or {}
+        windows = (
+            Window("5h", float(five.get("utilization") or 0.0), epoch(five.get("resets_at")), "throttle", 5.0),
+            Window("week", float(week["utilization"]), epoch(week.get("resets_at")), "expiring", 168.0),
+        )
+        return Reading(account, windows, bool(extra.get("is_enabled")), "exact", now)

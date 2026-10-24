@@ -5,6 +5,7 @@ Run them with `docker compose --profile test run --rm it`: the test container pl
 
 import os
 import shutil
+import time
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import replace
@@ -12,8 +13,10 @@ from pathlib import Path
 
 import pytest
 
+from lastcall.accounts import Account, read_quota
 from lastcall.engines.base import Event, EventKind, Invocation, StepResult, StepSpec
 from lastcall.engines.scripted import Scripted
+from lastcall.quota import QuotaError
 from lastcall.sandbox import Sandbox, SandboxError
 
 SOCKET = os.environ.get("LASTCALL_SOCKET")
@@ -33,6 +36,8 @@ class Shell:
     capabilities: frozenset[str] = frozenset()
     egress: tuple[str, ...] = ()
     home: str = "/home/runner/.claude"
+    home_env: str = "CLAUDE_CONFIG_DIR"
+    login: tuple[str, ...] = ()
 
     def __init__(
         self, script: str, files: Mapping[str, str] | None = None, mounts: Mapping[str, Path] | None = None
@@ -142,3 +147,10 @@ def test_scripted_engine_through_the_sandbox(workspace: Path) -> None:
 def test_supervisor_refuses_a_workspace_outside_runs(workspace: Path) -> None:
     with pytest.raises(SandboxError, match="inside runs/"):
         SANDBOX.run(Shell("true"), StepSpec("test", "none", ""), workspace=DATA / "steps")
+
+
+@pytest.mark.parametrize("engine", ["claude-code", "codex"])
+def test_quota_probe_without_login_fails_cleanly(engine: str) -> None:
+    """The real CLI, through the proxy, with an empty account volume: an error, not a hang or a wrong reading."""
+    with pytest.raises(QuotaError):
+        read_quota(Account(f"it-nologin-{engine}", engine), SANDBOX, time.time())

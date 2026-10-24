@@ -22,7 +22,9 @@ from lastcall.engines.base import (
     count_tools,
     json_line,
     last,
+    probe_source,
 )
+from lastcall.quota import QuotaError, Reading, Window, epoch
 
 TOOL_ITEMS = {"command_execution", "file_change", "mcp_tool_call", "web_search"}
 
@@ -32,6 +34,8 @@ class Codex:
     capabilities: frozenset[str] = frozenset({"json_schema", "effort"})
     egress: tuple[str, ...] = ("api.openai.com", "auth.openai.com", "*.chatgpt.com")
     home: str = "/home/runner/.codex"
+    home_env: str = "CODEX_HOME"
+    login: tuple[str, ...] = ("codex", "login", "--device-auth")  # no browser callback needed in a container
 
     def invocation(self, step: StepSpec) -> Invocation:
         argv = ["codex", "exec", "-m", step.model, "-c", "agents.enabled=false"]
@@ -46,7 +50,7 @@ class Codex:
         prompt = step.prompt
         if step.shared_context is not None:
             prompt = step.shared_context.read_text(encoding="utf-8") + "\n\n---\n\n" + prompt
-        return Invocation(tuple(argv), stdin=prompt, env={"CODEX_HOME": self.home}, files=files)
+        return Invocation(tuple(argv), stdin=prompt, env={self.home_env: self.home}, files=files)
 
     def parse(self, line: str) -> Event | None:
         ev = json_line(line)
@@ -75,6 +79,46 @@ class Codex:
             error = "; ".join(errors) or (f"output is not valid JSON: {text[:300]}" if text else None)
         return StepResult(
             ok, output, error, tool_uses=count_tools(events), usage=usage.get("usage") if usage else None
+        )
+
+    def quota_invocation(self) -> Invocation:
+        """account/rateLimits/read on `codex app-server`: rate limits without calling the model (experimental)."""
+        probe = f"{CONTEXT_DIR}/probe.py"
+        return Invocation(
+            ("python3", probe),
+            env={self.home_env: self.home, "NO_COLOR": "1"},
+            files={probe: probe_source("codex_rate_limits")},
+        )
+
+    def quota_reading(self, account: str, lines: Sequence[str], now: float) -> Reading:
+        msg = next((m for line in reversed(lines) if (m := json_line(line)) and m.get("id") in (0, 1)), None)
+        if msg is None:
+            raise QuotaError("Codex gave no rate limits answer")
+        if msg.get("error"):
+            raise QuotaError(f"the rate limits request failed: {msg['error']}")
+        limits = (msg.get("result") or {}).get("rateLimits") or {}
+        primary, secondary = limits.get("primary") or {}, limits.get("secondary") or {}
+        if secondary.get("usedPercent") is None:
+            raise QuotaError("the answer has no weekly usage")
+        windows = (
+            Window(
+                "5h",
+                float(primary.get("usedPercent") or 0.0),
+                epoch(primary.get("resetsAt")),
+                "throttle",
+                (primary.get("windowDurationMins") or 300) / 60,
+            ),
+            Window(
+                "week",
+                float(secondary["usedPercent"]),
+                epoch(secondary.get("resetsAt")),
+                "expiring",
+                (secondary.get("windowDurationMins") or 7 * 24 * 60) / 60,
+            ),
+        )
+        credits = limits.get("credits") or {}
+        return Reading(
+            account, windows, bool(credits.get("hasCredits") or limits.get("spendControlReached")), "exact", now
         )
 
 

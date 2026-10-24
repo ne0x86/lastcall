@@ -11,8 +11,11 @@ import enum
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
+
+from lastcall.quota import Reading
 
 WORKDIR = "/work"  # the repository inside the runner
 CONTEXT_DIR = "/ctx"  # read-only files for the step: shared context, schema
@@ -70,12 +73,28 @@ class Engine(Protocol):
     capabilities: frozenset[str]  # "json_schema", "system_prompt_file", "effort"
     egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist; "*.x.com" adds subdomains
     home: str  # where the CLI keeps its login; the account's credential volume is mounted here
+    home_env: str  # the environment variable that points the CLI at `home`
+    login: tuple[str, ...]  # the CLI's own interactive login, run inside the sandbox
 
     def invocation(self, step: StepSpec) -> Invocation: ...
 
     def parse(self, line: str) -> Event | None: ...
 
     def result(self, step: StepSpec, events: Sequence[Event]) -> StepResult: ...
+
+
+@runtime_checkable
+class QuotaProbe(Protocol):
+    """An engine that can read its account's quota without calling the model."""
+
+    def quota_invocation(self) -> Invocation: ...
+
+    def quota_reading(self, account: str, lines: Sequence[str], now: float) -> Reading: ...
+
+
+def probe_source(name: str) -> str:
+    """A probe script from lastcall.probes, sent to the runner as a /ctx file (lastcall is not installed there)."""
+    return resources.files("lastcall.probes").joinpath(f"{name}.py").read_text(encoding="utf-8")
 
 
 def json_line(line: str) -> dict[str, Any] | None:

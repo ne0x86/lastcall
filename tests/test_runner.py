@@ -29,6 +29,8 @@ class Sleeper:
     capabilities: frozenset[str] = frozenset()
     egress: tuple[str, ...] = ()
     home: str = "/tmp"
+    home_env: str = "HOME"
+    login: tuple[str, ...] = ()
 
     def invocation(self, step: StepSpec) -> Invocation:
         return Invocation((sys.executable, "-c", "import time; time.sleep(30)"))

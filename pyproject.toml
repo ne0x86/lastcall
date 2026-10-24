@@ -19,6 +19,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+lastcall = "lastcall.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/ne0x86/lastcall"
 Issues = "https://github.com/ne0x86/lastcall/issues"
