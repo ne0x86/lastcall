@@ -12,8 +12,10 @@ COPY src ./src
 RUN pip install --no-cache-dir .
 
 FROM app AS service
-# /secrets exists in the image so that a new secrets volume starts owned by lastcall's user, with no access for others
-RUN useradd -m -u 1000 lastcall && mkdir -m 700 /secrets && chown 1000:1000 /secrets
+# git clones the projects. /secrets exists in the image so that a new secrets volume starts owned by lastcall's user,
+# with no access for others.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 lastcall && mkdir -m 700 /secrets && chown 1000:1000 /secrets
 USER 1000:1000
 ENTRYPOINT ["python", "-m", "lastcall"]
 
