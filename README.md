@@ -27,6 +27,16 @@ dependencies, improvement plans.
   [provider terms and responsible use](DESIGN.md#3-provider-terms-and-responsible-use).
 - **Self-hosted.** It runs on your machine with Docker. There is no hosted version.
 
+## Development
+
+You need [uv](https://docs.astral.sh/uv/).
+
+```sh
+uv sync                      # create the environment
+uv run pytest                # tests
+uv run ruff check && uv run ruff format --check && uv run mypy
+```
+
 ## License
 
 [Apache-2.0](LICENSE)
