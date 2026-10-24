@@ -24,11 +24,11 @@ def code(language: str) -> str:
     return LANGUAGES.get(language.strip().lower(), "en")
 
 
-def text(language: str, key: str, **values: object) -> str:
+def text(language: str, key: str, /, **values: object) -> str:
     return MESSAGES[code(language)][key].format(**values)
 
 
-def plural(language: str, key: str, count: int, **values: object) -> str:
+def plural(language: str, key: str, count: int, /, **values: object) -> str:
     return text(language, f"{key}.{'one' if count == 1 else 'other'}", count=count, **values)
 
 

@@ -14,6 +14,12 @@
 <a class="skip" href="#main">{{ t("web.skip") }}</a>
 <header class="top">
   <a class="brand" href="{{ url_for('home') }}"><img src="{{ url_for('static', filename='icon.svg') }}" alt="" width="28" height="28">lastcall</a>
+  {%- if csrf %}
+  <nav class="pages" aria-label="lastcall">
+    <a href="{{ url_for('home') }}"{% if nav == 'home' %} aria-current="page"{% endif %}>{{ t("web.nav.dashboard") }}</a>
+    <a href="{{ url_for('projects_page') }}"{% if nav == 'projects_page' %} aria-current="page"{% endif %}>{{ t("web.nav.projects") }}</a>
+  </nav>
+  {%- endif %}
   <nav class="languages" aria-label="{{ t('web.nav.language') }}">
     {%- for code, name in languages %}
     <a href="{{ url_for('set_language', code=code, next=request.full_path.rstrip('?')) }}" lang="{{ code }}" hreflang="{{ code }}"{% if code == lang %} aria-current="true"{% endif %}>{{ name }}</a>

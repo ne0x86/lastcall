@@ -116,8 +116,9 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 ```
 
 The dashboard shows your accounts, the next burst, what is running and what waits for you, and it pauses or resumes
-the service. From the terminal, `docker compose run --rm cli status` shows the same, and `cli pause` and
-`cli resume` hold or release the service. The dashboard listens only on this machine; to open it from elsewhere, put
+the bursts. The **Projects** page suggests repositories and says why, adds one by its address, changes each
+project's priority and language, and starts an audit when you ask. From the terminal, `docker compose run --rm cli status` shows the same, and `cli pause` and
+`cli resume` hold or release the bursts. The dashboard listens only on this machine; to open it from elsewhere, put
 a reverse proxy with HTTPS in front of it and set `LASTCALL_TRUST_PROXY=1`.
 
 ## ⚖️ Provider terms and responsible use

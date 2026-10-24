@@ -1,5 +1,5 @@
-"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, pull requests and the web UI's
-sessions.
+"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, pull requests, the suggestions for
+the installed repositories, the owner's orders and the web UI's sessions.
 
 Findings keep their story across runs, so the judge never proposes again what the owner rejected:
     pending    valid, meant for a pull request, not opened yet (it did not fit, or delivery failed)
@@ -19,11 +19,12 @@ import sqlite3
 import threading
 import time
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lastcall.quota import Reading, Window
+from lastcall.suggest import Suggestion
 
 if TYPE_CHECKING:
     from lastcall.recipes.audit import AuditReport
@@ -52,6 +53,10 @@ CREATE TABLE IF NOT EXISTS prs (
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY, csrf TEXT NOT NULL, created REAL NOT NULL, seen REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS suggestions (repo TEXT PRIMARY KEY, data TEXT NOT NULL, refreshed REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY, kind TEXT NOT NULL, repo TEXT NOT NULL, account TEXT, created REAL NOT NULL,
+    started REAL);
 """
 REMEMBERED = ("pending", "in_pr", "merged", "rejected", "decide", "resolved", "dismissed")
 
@@ -131,6 +136,46 @@ class Store:
 
     def project(self, repo: str) -> ProjectRow | None:
         return next((p for p in self.projects() if p.repo.lower() == repo.lower()), None)
+
+    def update_project(self, repo: str, *, active: bool, weight: float, language: str | None, max_prs: int) -> None:
+        self.x(
+            "UPDATE projects SET active = ?, weight = ?, language = ?, max_prs = ? WHERE repo = ?",
+            (int(active), weight, language, max_prs, repo),
+        )
+
+    # suggestions for the installed repositories, refreshed now and then from GitHub
+
+    def save_suggestions(self, found: Iterable[Suggestion], now: float) -> None:
+        rows = [(s.repo, json.dumps(asdict(s)), now) for s in found]
+        with self.lock:
+            self.db.execute("BEGIN")
+            try:
+                self.db.execute("DELETE FROM suggestions")
+                self.db.executemany("INSERT INTO suggestions VALUES (?, ?, ?)", rows)
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+            self.db.execute("COMMIT")
+        self.set_setting("suggestions_refreshed", f"{now:.0f}")
+
+    def suggestions(self) -> list[Suggestion]:
+        found = []
+        for r in self.q("SELECT data FROM suggestions"):
+            data = json.loads(r["data"])
+            found.append(Suggestion(**{**data, "why": tuple((k, v) for k, v in data["why"])}))
+        return sorted(found, key=lambda s: (-s.score, s.repo))
+
+    # orders from the owner, which the service carries out
+
+    def add_order(self, kind: str, repo: str, account: str | None, now: float) -> None:
+        self.x("INSERT INTO orders (kind, repo, account, created) VALUES (?, ?, ?, ?)", (kind, repo, account, now))
+
+    def orders(self) -> list[dict[str, Any]]:
+        """Orders not started yet, oldest first."""
+        return self.q("SELECT * FROM orders WHERE started IS NULL ORDER BY id")
+
+    def start_order(self, order_id: int, now: float) -> None:
+        self.x("UPDATE orders SET started = ? WHERE id = ?", (now, order_id))
 
     # quota readings
 

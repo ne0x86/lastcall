@@ -13,7 +13,7 @@ lastcall status                                 # accounts, projects and what ha
 lastcall serve [--port 8080]                    # the service, which bursts on its own, and its web UI
 lastcall web [--port 8080]                      # only the web UI
 lastcall password reset                         # forget the web UI's password: the log shows a new setup code
-lastcall pause | resume                         # stop or allow new runs of the service
+lastcall pause | resume                         # stop or allow the service's bursts
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines, web
+from lastcall import engines, projects, web
 from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
 from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
@@ -41,7 +41,7 @@ from lastcall.secretstore import SecretStore
 from lastcall.service import DEFAULT_RATE as SERVICE_RATE
 from lastcall.service import RATE_WINDOW, Service
 from lastcall.store import Store, import_runs
-from lastcall.suggest import Suggestion, suggest
+from lastcall.suggest import Suggestion
 from lastcall.supervisor import Config
 from lastcall.sync import sync
 from lastcall.web import auth
@@ -113,8 +113,8 @@ def main(argv: list[str] | None = None) -> int:
         dest="action", required=True
     )
     password.add_parser("reset", help="forget it and end every session; the service's log shows a new setup code")
-    commands.add_parser("pause", help="the service starts no new runs (a running one finishes)")
-    commands.add_parser("resume", help="the service may start runs again")
+    commands.add_parser("pause", help="no new bursts (a running one finishes; the audits you order still start)")
+    commands.add_parser("resume", help="the service may burst again")
     import_cmd = commands.add_parser("import", help="bring reports of runs made before the store into it")
     import_cmd.add_argument("--account", required=True, help="the account those runs spent")
 
@@ -183,7 +183,7 @@ def dispatch(args: argparse.Namespace) -> int:
             return 0
         case "pause" | "resume", _:
             store().set_setting("paused", "yes" if args.command == "pause" else "no")
-            print("Paused: no new runs." if args.command == "pause" else "Resumed.")
+            print("Paused: no new bursts." if args.command == "pause" else "Resumed.")
             return 0
         case "import", _:
             return import_reports(account(args.account))
@@ -356,19 +356,13 @@ def github_repos() -> int:
     client = github_client()
     if client is None:
         return 1
-    now, found = time.time(), []
     try:
-        installations = client.installations()
-        for inst in installations:
-            token = client.installation_token(int(inst["id"]))
-            for repo in client.repositories(token):
-                files, truncated = client.files(token, repo["full_name"], repo["default_branch"])
-                found.append(suggest(repo, files, now, truncated))
+        found = projects.refresh(store(), client, time.time())
     except GitHubError as e:
         print(e, file=sys.stderr)
         return 1
-    if not installations:
-        print(f"{client.app.name} is not installed anywhere yet. Install it:\n  {client.app.install_url}")
+    if not found:
+        print(f"{client.app.name} is not installed on any repository yet. Install it:\n  {client.app.install_url}")
         return 0
     print(describe_suggestions(found))
     return 0

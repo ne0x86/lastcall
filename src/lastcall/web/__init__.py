@@ -14,6 +14,7 @@ from __future__ import annotations
 import hmac
 import math
 import mimetypes
+import threading
 import time
 from collections.abc import Callable, Sequence
 from functools import wraps
@@ -25,11 +26,11 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, i18n
-from lastcall.github import App
+from lastcall import __version__, i18n, projects
+from lastcall.github import App, GitHub, GitHubError
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
-from lastcall.web import auth, dashboard
+from lastcall.web import auth, dashboard, project_views
 
 COOKIE = "lastcall_session"
 LANGUAGE_COOKIE = "lastcall_language"
@@ -63,7 +64,11 @@ def create_app(
     log: Log = print,
     trust_proxy: bool = False,
     origins: Sequence[str] = (),
+    github: Callable[[], GitHub | None] | None = None,
+    background: Callable[[Callable[[], None]], None] | None = None,
 ) -> Flask:
+    """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
+    `background` runs slow work, such as reading the installed repositories, outside the request."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -73,6 +78,19 @@ def create_app(
     throttle = auth.Throttle(clock)
     if not owner.has_password():
         setup_code.issue()
+    reading = threading.Event()  # the installed repositories are being read from GitHub
+
+    def connect() -> GitHub | None:
+        if github is not None:
+            return github()
+        found = App.load(secrets)
+        return GitHub(found) if found else None
+
+    def later(work: Callable[[], None]) -> None:
+        if background is not None:
+            background(work)
+        else:
+            threading.Thread(target=work, name="web-refresh", daemon=True).start()
 
     def t(key: str, **values: object) -> str:
         return i18n.text(g.lang, key, **values)
@@ -135,10 +153,12 @@ def create_app(
     def template_globals() -> dict[str, Any]:
         return {
             "t": t,
+            "tn": lambda key, count, **values: i18n.plural(g.lang, key, count, **values),
             "lang": g.get("lang", "en"),
             "languages": LANGUAGES,
             "csrf": g.session["csrf"] if g.get("session") else None,
             "version": __version__,
+            "nav": request.endpoint,
             "docs": DOCS,
             "quickstart": QUICKSTART,
         }
@@ -203,6 +223,95 @@ def create_app(
             return problem(404, "web.error.not_found")
         store.set_setting("paused", "yes" if action == "pause" else "no")
         return redirect(url_for("home", done="paused" if action == "pause" else "resumed"))
+
+    @app.get("/projects")
+    @signed_in
+    def projects_page() -> ResponseReturnValue:
+        return show_projects()
+
+    def show_projects(status: int = 200, error: str = "", install: str = "") -> ResponseReturnValue:
+        found = App.load(secrets)
+        view = project_views.build(store, g.lang, clock(), found.install_url if found else "", reading.is_set())
+        done = request.args.get("done", "")
+        known = ("added", "saved", "queued", "refreshing")
+        message = t(f"web.done.{done}") if done in known and not error else ""
+        return page("projects.html", status, v=view, done=message, error=error, install=install)
+
+    @app.post("/projects/add")
+    @signed_in
+    def add_project() -> ResponseReturnValue:
+        client = connect()
+        if client is None:
+            return show_projects(400, t("web.add.no_app"))
+        repo = projects.parse_repo(request.form.get("repo", ""))
+        if repo is None:
+            return show_projects(400, t("web.add.bad"))
+        try:
+            name = projects.installed_name(client, repo)
+        except GitHubError as e:
+            if e.status == 404:
+                return show_projects(400, t("web.add.not_installed", repo=repo), client.app.install_url)
+            return show_projects(502, t("web.add.error", error=e))
+        except OSError as e:
+            return show_projects(502, t("web.add.error", error=e))
+        if store.project(name) is None:
+            store.add_project(name)
+            log(f"Web UI: project {name} added")
+        return redirect(url_for("projects_page", done="added"))
+
+    @app.post("/projects/refresh")
+    @signed_in
+    def refresh_projects() -> ResponseReturnValue:
+        client = connect()
+        if client is None:
+            return show_projects(400, t("web.add.no_app"))
+        if not reading.is_set():
+            reading.set()
+
+            def work() -> None:
+                try:
+                    projects.refresh(store, client, clock())
+                except (GitHubError, OSError) as e:
+                    log(f"suggestions: {e}")
+                finally:
+                    reading.clear()
+
+            later(work)
+        return redirect(url_for("projects_page", done="refreshing"))
+
+    @app.post("/projects/<owner>/<name>")
+    @signed_in
+    def project_settings(owner: str, name: str) -> ResponseReturnValue:
+        project = store.project(f"{owner}/{name}")
+        if project is None:
+            return problem(404, "web.error.not_found")
+        form = request.form
+        language = form.get("language", "")
+        try:
+            weight, max_prs = float(form.get("weight", "")), int(form.get("max_prs", ""))
+        except ValueError:
+            return problem(400, "web.error.form")
+        allowed = {"", *project_views.LANGUAGES, project.language or ""}
+        if not 0 < weight <= 10 or not 1 <= max_prs <= 10 or language not in allowed:
+            return problem(400, "web.error.form")
+        store.update_project(
+            project.repo, active=form.get("active") == "1", weight=weight, language=language or None, max_prs=max_prs
+        )
+        return redirect(url_for("projects_page", done="saved"))
+
+    @app.post("/projects/<owner>/<name>/audit")
+    @signed_in
+    def audit_now(owner: str, name: str) -> ResponseReturnValue:
+        project = store.project(f"{owner}/{name}")
+        if project is None:
+            return problem(404, "web.error.not_found")
+        account = request.form.get("account", "")
+        if account and account not in {a.id for a in store.accounts(enabled_only=True)}:
+            return problem(400, "web.error.form")
+        if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
+            store.add_order("audit", project.repo, account or None, clock())
+            log(f"Web UI: audit of {project.repo} ordered")
+        return redirect(url_for("projects_page", done="queued"))
 
     @app.get("/language/<code>")
     def set_language(code: str) -> ResponseReturnValue:

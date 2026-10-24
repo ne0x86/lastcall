@@ -1,9 +1,11 @@
 import re
 from pathlib import Path
+from typing import cast
 
 import pytest
 from flask.testing import FlaskClient
 
+from lastcall.github import GitHub
 from lastcall.quota import HOUR, Reading, Window
 from lastcall.recipes.audit import AuditReport
 from lastcall.secretstore import SecretStore
@@ -21,6 +23,7 @@ from lastcall.web.auth import (
     hash_password,
     start_session,
 )
+from test_projects import FakeGitHub
 
 NOW = 1_800_000_000.0
 DAY = 86_400.0
@@ -37,12 +40,22 @@ class Clock:
 
 
 class Web:
-    def __init__(self, tmp_path: Path, origins: tuple[str, ...] = ()) -> None:
+    def __init__(self, tmp_path: Path, origins: tuple[str, ...] = (), github: FakeGitHub | None = None) -> None:
         self.clock = Clock()
         self.store = Store(tmp_path / "state" / "lastcall.db")
         self.secrets = SecretStore(tmp_path / "secrets")
         self.logs: list[str] = []
-        self.app = create_app(self.store, self.secrets, clock=self.clock, log=self.logs.append, origins=origins)
+        if github is not None:
+            github.app.save(self.secrets)
+        self.app = create_app(
+            self.store,
+            self.secrets,
+            clock=self.clock,
+            log=self.logs.append,
+            origins=origins,
+            github=(lambda: cast(GitHub, github)) if github else None,
+            background=lambda work: work(),
+        )
         self.client = self.app.test_client()
 
     def code(self) -> str:
@@ -278,3 +291,93 @@ def test_many_failures_from_anywhere_lock_everyone() -> None:
     assert throttle.wait("10.0.1.1") == 15 * 60
     clock.now += 15 * 60
     assert throttle.wait("10.0.1.1") == 0
+
+
+@pytest.fixture
+def github_web(tmp_path: Path) -> Web:
+    web = Web(tmp_path, github=FakeGitHub())
+    web.set_up()
+    return web
+
+
+def test_projects_page_without_the_github_app(web: Web) -> None:
+    web.set_up()
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert "Create the GitHub App first" in page and 'aria-current="page">Projects' in page
+    response = web.client.post("/projects/add", data={"csrf": web.csrf(), "repo": "acme/api"}, headers=SITE)
+    assert response.status_code == 400
+
+
+def test_add_a_project_by_its_address(github_web: Web) -> None:
+    web = github_web
+    csrf = web.csrf()
+
+    def add(repo: str) -> tuple[int, str]:
+        response = web.client.post("/projects/add", data={"csrf": csrf, "repo": repo}, headers=SITE)
+        return response.status_code, response.get_data(as_text=True)
+
+    status, page = add("not a repository")
+    assert status == 400 and "That is not a GitHub repository" in page
+    status, page = add("https://github.com/acme/elsewhere")
+    assert status == 400 and "not installed on acme/elsewhere" in page
+    assert 'href="https://github.com/apps/lastcall-test/installations/new"' in page
+    status, _ = add("https://github.com/ACME/API/pulls")
+    assert status == 302
+    assert [p.repo for p in web.store.projects()] == ["acme/api"]  # as GitHub writes it
+    web.store.update_project("acme/api", active=True, weight=2, language="Spanish", max_prs=2)
+    add("acme/api")  # adding it again keeps its settings
+    assert web.store.projects()[0].weight == 2
+
+
+def test_project_settings(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    form = {"csrf": web.csrf(), "weight": "2", "language": "Spanish", "max_prs": "1"}
+    assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
+    project = web.store.projects()[0]
+    assert (project.active, project.weight, project.language, project.max_prs) == (False, 2, "Spanish", 1)
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert '<option value="2" selected>High (' + chr(0xD7) + "2)</option>" in page  # the multiplication sign
+    assert '<option value="Spanish" selected>Spanish</option>' in page
+    for wrong in ({"weight": "0"}, {"weight": "x"}, {"max_prs": "99"}, {"language": "Klingon"}):
+        response = web.client.post("/projects/acme/api", data={**form, **wrong}, headers=SITE)
+        assert response.status_code == 400
+    assert web.client.post("/projects/acme/nothing", data=form, headers=SITE).status_code == 404
+
+
+def test_audit_now_queues_one_order(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert "Add an AI account to audit it." in page
+    web.store.add_account("claude", "claude-code")
+    csrf = web.csrf()
+    wrong = web.client.post("/projects/acme/api/audit", data={"csrf": csrf, "account": "nobody"}, headers=SITE)
+    assert wrong.status_code == 400
+    for _ in range(2):
+        response = web.client.post("/projects/acme/api/audit", data={"csrf": csrf, "account": ""}, headers=SITE)
+        assert response.headers["Location"] == "/projects?done=queued"
+    assert [(o["repo"], o["account"]) for o in web.store.orders()] == [("acme/api", None)]
+    page = web.client.get("/projects?done=queued").get_data(as_text=True)
+    assert "Audit queued. It starts within a minute" in page and "Audit queued: it starts as soon as" in page
+
+
+def test_suggestions_in_spanish(github_web: Web) -> None:
+    web = github_web
+    page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Aún no se ha leído de GitHub." in page
+    response = web.client.post("/projects/refresh", data={"csrf": web.csrf()}, headers=SITE)
+    assert response.headers["Location"] == "/projects?done=refreshing"
+    page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Leído de GitHub ahora mismo." in page
+    assert 'acme/api</a> <span class="badge">sugerido</span>' in page
+    assert "tests · CI · 1 issue abierto" in page and "unos 11k tokens de código" in page
+    assert "<summary>1 repositorio más</summary>" in page and "excluido: archivado" in page
+    web.store.add_project("acme/api")
+    page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "sugerido" not in page  # projects leave the suggestions
+
+
+def test_the_dashboard_sends_to_the_projects_page(github_web: Web) -> None:
+    page = github_web.client.get("/").get_data(as_text=True)
+    assert 'Choose your projects: lastcall suggests them and says why. <a href="/projects">Projects</a>' in page

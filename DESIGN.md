@@ -476,8 +476,11 @@ is running, pull requests to review), projects, runs, decisions, statistics, acc
 
 It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
 (`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the
-language is the browser's, until the owner picks one. The first version has the sign-in and the dashboard, with
-pause and resume; the dashboard also says when the service has stopped writing its heartbeat. Behind a reverse
+language is the browser's, until the owner picks one. So far it has the sign-in, the dashboard (with pause and
+resume, and a notice when the service stops writing its heartbeat) and the projects page: each project's settings,
+an audit on demand, adding a repository by its address, and the suggestions, which the service reads from GitHub
+every 6 hours and the owner can read again at any time. Pause holds the bursts only: an audit the owner orders
+still starts, on the free account with the most quota left before its reset. Behind a reverse
 proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address and scheme from the proxy, and
 `LASTCALL_WEB_ORIGIN` lists the public origins that forms may come from.
 
