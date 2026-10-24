@@ -1,8 +1,10 @@
 # The sandbox: egress proxy, supervisor and the runner image. The lastcall service joins later.
 #
-#   docker compose --profile build build           # build all images, the runner included
-#   docker compose up -d                           # egress proxy and supervisor
-#   docker compose --profile test run --rm it      # sandbox integration tests
+#   docker compose --profile build build                    # build all images, the runner included
+#   docker compose up -d                                    # egress proxy and supervisor
+#   uv run lastcall login <account> --engine claude-code    # on the host: the CLI's own login
+#   docker compose run --rm cli quota <account> --engine claude-code
+#   docker compose --profile test run --rm it               # sandbox integration tests
 name: lastcall
 
 services:
@@ -21,7 +23,6 @@ services:
   supervisor:
     build:
       context: .
-      dockerfile: supervisor/Dockerfile
       target: supervisor
     image: lastcall-supervisor:dev
     network_mode: none  # it talks to Docker through the socket and to the service through a Unix socket
@@ -45,14 +46,29 @@ services:
     image: lastcall-runner:dev
     profiles: [build]
 
+  cli:  # lastcall's command line where the supervisor socket is: docker compose run --rm cli ...
+    build:
+      context: .
+      target: service
+    image: lastcall-service:dev
+    profiles: [cli]
+    network_mode: none
+    environment:
+      LASTCALL_SOCKET: /run/lastcall/supervisor.sock
+      LASTCALL_DATA_ROOT: /data
+    volumes:
+      - data:/data
+      - run:/run/lastcall
+    depends_on:
+      supervisor:
+        condition: service_healthy
+
   it:
     build:
       context: .
-      dockerfile: supervisor/Dockerfile
       target: test
     image: lastcall-it:dev
     profiles: [test]
-    user: "1000:1000"
     network_mode: none
     environment:
       LASTCALL_SOCKET: /run/lastcall/supervisor.sock

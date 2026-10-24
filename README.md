@@ -40,8 +40,16 @@ uv run ruff check && uv run ruff format --check && uv run mypy
 The sandbox (egress proxy, supervisor and runner image) needs Docker 26 or later:
 
 ```sh
-docker compose --profile build --profile test build
+docker compose --profile build --profile cli --profile test build
 docker compose --profile test run --rm it   # sandbox tests against the real containers
+```
+
+Connect an account and read its quota. The login is the CLI's own; lastcall never sees it:
+
+```sh
+docker compose up -d                                          # egress proxy and supervisor
+uv run lastcall login claude-max --engine claude-code         # or: lastcall login chatgpt --engine codex
+docker compose run --rm cli quota claude-max --engine claude-code
 ```
 
 ## License

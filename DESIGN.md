@@ -66,7 +66,8 @@ lastcall's rules follow from that:
 1. It runs each vendor's official, unmodified CLI. It never calls a subscription API with a token of its own and
    never re-implements a vendor's client.
 2. It never sees subscription credentials. The owner signs in with the CLI's own login flow, inside a credential
-   volume that only that account's runner containers mount.
+   volume that only that account's runner containers mount. `lastcall login` only starts that flow (`claude auth
+   login`, `codex login --device-auth`) in a container with the isolation of a step, on the owner's terminal.
 3. API keys are a first-class alternative for every engine.
 4. When the owner connects an account, lastcall shows a summary of that provider's current terms with a link to the
    source. The owner decides.
@@ -177,7 +178,13 @@ Each quota reader declares its **fidelity**:
 - `none`: there is nothing to read, so only the `schedule` policy applies.
 
 The two exact readers that exist today use experimental CLI interfaces. Engine versions are therefore pinned and
-updated on purpose, and the readers fall back to `events`.
+updated on purpose, and the readers fall back to `events`. Each one is a small script (`lastcall.probes`) that runs
+in the sandbox with the account volume mounted:
+
+- Claude Code: a stream-json session with the `initialize` and `get_usage` control requests. The answer carries
+  `rate_limits.five_hour` and `rate_limits.seven_day` (`utilization` 0–100, `resets_at`) and `extra_usage.is_enabled`.
+- Codex: `codex app-server`, `initialize` and then `account/rateLimits/read`. The answer carries `primary` and
+  `secondary` windows (`usedPercent`, `windowDurationMins`, `resetsAt`), `credits` and `spendControlReached`.
 
 ### Spend policies
 
@@ -522,3 +529,6 @@ and signals. A plugin is a normal Python package. Recipes and reviewers are data
    dependency comes in only when a feature needs it, and its pull request says why. Few and well known: PyYAML for
    recipes, Apprise for notifications and cryptography for secrets are expected. Development uses uv; CI runs ruff,
    mypy (strict) and pytest on the oldest and the newest supported Python.
+7. Claude also reports per-model weekly windows (`seven_day_opus`, `seven_day_sonnet`, `model_scoped`). lastcall
+   reads only the 5-hour and weekly windows for now. A step on a model whose own window is full would fail; the gate
+   should check the window of the step's model.
