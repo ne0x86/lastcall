@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"th_1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"i1","type":"reasoning","text":"Looking at the retry loop."}}
+{"type":"item.completed","item":{"id":"i2","type":"command_execution","command":"rg -n retry","exit_code":0}}
+{"type":"item.completed","item":{"id":"i3","type":"command_execution","command":"sed -n 1,40p db.py","exit_code":0}}
+{"type":"item.completed","item":{"id":"i4","type":"agent_message","text":"{\"summary\":\"One bug.\",\"findings\":[{\"title\":\"Retry without backoff\"}]}"}}
+{"type":"turn.completed","usage":{"input_tokens":5000,"cached_input_tokens":4000,"output_tokens":200}}
