@@ -183,6 +183,9 @@ in the sandbox with the account volume mounted:
 
 - Claude Code: a stream-json session with the `initialize` and `get_usage` control requests. The answer carries
   `rate_limits.five_hour` and `rate_limits.seven_day` (`utilization` 0–100, `resets_at`) and `extra_usage.is_enabled`.
+  For the CLI, fetching the plan usage is "nonessential traffic": with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`,
+  the runner default, `rate_limits` comes back null. The probe unsets it and keeps telemetry and error reporting
+  off.
 - Codex: `codex app-server`, `initialize` and then `account/rateLimits/read`. The answer carries `primary` and
   `secondary` windows (`usedPercent`, `windowDurationMins`, `resetsAt`), `credits` and `spendControlReached`.
 

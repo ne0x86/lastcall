@@ -11,7 +11,10 @@ import subprocess
 import sys
 from typing import Any
 
-COMMAND = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+COMMAND = [
+    *("claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"),
+    "--strict-mcp-config",  # no claude.ai connectors: the probe needs no MCP servers
+]
 USAGE_ID = "lastcall-usage"
 REQUESTS: list[dict[str, Any]] = [
     {"type": "control_request", "request_id": "lastcall-init", "request": {"subtype": "initialize"}},

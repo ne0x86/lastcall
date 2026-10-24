@@ -30,6 +30,14 @@ def control(subtype: str, **rest: object) -> str:
 # Claude Code
 
 
+def test_claude_probe_lets_the_cli_fetch_the_plan_usage() -> None:
+    """With CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 (the runner default) get_usage answers rate_limits: null."""
+    env = ClaudeCode().quota_invocation().env
+    assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == ""
+    assert env["DISABLE_TELEMETRY"] == "1"
+    assert env["DISABLE_ERROR_REPORTING"] == "1"
+
+
 def test_claude_probe_and_reading() -> None:
     code, lines = probe("claude_usage.py", "fake_claude.py")
     assert code == 0

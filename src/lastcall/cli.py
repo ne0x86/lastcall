@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from lastcall import engines
@@ -85,7 +85,7 @@ def quota(account: Account) -> int:
 def describe(reading: Reading, now: float) -> str:
     lines = [f"{reading.account} ({reading.fidelity})"]
     for w in reading.windows:
-        reset = datetime.fromtimestamp(w.resets_at).strftime("%a %d %H:%M") if w.resets_at else "unknown"
+        reset = datetime.fromtimestamp(w.resets_at, UTC).strftime("%a %d %H:%M UTC") if w.resets_at else "unknown"
         lines.append(f"  {w.name:<5} {w.used_pct:5.1f}% used, resets {reset} ({w.role})")
     lines.append(f"  paid usage: {'ACTIVE, nothing will be spent' if reading.paid_usage else 'off'}")
     p = plan(reading, SpendPolicy(), DEFAULT_RATE, now)

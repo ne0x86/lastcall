@@ -94,7 +94,15 @@ class ClaudeCode:
     def quota_invocation(self) -> Invocation:
         """The get_usage control request: plan usage without calling the model (experimental in the CLI)."""
         probe = f"{CONTEXT_DIR}/probe.py"
-        env = {self.home_env: self.home, "NO_COLOR": "1"}
+        env = {
+            self.home_env: self.home,
+            "NO_COLOR": "1",
+            # For the CLI, fetching the plan usage is "nonessential traffic": with the runner's default
+            # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1, get_usage answers rate_limits: null. Telemetry stays off.
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "",
+            "DISABLE_TELEMETRY": "1",
+            "DISABLE_ERROR_REPORTING": "1",
+        }
         return Invocation(("python3", probe), env=env, files={probe: probe_source("claude_usage")})
 
     def quota_reading(self, account: str, lines: Sequence[str], now: float) -> Reading:

@@ -59,6 +59,6 @@ def test_describe_a_reading() -> None:
         NOW,
     )
     text = describe(reading, NOW)
-    assert "week   36.0% used" in text
+    assert "week   36.0% used, resets Tue 19 12:00 UTC" in text
     assert "paid usage: off" in text
     assert "burst: no (burst in" in text
