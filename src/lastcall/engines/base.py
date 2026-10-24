@@ -68,7 +68,7 @@ class StepResult:
 class Engine(Protocol):
     name: str
     capabilities: frozenset[str]  # "json_schema", "system_prompt_file", "effort"
-    egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist
+    egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist; "*.x.com" adds subdomains
     home: str  # where the CLI keeps its login; the account's credential volume is mounted here
 
     def invocation(self, step: StepSpec) -> Invocation: ...

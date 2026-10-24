@@ -30,7 +30,7 @@ TOOL_ITEMS = {"command_execution", "file_change", "mcp_tool_call", "web_search"}
 class Codex:
     name: str = "codex"
     capabilities: frozenset[str] = frozenset({"json_schema", "effort"})
-    egress: tuple[str, ...] = ("api.openai.com", "auth.openai.com", "chatgpt.com")
+    egress: tuple[str, ...] = ("api.openai.com", "auth.openai.com", "*.chatgpt.com")
     home: str = "/home/runner/.codex"
 
     def invocation(self, step: StepSpec) -> Invocation:
