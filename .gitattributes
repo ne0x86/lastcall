@@ -1,0 +1,4 @@
+# LF everywhere: scripts and configuration run inside Linux containers.
+* text=auto eol=lf
+*.png binary
+*.ico binary
