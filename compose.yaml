@@ -4,6 +4,8 @@
 #   docker compose up -d                                    # egress proxy and supervisor
 #   uv run lastcall login <account> --engine claude-code    # on the host: the CLI's own login
 #   docker compose run --rm cli quota <account> --engine claude-code
+#   docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <login>
+#   docker compose run --rm cli github repos
 #   docker compose --profile test run --rm it               # sandbox integration tests
 name: lastcall
 
@@ -52,13 +54,15 @@ services:
       target: service
     image: lastcall-service:dev
     profiles: [cli]
-    network_mode: none
+    networks: [outside]  # lastcall itself talks to GitHub; agents never do
     environment:
       LASTCALL_SOCKET: /run/lastcall/supervisor.sock
       LASTCALL_DATA_ROOT: /data
+      LASTCALL_SECRETS: /secrets
     volumes:
       - data:/data
       - run:/run/lastcall
+      - secrets:/secrets
     depends_on:
       supervisor:
         condition: service_healthy
@@ -92,3 +96,5 @@ volumes:
     name: lastcall-data
   run:
     name: lastcall-run
+  secrets:
+    name: lastcall-secrets

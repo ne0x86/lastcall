@@ -52,6 +52,14 @@ uv run lastcall login claude-max --engine claude-code         # or: lastcall log
 docker compose run --rm cli quota claude-max --engine claude-code
 ```
 
+Connect GitHub. Each instance creates its own private GitHub App in one click, then installs it on the repositories
+lastcall may work on:
+
+```sh
+docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-login>   # open http://127.0.0.1:8765
+docker compose run --rm cli github repos                                               # what lastcall suggests
+```
+
 ## License
 
 [Apache-2.0](LICENSE)
