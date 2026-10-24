@@ -304,7 +304,7 @@ def pr_footer(report: AuditReport, ids: Sequence[str], model: str, effort: str |
 
 
 def issue_title(report: AuditReport, count: int) -> str:
-    noun = i18n.text(report.language, "issue.one" if count == 1 else "issue.many")
+    noun = i18n.text(report.language, "issue.one" if count == 1 else "issue.other")
     project = report.repo.split("/")[-1]
     return i18n.text(report.language, "issue.title", count=count, noun=noun, project=project, sha=report.sha)
 

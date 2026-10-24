@@ -19,6 +19,8 @@ classifiers = [
 ]
 dependencies = [
     "cryptography>=43",
+    "flask>=3.1",
+    "waitress>=3.0.2",
 ]
 
 [project.scripts]
@@ -29,7 +31,7 @@ Homepage = "https://github.com/ne0x86/lastcall"
 Issues = "https://github.com/ne0x86/lastcall/issues"
 
 [dependency-groups]
-dev = ["mypy>=1.13", "pytest>=8.3", "ruff>=0.8"]
+dev = ["mypy>=1.13", "pytest>=8.3", "ruff>=0.8", "types-waitress>=3.0.1"]
 
 [tool.hatch.version]
 path = "src/lastcall/__init__.py"

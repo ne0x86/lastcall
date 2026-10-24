@@ -10,7 +10,9 @@ lastcall audit <owner/name> --account <account> # find, judge, fix, verify, open
 lastcall deliver <run> --account <account>      # the pull requests of a report-only audit
 lastcall sync                                   # what the owner did with lastcall's pull requests and issues
 lastcall status                                 # accounts, projects and what happened to their findings
-lastcall serve                                  # the service: bursts on its own when quota would go unused
+lastcall serve [--port 8080]                    # the service, which bursts on its own, and its web UI
+lastcall web [--port 8080]                      # only the web UI
+lastcall password reset                         # forget the web UI's password: the log shows a new setup code
 lastcall pause | resume                         # stop or allow new runs of the service
 """
 
@@ -22,11 +24,12 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines
+from lastcall import engines, web
 from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
 from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
@@ -41,6 +44,7 @@ from lastcall.store import Store, import_runs
 from lastcall.suggest import Suggestion, suggest
 from lastcall.supervisor import Config
 from lastcall.sync import sync
+from lastcall.web import auth
 
 DEFAULT_RATE = 2.0  # % of the week per hour until the rate is learned from readings
 RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -96,7 +100,19 @@ def main(argv: list[str] | None = None) -> int:
 
     commands.add_parser("sync", help="what the owner did with lastcall's pull requests and issues")
     commands.add_parser("status", help="accounts, projects and what happened to their findings")
-    commands.add_parser("serve", help="run the service: it spends quota that would go unused, on active projects")
+    serve_cmd = commands.add_parser(
+        "serve", help="run the service and its web UI: it spends quota that would go unused, on active projects"
+    )
+    web_cmd = commands.add_parser("web", help="serve only the web UI")
+    for cmd in (serve_cmd, web_cmd):
+        cmd.add_argument(
+            "--host", default=os.environ.get("LASTCALL_WEB_HOST", "127.0.0.1"), help="address to listen on"
+        )
+        cmd.add_argument("--port", type=int, default=int(os.environ.get("LASTCALL_WEB_PORT", "8080")))
+    password = commands.add_parser("password", help="the web UI's password").add_subparsers(
+        dest="action", required=True
+    )
+    password.add_parser("reset", help="forget it and end every session; the service's log shows a new setup code")
     commands.add_parser("pause", help="the service starts no new runs (a running one finishes)")
     commands.add_parser("resume", help="the service may start runs again")
     import_cmd = commands.add_parser("import", help="bring reports of runs made before the store into it")
@@ -157,10 +173,13 @@ def dispatch(args: argparse.Namespace) -> int:
             print(status(store()))
             return 0
         case "serve", _:
-            client = github_client()
-            if client is None:
-                return 1
-            Service(Instance(sandbox(), client, store()), log=log).serve()
+            return serve(args.host, args.port, scheduler=True)
+        case "web", _:
+            return serve(args.host, args.port, scheduler=False)
+        case "password", "reset":
+            auth.Owner(secret_store()).reset()
+            store().drop_sessions()
+            print("Password forgotten and sessions ended. Open the web UI: the service's log shows a setup code.")
             return 0
         case "pause" | "resume", _:
             store().set_setting("paused", "yes" if args.command == "pause" else "no")
@@ -254,6 +273,29 @@ def deliver_run(run: str, acc: Account, max_prs: int | None) -> int:
         return 1
     print("\n" + save(run_dir, report))
     return 0
+
+
+def serve(host: str, port: int, scheduler: bool) -> int:
+    st, secrets = store(), secret_store()
+    origins = [o.strip() for o in os.environ.get("LASTCALL_WEB_ORIGIN", "").split(",") if o.strip()]
+    app = web.create_app(
+        st, secrets, log=log, trust_proxy=os.environ.get("LASTCALL_TRUST_PROXY") == "1", origins=origins
+    )
+    if scheduler:
+        threading.Thread(target=schedule, args=(st, secrets), name="service", daemon=True).start()
+    web.serve(app, host, port, log)
+    return 0
+
+
+def schedule(st: Store, secrets: SecretStore) -> None:
+    """The service, as soon as the GitHub App exists. Until then only the web UI works, and the heartbeat says the
+    service is alive."""
+    if App.load(secrets) is None:
+        log("Waiting for the GitHub App: create it with `lastcall github setup --owner <login>`")
+    while (app := App.load(secrets)) is None:
+        st.set_setting("heartbeat", f"{time.time():.0f}")
+        time.sleep(60)
+    Service(Instance(sandbox(), GitHub(app), st), log=log).serve()
 
 
 def import_reports(acc: Account) -> int:

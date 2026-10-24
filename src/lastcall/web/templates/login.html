@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ t("web.login.title") }}{% endblock %}
+{% block main %}
+<section class="card narrow">
+  <h1>{{ t("web.login.title") }}</h1>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" class="stack">
+    <div>
+      <label for="password">{{ t("web.login.password") }}</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    </div>
+    <button>{{ t("web.login.submit") }}</button>
+  </form>
+  <p class="muted">{{ t("web.login.forgot") }}</p>
+  <pre><code>docker compose run --rm cli password reset</code></pre>
+</section>
+{% endblock %}

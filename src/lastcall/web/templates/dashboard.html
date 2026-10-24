@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ t("web.dashboard.title") }}{% endblock %}
+{% block main %}
+<h1>{{ t("web.dashboard.title") }}</h1>
+
+{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
+
+<section class="card status" aria-label="{{ t('web.service.title') }}">
+  <p>{{ v.service }}</p>
+  <form method="post" action="{{ url_for('service', action='resume' if v.paused else 'pause') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="secondary">{{ t("web.service.resume") if v.paused else t("web.service.pause") }}</button>
+  </form>
+</section>
+
+{% if v.down %}
+<section class="card notice">
+  <p>{{ t("web.service.down") }}{% if v.seen %} {{ v.seen }}{% endif %}</p>
+  <pre><code>docker compose --profile service up -d</code></pre>
+</section>
+{% endif %}
+
+{% if v.start %}
+<section class="card notice" aria-labelledby="start-title">
+  <h2 id="start-title">{{ t("web.start.title") }}</h2>
+  <ol class="steps">
+    {%- for step in v.start %}
+    <li><p>{{ step.text }}</p><pre><code>{{ step.command }}</code></pre></li>
+    {%- endfor %}
+  </ol>
+  <p><a href="{{ quickstart }}">{{ t("web.start.more") }}</a></p>
+</section>
+{% endif %}
+
+{% if v.accounts %}
+<section aria-labelledby="accounts-title">
+  <h2 id="accounts-title">{{ t("web.accounts.title") }}</h2>
+  <div class="grid">
+    {%- for a in v.accounts %}
+    {%- set account = loop.index %}
+    <article class="card">
+      <h3>{{ a.id }} <span class="badge">{{ a.engine }}</span></h3>
+      <p class="muted">{{ a.details }}</p>
+      {%- for w in a.windows %}
+      <div class="window">
+        <p class="window-label"><span id="window-{{ account }}-{{ loop.index }}">{{ w.label }}</span> <span>{{ w.used_text }}{% if w.resets %} · {{ w.resets }}{% endif %}</span></p>
+        <meter aria-labelledby="window-{{ account }}-{{ loop.index }}" min="0" max="100" low="70" high="90" optimum="0" value="{{ w.used }}">{{ w.used_text }}</meter>
+      </div>
+      {%- endfor %}
+      {%- if a.paid %}<p class="error">{{ t("web.accounts.paid") }}</p>{% endif %}
+      {%- if a.plan %}<p>{{ a.plan }}</p>{% endif %}
+      {%- if a.working %}<p class="working">{{ a.working }}</p>{% endif %}
+      <p class="muted small">{{ a.read }}</p>
+    </article>
+    {%- endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="review-title">
+  <h2 id="review-title">{{ t("web.review.title") }}</h2>
+  {%- if not v.prs and not v.decisions %}
+  <p class="muted">{{ t("web.review.none") }}</p>
+  {%- endif %}
+  {%- if v.prs %}
+  <h3>{{ t("web.review.prs") }}</h3>
+  <ul class="plain">
+    {%- for pr in v.prs %}
+    <li><a href="{{ pr.url }}">{{ pr.text }}</a> <span class="muted">{{ pr.note }}</span></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+  {%- if v.decisions %}
+  <h3>{{ t("web.review.decisions") }}</h3>
+  <ul class="plain">
+    {%- for d in v.decisions %}
+    <li><a href="{{ d.url }}">{{ d.text }}</a></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+</section>
+
+<section class="card" aria-labelledby="projects-title">
+  <h2 id="projects-title">{{ t("web.projects.title") }}</h2>
+  {%- if v.projects %}
+  <div class="table">
+    <table>
+      <thead><tr>
+        <th scope="col">{{ t("web.projects.project") }}</th>
+        <th scope="col">{{ t("web.projects.state") }}</th>
+        <th scope="col">{{ t("web.projects.last") }}</th>
+        <th scope="col">{{ t("web.projects.findings") }}</th>
+        <th scope="col" class="number">{{ t("web.projects.prs") }}</th>
+      </tr></thead>
+      <tbody>
+        {%- for p in v.projects %}
+        <tr>
+          <th scope="row">{{ p.repo }}</th>
+          <td data-label="{{ t('web.projects.state') }}">{{ p.state }}</td>
+          <td data-label="{{ t('web.projects.last') }}">{{ p.last }}{% if p.last_status %} · {{ p.last_status }}{% endif %}</td>
+          <td data-label="{{ t('web.projects.findings') }}">{{ p.findings }}</td>
+          <td data-label="{{ t('web.projects.prs') }}" class="number">{{ p.prs }}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="muted">{{ t("web.projects.none") }}</p>
+  {%- endif %}
+</section>
+
+<section class="card" aria-labelledby="runs-title">
+  <h2 id="runs-title">{{ t("web.runs.title") }}</h2>
+  {%- if v.runs %}
+  <div class="table">
+    <table>
+      <thead><tr>
+        <th scope="col">{{ t("web.runs.started") }}</th>
+        <th scope="col">{{ t("web.runs.project") }}</th>
+        <th scope="col">{{ t("web.runs.account") }}</th>
+        <th scope="col">{{ t("web.runs.trigger") }}</th>
+        <th scope="col">{{ t("web.runs.status") }}</th>
+        <th scope="col">{{ t("web.runs.duration") }}</th>
+      </tr></thead>
+      <tbody>
+        {%- for r in v.runs %}
+        <tr>
+          <th scope="row"><span title="{{ r.started_iso }}">{{ r.started }}</span></th>
+          <td data-label="{{ t('web.runs.project') }}">{{ r.repo }}</td>
+          <td data-label="{{ t('web.runs.account') }}">{{ r.account }}</td>
+          <td data-label="{{ t('web.runs.trigger') }}">{{ r.trigger }}</td>
+          <td data-label="{{ t('web.runs.status') }}" class="state-{{ r.status_key }}">{{ r.status }}</td>
+          <td data-label="{{ t('web.runs.duration') }}">{{ r.duration }}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="muted">{{ t("web.runs.none") }}</p>
+  {%- endif %}
+</section>
+{% endblock %}

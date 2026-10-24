@@ -462,7 +462,7 @@ gets a build or compile check instead, and the pull request says so.
 | Subscription credentials leak | lastcall never reads them: they stay in the CLI's own storage, in a volume. |
 | An agent copies its CLI credentials into its output | Every text lastcall publishes (pull request, issue, comment) goes through the secret scanner first, and a hit blocks it. |
 | Unexpected bills | Hard stop when paid usage is active, and a reserve per account. |
-| Takeover of the web UI | Login with lockout; signed `HttpOnly`, `Secure`, `SameSite=Strict` cookies; CSRF token and `Origin` check on every POST; strict CSP. |
+| Takeover of the web UI | It listens only on the host by default. The password is chosen with a one-time code that only the service's log shows, and kept as an scrypt hash. Sign-in locks after repeated failures. Sessions live in the store; the `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) holds only a random token. Every POST needs this site's `Origin` and, when signed in, the session's CSRF token. A strict CSP, and no JavaScript. |
 
 The secrets that lastcall does hold (the GitHub App key, API keys, notification URLs) live in their own volume, one
 file each, readable only by lastcall's user (mode 0600). Planned: encryption at rest with a key from the environment,
@@ -473,6 +473,13 @@ or an external secret store through a plugin.
 The web UI is server-rendered HTML that works without JavaScript. It is accessible (WCAG 2.2 AA), mobile-first and
 installable as a PWA, in English and Spanish from the start. Pages: dashboard (quota per account, next burst, what
 is running, pull requests to review), projects, runs, decisions, statistics, accounts and settings.
+
+It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
+(`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the
+language is the browser's, until the owner picks one. The first version has the sign-in and the dashboard, with
+pause and resume; the dashboard also says when the service has stopped writing its heartbeat. Behind a reverse
+proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address and scheme from the proxy, and
+`LASTCALL_WEB_ORIGIN` lists the public origins that forms may come from.
 
 A CLI mirrors the main actions. Like the UI, it queues orders that the service executes, so two actions never run
 into each other.
@@ -551,7 +558,7 @@ and signals. A plugin is a normal Python package. Recipes and reviewers are data
 5. Tier names and the default model table: who maintains them, and how often?
 6. ~~Packaging: Python version and dependency policy.~~ Decided in October 2026: Python 3.12 or later. A runtime
    dependency comes in only when a feature needs it, and its pull request says why. Few and well known: PyYAML for
-   recipes, Apprise for notifications and cryptography for secrets are expected. Development uses uv; CI runs ruff,
+   recipes, Apprise for notifications, cryptography for secrets, and Flask with waitress for the web UI. Development uses uv; CI runs ruff,
    mypy (strict) and pytest on the oldest and the newest supported Python.
 7. Claude also reports per-model weekly windows (`seven_day_opus`, `seven_day_sonnet`, `model_scoped`). lastcall
    reads only the 5-hour and weekly windows for now. A step on a model whose own window is full would fail; the gate

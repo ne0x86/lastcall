@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ t("web.setup.title") }}{% endblock %}
+{% block main %}
+<section class="card narrow">
+  <h1>{{ t("web.setup.title") }}</h1>
+  <p>{{ t("web.setup.intro") }}</p>
+  <pre><code>docker compose logs lastcall</code></pre>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" class="stack">
+    <div>
+      <label for="code">{{ t("web.setup.code") }}</label>
+      <input id="code" name="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+    </div>
+    <div>
+      <label for="password">{{ t("web.setup.password") }}</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" minlength="{{ minimum }}" required aria-describedby="password-hint">
+      <p id="password-hint" class="muted hint">{{ t("web.setup.hint", min=minimum) }}</p>
+    </div>
+    <div>
+      <label for="repeat">{{ t("web.setup.repeat") }}</label>
+      <input id="repeat" name="repeat" type="password" autocomplete="new-password" minlength="{{ minimum }}" required>
+    </div>
+    <button>{{ t("web.setup.submit") }}</button>
+  </form>
+</section>
+{% endblock %}

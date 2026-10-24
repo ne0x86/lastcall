@@ -1,4 +1,5 @@
-"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings and pull requests.
+"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, pull requests and the web UI's
+sessions.
 
 Findings keep their story across runs, so the judge never proposes again what the owner rejected:
     pending    valid, meant for a pull request, not opened yet (it did not fit, or delivery failed)
@@ -49,6 +50,8 @@ CREATE TABLE IF NOT EXISTS prs (
     url TEXT PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, run TEXT NOT NULL, title TEXT NOT NULL,
     state TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY, csrf TEXT NOT NULL, created REAL NOT NULL, seen REAL NOT NULL);
 """
 REMEMBERED = ("pending", "in_pr", "merged", "rejected", "decide", "resolved", "dismissed")
 
@@ -142,16 +145,11 @@ class Store:
         rows = self.q(
             "SELECT * FROM readings WHERE account = ? AND taken_at >= ? ORDER BY taken_at", (account, since)
         )
-        return [
-            Reading(
-                r["account"],
-                tuple(Window(**w) for w in json.loads(r["windows"])),
-                bool(r["paid"]),
-                r["fidelity"],
-                r["taken_at"],
-            )
-            for r in rows
-        ]
+        return [_reading(r) for r in rows]
+
+    def last_reading(self, account: str) -> Reading | None:
+        rows = self.q("SELECT * FROM readings WHERE account = ? ORDER BY taken_at DESC LIMIT 1", (account,))
+        return _reading(rows[0]) if rows else None
 
     # runs
 
@@ -169,6 +167,17 @@ class Store:
         return self.x(
             "UPDATE runs SET status = 'interrupted', ended = ? WHERE status = 'running'", (time.time(),)
         ).rowcount
+
+    def runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        return self.q("SELECT * FROM runs ORDER BY started DESC LIMIT ?", (limit,))
+
+    def running(self) -> list[dict[str, Any]]:
+        return self.q("SELECT * FROM runs WHERE status = 'running' ORDER BY started")
+
+    def latest_runs(self) -> dict[str, dict[str, Any]]:
+        """The latest run of each repository, whatever its account and status."""
+        rows = self.q("SELECT * FROM runs ORDER BY started")
+        return {r["repo"]: r for r in rows}
 
     def last_run(self, repo: str, account: str) -> dict[str, Any] | None:
         rows = self.q(
@@ -284,9 +293,42 @@ class Store:
             "UPDATE findings SET status = ? WHERE issue_url = ? AND status = 'decide'", (status, url)
         ).rowcount
 
+    def decisions(self) -> list[dict[str, Any]]:
+        """Issues with findings that wait for the owner's decision: repo, issue_url and n."""
+        return self.q(
+            "SELECT repo, issue_url, count(*) AS n FROM findings WHERE status = 'decide' AND issue_url IS NOT NULL "
+            "GROUP BY repo, issue_url ORDER BY min(created)"
+        )
+
     def statuses(self, repo: str) -> dict[str, int]:
         rows = self.q("SELECT status, count(*) AS n FROM findings WHERE repo = ? GROUP BY status", (repo,))
         return {r["status"]: int(r["n"]) for r in rows}
+
+    # web UI sessions: the cookie holds a random token; the store keeps only its hash
+
+    def add_session(self, token: str, csrf: str, now: float) -> None:
+        self.x("INSERT INTO sessions VALUES (?, ?, ?, ?)", (token, csrf, now, now))
+
+    def session(self, token: str) -> dict[str, Any] | None:
+        rows = self.q("SELECT * FROM sessions WHERE token = ?", (token,))
+        return rows[0] if rows else None
+
+    def touch_session(self, token: str, now: float) -> None:
+        self.x("UPDATE sessions SET seen = ? WHERE token = ?", (now, token))
+
+    def drop_session(self, token: str) -> None:
+        self.x("DELETE FROM sessions WHERE token = ?", (token,))
+
+    def drop_sessions(self, seen_before: float | None = None) -> int:
+        """Every session, or those idle since before `seen_before`."""
+        if seen_before is None:
+            return self.x("DELETE FROM sessions").rowcount
+        return self.x("DELETE FROM sessions WHERE seen < ?", (seen_before,)).rowcount
+
+
+def _reading(row: dict[str, Any]) -> Reading:
+    windows = tuple(Window(**w) for w in json.loads(row["windows"]))
+    return Reading(row["account"], windows, bool(row["paid"]), row["fidelity"], row["taken_at"])
 
 
 def import_runs(store: Store, runs: Iterable[tuple[str, AuditReport, str]]) -> int:

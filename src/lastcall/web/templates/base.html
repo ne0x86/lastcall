@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0f766e">
+<title>{% block title %}{% endblock %} · lastcall</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version) }}">
+<link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" type="image/svg+xml">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+</head>
+<body>
+<a class="skip" href="#main">{{ t("web.skip") }}</a>
+<header class="top">
+  <a class="brand" href="{{ url_for('home') }}"><img src="{{ url_for('static', filename='icon.svg') }}" alt="" width="28" height="28">lastcall</a>
+  <nav class="languages" aria-label="{{ t('web.nav.language') }}">
+    {%- for code, name in languages %}
+    <a href="{{ url_for('set_language', code=code, next=request.full_path.rstrip('?')) }}" lang="{{ code }}" hreflang="{{ code }}"{% if code == lang %} aria-current="true"{% endif %}>{{ name }}</a>
+    {%- endfor %}
+  </nav>
+  {%- if csrf %}
+  <form method="post" action="{{ url_for('logout') }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="link">{{ t("web.nav.signout") }}</button>
+  </form>
+  {%- endif %}
+</header>
+<main id="main">
+{% block main %}{% endblock %}
+</main>
+<footer class="bottom">lastcall {{ version }} · <a href="{{ docs }}">{{ t("web.footer.docs") }}</a></footer>
+</body>
+</html>

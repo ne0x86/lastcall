@@ -80,6 +80,7 @@ class Plan:
     hours_to_reset: float | None = None
     hours_needed: float = 0.0
     starts_in_hours: float | None = None
+    code: str = ""  # the reason as a key for the web UI: manual, paid, no-window, no-reset, small, now or later
 
 
 def plan(reading: Reading, policy: SpendPolicy, rate_pct_per_hour: float, now: float) -> Plan:
@@ -90,24 +91,26 @@ def plan(reading: Reading, policy: SpendPolicy, rate_pct_per_hour: float, now: f
     several expiring windows, the one that resets first sets the deadline and the smallest leftover sets the amount.
     """
     if policy.kind != "before-reset":
-        return Plan(False, f"policy {policy.kind}: only runs started by the owner")
+        return Plan(False, f"policy {policy.kind}: only runs started by the owner", code="manual")
     if reading.paid_usage:
-        return Plan(False, "paid usage is active on this account")
+        return Plan(False, "paid usage is active on this account", code="paid")
     windows = reading.expiring
     if not windows:
-        return Plan(False, "no expiring window to spend")
+        return Plan(False, "no expiring window to spend", code="no-window")
     leftover = min(100.0 - policy.reserve_pct - w.used_pct for w in windows)
     resets = [w.resets_at for w in windows if w.resets_at is not None]
     if not resets:
-        return Plan(False, "reset time unknown", leftover_pct=leftover)
+        return Plan(False, "reset time unknown", leftover_pct=leftover, code="no-reset")
     hours_to_reset = (min(resets) - now) / HOUR
     hours_needed = max(0.0, leftover) / max(rate_pct_per_hour, 0.1)
     starts_in = hours_to_reset - min(policy.max_lead_hours, hours_needed * 1.1 + 1)
     if leftover <= policy.min_leftover_pct:
-        return Plan(False, f"leftover {leftover:.1f}% is not worth a burst", leftover, hours_to_reset, hours_needed)
+        reason = f"leftover {leftover:.1f}% is not worth a burst"
+        return Plan(False, reason, leftover, hours_to_reset, hours_needed, code="small")
     burst = starts_in <= 0
     reason = f"{leftover:.1f}% left, {hours_to_reset:.1f} h to the reset" if burst else f"burst in {starts_in:.1f} h"
-    return Plan(burst, reason, leftover, hours_to_reset, hours_needed, max(0.0, starts_in))
+    code = "now" if burst else "later"
+    return Plan(burst, reason, leftover, hours_to_reset, hours_needed, max(0.0, starts_in), code)
 
 
 @dataclass(frozen=True)
