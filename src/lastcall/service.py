@@ -23,7 +23,7 @@ import traceback
 from collections.abc import Callable
 from typing import Any
 
-from lastcall import projects
+from lastcall import i18n, projects
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, SpendPolicy, learned_rate, plan
@@ -58,6 +58,7 @@ class Service:
         self.start = start or (lambda work: threading.Thread(target=work, daemon=True).start())
         self.running: dict[str, str] = {}  # account id -> repository
         self.plans: dict[str, Plan] = {}
+        self.alerts: set[tuple[str, str]] = set()  # (account, "quota" or "paid") already told to the owner
         self.last_read = self.last_sync = self.last_refresh = 0.0
         self.lock = threading.Lock()
 
@@ -113,7 +114,9 @@ class Service:
             except (QuotaError, SandboxError) as e:
                 self.log(f"{account.id}: no quota reading: {e}")
                 self.plans.pop(account.id, None)
+                self.alert(account.id, "quota", True, error=str(e)[:400])
                 continue
+            self.alert(account.id, "quota", False)
             self.inst.store.record_reading(reading)
             policy = SpendPolicy(reserve_pct=account.reserve_pct)
             history = self.inst.store.readings(account.id, now - RATE_WINDOW)
@@ -122,10 +125,28 @@ class Service:
             self.plans[account.id] = current = plan(reading, policy, rate, now)
             if current.burst and not (before and before.burst):
                 self.log(f"{account.id}: burst starts ({current.reason}; {rate:.1f}%/h)")
+                if self.inst.notify:
+                    lang = self.inst.notify.language()
+                    self.inst.notify.notify(
+                        "burst",
+                        account=account.id,
+                        leftover=i18n.percent(lang, max(0.0, current.leftover_pct)),
+                        span=i18n.span(lang, (current.hours_to_reset or 0) * 3600),
+                    )
             elif before and before.burst and not current.burst:
                 self.log(f"{account.id}: burst over ({current.reason})")
             if reading.paid_usage:
                 self.log(f"{account.id}: paid usage is active on this account: lastcall spends nothing from it")
+            self.alert(account.id, "paid", reading.paid_usage)
+
+    def alert(self, account: str, event: str, on: bool, **values: str) -> None:
+        """Tell the owner when a problem starts, once; forget it when it ends, so the next one is told again."""
+        if not on:
+            self.alerts.discard((account, event))
+        elif (account, event) not in self.alerts:
+            self.alerts.add((account, event))
+            if self.inst.notify:
+                self.inst.notify.notify(event, account=account, **values)
 
     # the owner's orders
 

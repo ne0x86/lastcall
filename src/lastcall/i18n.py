@@ -32,6 +32,20 @@ def plural(language: str, key: str, count: int, /, **values: object) -> str:
     return text(language, f"{key}.{'one' if count == 1 else 'other'}", count=count, **values)
 
 
+def percent(language: str, value: float) -> str:
+    return text(language, "web.percent", n=number(language, value))
+
+
+def span(language: str, seconds: float) -> str:
+    """A length of time, rounded: 25 min, 19 h, 3 days."""
+    s = abs(seconds)
+    if s < 3600:
+        return text(language, "web.time.min", n=max(1, round(s / 60)))
+    if s < 48 * 3600:
+        return text(language, "web.time.hours", n=round(s / 3600))
+    return plural(language, "web.time.days", round(s / 86_400))
+
+
 def number(language: str, value: float) -> str:
     """A number with at most one decimal, with the language's decimal mark: 12, 1.5 or 1,5."""
     rounded = round(value, 1)

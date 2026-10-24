@@ -26,6 +26,8 @@ for you to decide. Nothing reaches your default branch without your approval. �
   before any paid usage.
 - 🖥️ **Shows you everything.** A dashboard in English and Spanish: what is left of every quota, the next burst, the
   pull requests to review and the decisions waiting for you.
+- 🔔 **Tells you.** A notification when a pull request opens, a decision waits, an audit fails or an account needs
+  you: Telegram, ntfy, Discord, Slack, email and many more, through Apprise.
 
 <p align="center"><img src="docs/dashboard.png" width="760" alt="The lastcall dashboard: the quota left on two accounts, the next burst, and the pull requests and decisions waiting for review"></p>
 
@@ -117,7 +119,9 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 
 The dashboard shows your accounts, the next burst, what is running and what waits for you, and it pauses or resumes
 the bursts. The **Projects** page suggests repositories and says why, adds one by its address, changes each
-project's priority and language, and starts an audit when you ask. From the terminal, `docker compose run --rm cli status` shows the same, and `cli pause` and
+project's priority and language, and starts an audit when you ask. In **Settings**, add where lastcall should
+notify you (an [Apprise URL](https://github.com/caronc/apprise/wiki) per destination) and choose what about. From
+the terminal, `docker compose run --rm cli status` shows the same, and `cli pause` and
 `cli resume` hold or release the bursts. The dashboard listens only on this machine; to open it from elsewhere, put
 a reverse proxy with HTTPS in front of it and set `LASTCALL_TRUST_PROXY=1`.
 

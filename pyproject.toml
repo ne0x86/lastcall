@@ -18,6 +18,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
+    "apprise>=1.9",
     "cryptography>=43",
     "flask>=3.1",
     "waitress>=3.0.2",
@@ -58,3 +59,4 @@ mypy_path = "src"
 testpaths = ["tests"]
 addopts = "-q"
 markers = ["integration: needs the sandbox from compose.yaml (docker compose --profile test run --rm it)"]
+filterwarnings = ["ignore:'imghdr' is deprecated:DeprecationWarning"]  # Apprise's PGP plugin, on Python 3.12

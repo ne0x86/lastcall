@@ -28,6 +28,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from lastcall import __version__, i18n, projects
 from lastcall.github import App, GitHub, GitHubError
+from lastcall.notify import EVENTS, Notifier, describe
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
 from lastcall.web import auth, dashboard, project_views
@@ -66,6 +67,7 @@ def create_app(
     origins: Sequence[str] = (),
     github: Callable[[], GitHub | None] | None = None,
     background: Callable[[Callable[[], None]], None] | None = None,
+    notifier: Notifier | None = None,
 ) -> Flask:
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request."""
@@ -79,6 +81,7 @@ def create_app(
     if not owner.has_password():
         setup_code.issue()
     reading = threading.Event()  # the installed repositories are being read from GitHub
+    notifications = notifier or Notifier(secrets, store, log=log)
 
     def connect() -> GitHub | None:
         if github is not None:
@@ -312,6 +315,57 @@ def create_app(
             store.add_order("audit", project.repo, account or None, clock())
             log(f"Web UI: audit of {project.repo} ordered")
         return redirect(url_for("projects_page", done="queued"))
+
+    @app.get("/settings")
+    @signed_in
+    def settings_page() -> ResponseReturnValue:
+        return show_settings()
+
+    def show_settings(status: int = 200, error: str = "") -> ResponseReturnValue:
+        chosen, language = notifications.events(), notifications.language()
+        view = {
+            "destinations": [(n, describe(url) or "?") for n, url in enumerate(notifications.urls())],
+            "events": [(e, t(f"web.notify.event.{e}"), e in chosen) for e in EVENTS],
+            "languages": [(code, name, code == language) for code, name in LANGUAGES],
+        }
+        done = request.args.get("done", "")
+        known = ("saved", "notify_added", "notify_removed", "notify_sent", "notify_failed")
+        message = t(f"web.done.{done}") if done in known and not error else ""
+        return page("settings.html", status, v=view, done=message, error=error)
+
+    @app.post("/settings/notify/add")
+    @signed_in
+    def add_destination() -> ResponseReturnValue:
+        if not notifications.add_url(request.form.get("url", "")):
+            return show_settings(400, t("web.notify.bad_url"))
+        if not store.setting("notify_language"):  # until the owner picks one: the language of this page
+            notifications.choose(sorted(notifications.events()), g.lang)
+        log("Web UI: notification destination added")
+        return redirect(url_for("settings_page", done="notify_added"))
+
+    @app.post("/settings/notify/remove")
+    @signed_in
+    def remove_destination() -> ResponseReturnValue:
+        try:
+            notifications.remove_url(int(request.form.get("index", "")))
+        except ValueError:
+            return problem(400, "web.error.form")
+        return redirect(url_for("settings_page", done="notify_removed"))
+
+    @app.post("/settings/notify")
+    @signed_in
+    def notify_settings() -> ResponseReturnValue:
+        language = request.form.get("language", "")
+        if language not in i18n.CATALOGS:
+            return problem(400, "web.error.form")
+        notifications.choose(request.form.getlist("events"), language)
+        return redirect(url_for("settings_page", done="saved"))
+
+    @app.post("/settings/notify/test")
+    @signed_in
+    def test_notification() -> ResponseReturnValue:
+        sent = notifications.test()
+        return redirect(url_for("settings_page", done="notify_sent" if sent else "notify_failed"))
 
     @app.get("/language/<code>")
     def set_language(code: str) -> ResponseReturnValue:
