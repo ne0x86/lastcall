@@ -136,11 +136,14 @@ advice.
   - Engines: Claude Code and Codex. Forge: GitHub.
   - Memory of findings, and the service that bursts on its own.
   - Scanners in the context pack: gitleaks, osv-scanner, semgrep and hadolint.
-- 🚧 **v0.2.**
-  - ✅ A web UI in English and Spanish: setup, dashboard, projects, accounts.
-  - ✅ Notifications: Telegram, ntfy, Discord, email and more.
-  - 🔜 The `improve` recipe, `.lastcall.yml` in your repositories, and fan-out across accounts.
-- 🔭 **v0.3.**
+- ✅ **v0.2, web UI.**
+  - Setup from the browser, dashboard, projects and accounts, in English and Spanish.
+  - Notifications: Telegram, ntfy, Discord, email and more.
+- 🔜 **v0.3.**
+  - `.lastcall.yml` in your repositories, and devcontainer environments for any language.
+  - Fan-out: Claude and Codex audit the same project, and one judge keeps what holds.
+  - The `improve` recipe; merge on approve; watch after the merge and revert.
+- 🔭 **v0.4.**
   - API keys and local models: opencode, OpenRouter, Ollama.
   - More recipes: issues, tests, dependencies.
   - GitLab and Forgejo.

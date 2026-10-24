@@ -1,6 +1,6 @@
 # lastcall design
 
-Status: **v0.1 released, October 2026**, open for discussion. This document describes what lastcall is and how it
+Status: **v0.2 released, October 2026**, open for discussion. This document describes what lastcall is and how it
 works. Section 17 says what is done and what comes next; open decisions are listed in section 19.
 
 ## 1. What lastcall is
@@ -533,14 +533,23 @@ and signals. A plugin is a normal Python package. Recipes and reviewers are data
 - The service (`lastcall serve`) and the CLI.
 - `scripted` engine and CI.
 
-**v0.2: see what it finds, from anywhere**
+**v0.2: see what it finds, from anywhere** (done, October 2026)
 
-- Web UI in English and Spanish, with the setup wizard, the state of accounts and projects, the decisions, and
-  notifications through Apprise.
-- Recipe `improve`; project reviewers in the repository; `.lastcall.yml` and devcontainer environments; add by URL.
-- Fan-out across accounts with one judge; merge-on-approve; watch after the merge and revert pull request.
+- Web UI in English and Spanish: sign-in with a setup code from the log, the GitHub App from the browser, accounts
+  (login commands and a quota check), the dashboard, and projects (suggestions, add by address, settings, an audit
+  on demand).
+- Notifications through Apprise, set up in the web UI.
+- `docker compose up -d` starts everything, and the quickstart starts in the browser.
 
-**v0.3: wider reach**
+**v0.3: more of what matters, in more projects**
+
+- `.lastcall.yml` in the repository, and devcontainer environments for languages beyond Python and Node.js.
+- Fan-out across accounts with one judge: Claude and Codex audit the same project, and one judge keeps what holds.
+- Recipe `improve`; project reviewers in the repository.
+- The gate checks the weekly window of the step's model (question 7).
+- Merge on approve; watch after the merge and open a revert pull request.
+
+**v0.4: wider reach**
 
 - Engine `opencode` (API keys, OpenRouter, local models); spend policies `budget` and `schedule`.
 - Recipes `issues`, `tests` and `deps`.
