@@ -44,6 +44,7 @@ LANGUAGE_COOKIE = "lastcall_language"
 LANGUAGES = (("en", "English"), ("es", "Español"))
 DOCS = "https://github.com/ne0x86/lastcall#readme"
 TERMS = "https://github.com/ne0x86/lastcall/blob/main/DESIGN.md#3-provider-terms-and-responsible-use"
+SERVICES = "https://github.com/caronc/apprise#supported-notifications"  # every service Apprise reaches, with its URL
 STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
 CSP = (
@@ -349,7 +350,9 @@ def create_app(
         done = request.args.get("done", "")
         known = ("saved", "notify_added", "notify_removed", "notify_sent", "notify_failed")
         message = t(f"web.done.{done}") if done in known and not error else ""
-        return page("settings.html", status, v=view, done=message, error=error, github=App.load(secrets))
+        return page(
+            "settings.html", status, v=view, done=message, error=error, github=App.load(secrets), services=SERVICES
+        )
 
     @app.post("/settings/notify/add")
     @signed_in

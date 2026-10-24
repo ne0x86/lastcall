@@ -398,9 +398,12 @@ def test_notification_settings(web: Web) -> None:
     page = web.client.get("/settings").get_data(as_text=True)
     assert "No destinations yet" in page and 'aria-current="page">Settings' in page
     assert "Send a test notification" not in page
+    assert '<details class="howto" open>' in page  # the help is open until there is a destination
+    assert "https://ntfy.sh/your-long-secret-topic" in page and "apprise#supported-notifications" in page
+    assert "apprise/wiki" not in page
     csrf = web.csrf()
     bad = web.client.post("/settings/notify/add", data={"csrf": csrf, "url": "nonsense"}, headers=SITE)
-    assert bad.status_code == 400 and "Apprise does not understand that URL." in bad.get_data(as_text=True)
+    assert bad.status_code == 400 and "Apprise does not understand that address." in bad.get_data(as_text=True)
     added = web.client.post(
         "/settings/notify/add", data={"csrf": csrf, "url": TELEGRAM}, headers={**SITE, "Accept-Language": "es"}
     )
