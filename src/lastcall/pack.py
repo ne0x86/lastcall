@@ -1,13 +1,12 @@
-"""The context pack of a project, built without any model call: what the project is, its recent history, a map and
-its code with line numbers. Every step of a run shares it, and providers cache it (DESIGN.md, section 7).
-
-Scanners, production signals and the memory of earlier runs join the pack in later steps of v0.1.
+"""The context pack of a project, built without any model call: what the project is, its recent history, what the
+scanners found (lastcall.scanners), a map and its code with line numbers. Every step of a run shares it, and providers
+cache it (DESIGN.md, section 7).
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,7 +45,9 @@ def numbered(text: str) -> str:
     return "\n".join(f"{i:>{width}}| {line}" for i, line in enumerate(lines, 1))
 
 
-def build(clone: Path, run_dir: Path, project: str, budget: int = CODE_BUDGET) -> Pack:
+def build(
+    clone: Path, run_dir: Path, project: str, budget: int = CODE_BUDGET, extra: Mapping[str, str] | None = None
+) -> Pack:
     src = run_dir / "src"
     git.snapshot(clone, src)
     sha = git.head(clone)[:7]
@@ -64,6 +65,7 @@ def build(clone: Path, run_dir: Path, project: str, budget: int = CODE_BUDGET) -
     sections = {
         "What the project says about itself (README)": about,
         "Recent history (where the owner is taking it)": git.history(clone),
+        **(extra or {}),
         "Map (files a review reads)": "\n".join(rows) or "no code files",
     }
     if omitted:

@@ -1,8 +1,11 @@
 ^api\.anthropic\.com$
+^api\.deps\.dev$
 ^api\.openai\.com$
+^api\.osv\.dev$
 ^auth\.openai\.com$
 ^(.+\.)?chatgpt\.com$
 ^files\.pythonhosted\.org$
 ^platform\.claude\.com$
 ^pypi\.org$
 ^registry\.npmjs\.org$
+^semgrep\.dev$

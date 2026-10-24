@@ -154,3 +154,46 @@ def test_quota_probe_without_login_fails_cleanly(engine: str) -> None:
     """The real CLI, through the proxy, with an empty account volume: an error, not a hang or a wrong reading."""
     with pytest.raises(QuotaError):
         read_quota(Account(f"it-nologin-{engine}", engine), SANDBOX, time.time())
+
+
+def test_scanners_find_what_they_should_in_the_runner(workspace: Path) -> None:
+    """The real scanners, in the runner, read-only on a clone: a secret in the history, a vulnerable dependency,
+    a shell=True and an untagged base image."""
+    import subprocess
+
+    from lastcall.scanners import TITLES, scan
+
+    clone = workspace.parent / "clone"
+    clone.mkdir()
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_NAME="t",
+        GIT_AUTHOR_EMAIL="t@example.com",
+        GIT_COMMITTER_NAME="t",
+        GIT_COMMITTER_EMAIL="t@example.com",
+        HOME=str(workspace.parent),
+    )
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", "-C", str(clone), *args], check=True, capture_output=True, env=env)
+
+    git("init", "-q", "-b", "main")
+    token = "ghp_" + "Zq8RkW2mXv5LtY9pNb3HcJ7dGf4AsE6uQi1o"
+    (clone / "config.py").write_text(f'TOKEN = "{token}"\n', encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "config")
+    (clone / "config.py").write_text("import os\nTOKEN = os.environ['TOKEN']\n", encoding="utf-8")
+    (clone / "requirements.txt").write_text("requests==2.19.0\n", encoding="utf-8")
+    (clone / "Dockerfile").write_text('FROM python\nRUN pip install flask "urllib3==1.24.1"\n', encoding="utf-8")
+    (clone / "app.py").write_text(
+        "import subprocess\n\n\ndef run(cmd):\n    return subprocess.call(cmd, shell=True)\n", encoding="utf-8"
+    )
+    git("add", "-A")
+    git("commit", "-q", "-m", "fixes")
+
+    found = scan(SANDBOX, "claude-code", clone)
+    assert "github-pat" in found[TITLES["gitleaks"]]  # only in the history: gitleaks reads it
+    assert "requests 2.19.0" in found[TITLES["osv-scanner"]]
+    assert "urllib3 1.24.1" in found[TITLES["osv-scanner"]]  # pinned only in the Dockerfile
+    assert "subprocess-shell-true" in found[TITLES["semgrep"]]
+    assert "DL3006" in found[TITLES["hadolint"]]
