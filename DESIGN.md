@@ -1,7 +1,7 @@
 # lastcall design
 
-Status: **draft, October 2026**, open for discussion. This document describes what lastcall is, how it works and
-what goes into v0.1. There is no code yet. Open decisions are listed in section 19.
+Status: **v0.1 released, October 2026**, open for discussion. This document describes what lastcall is and how it
+works. Section 17 says what is done and what comes next; open decisions are listed in section 19.
 
 ## 1. What lastcall is
 
@@ -349,8 +349,9 @@ engine runs all of them with the same guarantees.
 
 Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` it stops after the judge, and
 `lastcall deliver <run>` later opens the pull requests of that report, so the owner can read the findings first.
-- The context pack (`lastcall.pack`) holds the README, the recent history, a map and the code with line numbers, up
-  to 150k tokens. Scanners, signals and the memory of earlier runs come next.
+- The context pack (`lastcall.pack`) holds the README, the recent history, the scanners' results, a map and the
+  code with line numbers, up to 150k tokens. The judge also gets the memory of earlier findings. Signals come
+  later.
 - Each implementer works in its own clone, on a branch `lastcall/<date>-<n>-<topic>`.
 - lastcall then takes over:
   - it runs the project's check (`lastcall.verify`) on a clean copy, in the runner image;
@@ -511,13 +512,13 @@ and signals. A plugin is a normal Python package. Recipes and reviewers are data
 - Spend policies `before-reset` and `manual`, learned rate, reserve and paid-usage stop.
 - GitHub App through the manifest flow, and repository suggestions.
 - Recipe `audit` with the built-in reviewers: pull requests, decisions issue, and the memory of earlier findings.
+- Scanners in the context pack: gitleaks, osv-scanner, semgrep and hadolint.
 - Environments: the runner's Python and Node.js, with dependencies from requirements, pyproject and Dockerfiles.
 - The service (`lastcall serve`) and the CLI.
 - `scripted` engine and CI.
 
 **v0.2: see what it finds, from anywhere**
 
-- Scanners in the context pack: gitleaks, osv-scanner, semgrep and hadolint.
 - Web UI in English and Spanish, with the setup wizard, the state of accounts and projects, the decisions, and
   notifications through Apprise.
 - Recipe `improve`; project reviewers in the repository; `.lastcall.yml` and devcontainer environments; add by URL.
