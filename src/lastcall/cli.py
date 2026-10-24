@@ -1,11 +1,15 @@
 """The lastcall command line.
 
 lastcall login <account> --engine claude-code   # on the host: the CLI's own login, inside the sandbox
-lastcall quota <account> --engine claude-code   # where the supervisor socket is: read the account's quota
+lastcall account add <account> --engine claude-code [--language Spanish] [--reserve 10]
+lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive]
+lastcall quota <account>                        # read an account's quota through the supervisor
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
 lastcall github repos                           # installed repositories, with lastcall's suggestions
-lastcall audit <owner/name> --account <account> --engine claude-code   # find, judge, fix, verify, open PRs
-lastcall deliver <run> --account <account> --engine claude-code        # the PRs of a report-only audit
+lastcall audit <owner/name> --account <account> # find, judge, fix, verify, open pull requests
+lastcall deliver <run> --account <account>      # the pull requests of a report-only audit
+lastcall sync                                   # what the owner did with lastcall's pull requests and issues
+lastcall status                                 # accounts, projects and what happened to their findings
 """
 
 from __future__ import annotations
@@ -20,52 +24,64 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines, git, pack
+from lastcall import engines
 from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
-from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
-from lastcall.github import App, GitHub, GitHubError, GitHubForge
+from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
-from lastcall.quota import Gate, QuotaError, Reading, SpendPolicy, gate, plan
-from lastcall.recipes.audit import (
-    AuditReport,
-    QuotaCheck,
-    StepRecord,
-    StepRunner,
-    Verifier,
-    deliver,
-    markdown,
-    run_audit,
-)
+from lastcall.quota import QuotaError, Reading, SpendPolicy, plan
+from lastcall.recipes.audit import AuditReport, StepRecord
+from lastcall.runs import Instance, Options, audit_repo, deliver_report, save
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
+from lastcall.store import Store, import_runs
 from lastcall.suggest import Suggestion, suggest
 from lastcall.supervisor import Config
-from lastcall.tiers import defaults
+from lastcall.sync import sync
 
 DEFAULT_RATE = 2.0  # % of the week per hour until the rate is learned from readings
-VERIFY_TIMEOUT = 25 * 60.0
 RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lastcall", description=__doc__.splitlines()[0] if __doc__ else None)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name, text in (
-        ("login", "sign in an account with its CLI's own login, inside the sandbox (run it on the host)"),
-        ("quota", "read an account's quota through the supervisor"),
-    ):
-        cmd = commands.add_parser(name, help=text)
-        cmd.add_argument("account", help="account id: lowercase letters, digits and dashes")
-        cmd.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
+
+    login_cmd = commands.add_parser("login", help="sign in an account with its CLI's own login (run it on the host)")
+    login_cmd.add_argument("account", help="account id: lowercase letters, digits and dashes")
+    login_cmd.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
+
+    acc = commands.add_parser("account", help="accounts lastcall may spend").add_subparsers(
+        dest="action", required=True
+    )
+    acc_add = acc.add_parser("add", help="add or change an account (sign it in with `login`)")
+    acc_add.add_argument("account")
+    acc_add.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
+    acc_add.add_argument("--language", default="English", help="language of what it writes (default English)")
+    acc_add.add_argument("--reserve", type=float, default=10.0, help="% of every week kept for you (default 10)")
+    acc.add_parser("list", help="the accounts")
+
+    proj = commands.add_parser("project", help="repositories lastcall works on").add_subparsers(
+        dest="action", required=True
+    )
+    proj_add = proj.add_parser("add", help="add or change a project (the GitHub App must be installed on it)")
+    proj_add.add_argument("repo", help="owner/name")
+    proj_add.add_argument("--weight", type=float, default=1.0, help="0 never, 2 twice the priority (default 1)")
+    proj_add.add_argument("--language", default=None, help="language for this project, over the account's")
+    proj_add.add_argument("--inactive", action="store_true", help="keep it, but do not audit it")
+    proj.add_parser("list", help="the projects")
+
+    quota_cmd = commands.add_parser("quota", help="read an account's quota through the supervisor")
+    quota_cmd.add_argument("account")
+
     gh = commands.add_parser("github", help="the instance's GitHub App").add_subparsers(dest="action", required=True)
     setup = gh.add_parser("setup", help="create the GitHub App with GitHub's manifest flow")
     setup.add_argument("--owner", required=True, help="GitHub account or organization that will own the App")
     setup.add_argument("--org", action="store_true", help="the owner is an organization")
     setup.add_argument("--port", type=int, default=8765, help="port of the setup page (default 8765)")
     gh.add_parser("repos", help="installed repositories, with lastcall's suggestions")
+
     audit_cmd = commands.add_parser("audit", help="audit a repository and open pull requests for what it finds")
     audit_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
-    audit_cmd.add_argument("--language", default="English", help="language of findings, pull requests and reports")
     audit_cmd.add_argument("--max-prs", type=int, default=3, help="pull requests the judge may plan (default 3)")
     audit_cmd.add_argument("--report-only", action="store_true", help="stop after the judge: change nothing")
     deliver_cmd = commands.add_parser("deliver", help="implement, verify and open the pull requests of a report")
@@ -73,19 +89,80 @@ def main(argv: list[str] | None = None) -> int:
     deliver_cmd.add_argument("--max-prs", type=int, default=None, help="open only the first N planned pull requests")
     for cmd in (audit_cmd, deliver_cmd):
         cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
-        cmd.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
+
+    commands.add_parser("sync", help="what the owner did with lastcall's pull requests and issues")
+    commands.add_parser("status", help="accounts, projects and what happened to their findings")
+    import_cmd = commands.add_parser("import", help="bring reports of runs made before the store into it")
+    import_cmd.add_argument("--account", required=True, help="the account those runs spent")
+
     args = parser.parse_args(argv)
-    if args.command == "github":
-        return github_setup(args.owner, args.org, args.port) if args.action == "setup" else github_repos()
     try:
-        account = Account(args.account, args.engine)
+        return dispatch(args)
     except ValueError as e:
         parser.error(str(e))
-    if args.command == "audit":
-        return audit(args.repo, account, args.language, args.max_prs, args.report_only)
-    if args.command == "deliver":
-        return deliver_report(args.run, account, args.max_prs)
-    return login(account) if args.command == "login" else quota(account)
+
+
+def dispatch(args: argparse.Namespace) -> int:
+    match args.command, getattr(args, "action", None):
+        case "login", _:
+            return login(Account(args.account, args.engine))
+        case "account", "add":
+            Account(args.account, args.engine)  # validates
+            store().add_account(args.account, args.engine, args.language, args.reserve)
+            print(
+                f"Account {args.account} ({args.engine}). Sign it in with: lastcall login {args.account} "
+                f"--engine {args.engine}"
+            )
+            return 0
+        case "account", "list":
+            for a in store().accounts():
+                print(
+                    f"{a.id:<20} {a.engine:<12} {a.language:<10} reserve {a.reserve_pct:g}%"
+                    + ("" if a.enabled else "  (disabled)")
+                )
+            return 0
+        case "project", "add":
+            store().add_project(args.repo, not args.inactive, args.weight, args.language)
+            print(f"Project {args.repo}: {'inactive' if args.inactive else 'active'}, weight {args.weight:g}.")
+            return 0
+        case "project", "list":
+            for p in store().projects():
+                state = "active" if p.active and p.weight > 0 else "inactive"
+                print(f"{p.repo:<40} {state:<8} weight {p.weight:g}  {p.language or ''}")
+            return 0
+        case "quota", _:
+            return quota(account(args.account))
+        case "github", "setup":
+            return github_setup(args.owner, args.org, args.port)
+        case "github", _:
+            return github_repos()
+        case "audit", _:
+            return audit(args.repo, account(args.account), args.max_prs, args.report_only)
+        case "deliver", _:
+            return deliver_run(args.run, account(args.account), args.max_prs)
+        case "sync", _:
+            client = github_client()
+            if client is None:
+                return 1
+            print(f"{sync(store(), client, log)} changes.")
+            return 0
+        case "status", _:
+            print(status(store()))
+            return 0
+        case "import", _:
+            return import_reports(account(args.account))
+    raise ValueError(f"unknown command {args.command}")
+
+
+def store() -> Store:
+    return Store(Path(os.environ.get("LASTCALL_STATE", "/state")) / "lastcall.db")
+
+
+def account(account_id: str) -> Account:
+    found = next((a for a in store().accounts() if a.id == account_id), None)
+    if found is None:
+        raise ValueError(f"no account {account_id!r}: add it with `lastcall account add {account_id} --engine ...`")
+    return Account(found.id, found.engine)
 
 
 def secret_store() -> SecretStore:
@@ -107,46 +184,14 @@ def github_client() -> GitHub | None:
     return GitHub(app)
 
 
-def agent_hooks(box: Sandbox, account: Account) -> tuple[StepRunner, QuotaCheck]:
-    """How a recipe runs agent steps for this account: in the sandbox, behind the quota gate."""
-
-    def run_step(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
-        return box.run(engine, step, workspace=workspace, account_volume=account.volume)
-
-    def check_quota() -> tuple[Gate, Reading | None]:
-        try:
-            reading = read_quota(account, box, time.time())
-        except (QuotaError, SandboxError) as e:
-            return Gate(False, f"no quota reading: {e}"), None
-        return gate(reading, SpendPolicy(), time.time()), reading
-
-    return run_step, check_quota
-
-
-def verifier(box: Sandbox, engine: str) -> Verifier:
-    """Runs the check command on a clean copy of the change, in the runner image, outside the agent."""
-
-    def verify(work: Path, command: str) -> tuple[bool, str]:
-        copy = work.with_name(f"{work.name}-verify")
-        git.remove(copy)
-        for rel in git.files(work):
-            target = copy / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(work / rel, target, follow_symlinks=False)
-        copy.mkdir(parents=True, exist_ok=True)
-        tail: list[str] = []
-
-        def keep(line: str) -> None:
-            tail.append(line)
-            del tail[:-40]
-
-        outcome = box.call(
-            engine, Invocation(("sh", "-c", command)), keep, workspace=copy, writable=True, timeout=VERIFY_TIMEOUT
-        )
-        output = "\n".join([*tail, outcome.stderr_tail.strip()]).strip()
-        return outcome.exit_code == 0 and not outcome.timed_out, output
-
-    return verify
+def options(acc: Account, repo: str, max_prs: int = 3, report_only: bool = False) -> Options:
+    """The account's language and reserve, and the project's language when it has one."""
+    st = store()
+    row = next(a for a in st.accounts() if a.id == acc.id)
+    project = st.project(repo)
+    language = (project.language if project and project.language else None) or row.language
+    policy = SpendPolicy(reserve_pct=row.reserve_pct)
+    return Options(language=language, max_prs=max_prs, report_only=report_only, policy=policy)
 
 
 def progress(s: StepRecord) -> None:
@@ -154,90 +199,75 @@ def progress(s: StepRecord) -> None:
     print(f"  {s.role}: {s.model} {s.effort or ''}, {s.seconds:g} s, {s.tool_uses} tools, {state}", flush=True)
 
 
-def save(run_dir: Path, report: AuditReport) -> str:
-    (run_dir / "report.json").write_text(report.to_json(), encoding="utf-8")
-    text = markdown(report)
-    (run_dir / "report.md").write_text(text, encoding="utf-8")
-    return text
+def log(message: str) -> None:
+    print(message, flush=True)
 
 
-def audit(repo: str, account: Account, language: str, max_prs: int, report_only: bool) -> int:
+def audit(repo: str, acc: Account, max_prs: int, report_only: bool) -> int:
     client = github_client()
     if client is None:
         return 1
-    box = sandbox()
+    inst = Instance(sandbox(), client, store())
     try:
-        token = client.repository_token(repo)
-        meta = client.repository(token, repo)
+        run_dir, report = audit_repo(
+            inst, repo, acc, options(acc, repo, max_prs=max_prs, report_only=report_only), progress, log
+        )
     except GitHubError as e:
         print(e, file=sys.stderr)
         return 1
-    run_dir = box.data_root / "runs" / f"{meta['name']}-{account.engine}-{time.strftime('%Y%m%d-%H%M%S')}"
-    run_dir.mkdir(parents=True)
-    git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
-    context = pack.build(run_dir / "clone", run_dir, repo)
-    print(
-        f"Auditing {repo} @ {context.sha} with {account.id} ({account.engine}): {context.files} files, "
-        f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}",
-        flush=True,
-    )
-    run_step, check_quota = agent_hooks(box, account)
-    report = run_audit(
-        repo=repo,
-        pack=context,
-        engine=engines.get(account.engine),
-        tiers=defaults(account.engine),
-        run_step=run_step,
-        check_quota=check_quota,
-        language=language,
-        max_prs=max_prs,
-        on_step=progress,
-    )
-    text = save(run_dir, report)
-    if report_only or report.status != "ok" or not report.prs:
-        print("\n" + text)
-        return 1 if report.status == "failed" else 0
-    return deliver_run(run_dir, report, account, client, box, None)
+    print("\n" + (run_dir / "report.md").read_text(encoding="utf-8"))
+    return 1 if report.status == "failed" else 0
 
 
-def deliver_report(run: str, account: Account, max_prs: int | None) -> int:
+def deliver_run(run: str, acc: Account, max_prs: int | None) -> int:
     client = github_client()
     if client is None:
         return 1
-    box = sandbox()
-    run_dir = box.data_root / "runs" / run
+    inst = Instance(sandbox(), client, store())
+    run_dir = inst.box.data_root / "runs" / run
     if not RUN_NAME.fullmatch(run) or not (run_dir / "report.json").exists():
         print(f"No report in run {run!r}.", file=sys.stderr)
         return 1
     report = AuditReport.from_json((run_dir / "report.json").read_text(encoding="utf-8"))
-    return deliver_run(run_dir, report, account, client, box, max_prs)
-
-
-def deliver_run(
-    run_dir: Path, report: AuditReport, account: Account, client: GitHub, box: Sandbox, max_prs: int | None
-) -> int:
+    import_runs(inst.store, [(run, report, acc.id)])  # a report from before the store, if it is one
     try:
-        forge = GitHubForge.connect(client, report.repo)
+        deliver_report(inst, run_dir, report, acc, options(acc, report.repo), max_prs, progress, log)
     except GitHubError as e:
         print(e, file=sys.stderr)
         return 1
-    planned = report.prs[:max_prs] if max_prs else report.prs
-    print(f"Delivering {len(planned)} pull request(s) for {report.repo} as {forge.author[0]}.", flush=True)
-    run_step, check_quota = agent_hooks(box, account)
-    deliver(
-        report=report,
-        run_dir=run_dir,
-        engine=engines.get(account.engine),
-        tiers=defaults(account.engine),
-        run_step=run_step,
-        check_quota=check_quota,
-        verify=verifier(box, account.engine),
-        forge=forge,
-        max_prs=max_prs,
-        on_step=progress,
-    )
     print("\n" + save(run_dir, report))
     return 0
+
+
+def import_reports(acc: Account) -> int:
+    runs = sandbox().data_root / "runs"
+    found = []
+    for path in sorted(runs.glob("*/report.json")):
+        found.append((path.parent.name, AuditReport.from_json(path.read_text(encoding="utf-8")), acc.id))
+    print(f"Imported {import_runs(store(), found)} of {len(found)} runs.")
+    return 0
+
+
+def status(st: Store) -> str:
+    lines = ["Accounts"]
+    now = time.time()
+    for a in st.accounts():
+        readings = st.readings(a.id, now - 7 * 86_400)
+        last = readings[-1] if readings else None
+        quota_text = (
+            ", ".join(f"{w.name} {w.used_pct:g}%" for w in last.windows)
+            + f" ({(now - last.taken_at) / 60:.0f} min ago)"
+            if last
+            else "no reading yet"
+        )
+        lines.append(f"  {a.id} ({a.engine}, {a.language}, reserve {a.reserve_pct:g}%): {quota_text}")
+    lines.append("Projects")
+    for p in st.projects():
+        counts = st.statuses(p.repo)
+        findings = ", ".join(f"{n} {s}" for s, n in sorted(counts.items())) or "no findings yet"
+        state = "active" if p.active and p.weight > 0 else "inactive"
+        lines.append(f"  {p.repo} ({state}, weight {p.weight:g}): {findings}; {len(st.open_prs(p.repo))} open PRs")
+    return "\n".join(lines)
 
 
 def github_setup(owner: str, org: bool, port: int) -> int:
@@ -257,11 +287,10 @@ def github_setup(owner: str, org: bool, port: int) -> int:
 
 
 def github_repos() -> int:
-    app = App.load(secret_store())
-    if app is None:
-        print("No GitHub App yet: run `lastcall github setup --owner <login>` first.", file=sys.stderr)
+    client = github_client()
+    if client is None:
         return 1
-    client, now, found = GitHub(app), time.time(), []
+    now, found = time.time(), []
     try:
         installations = client.installations()
         for inst in installations:
@@ -273,7 +302,7 @@ def github_repos() -> int:
         print(e, file=sys.stderr)
         return 1
     if not installations:
-        print(f"{app.name} is not installed anywhere yet. Install it:\n  {app.install_url}")
+        print(f"{client.app.name} is not installed anywhere yet. Install it:\n  {client.app.install_url}")
         return 0
     print(describe_suggestions(found))
     return 0
@@ -285,11 +314,11 @@ def describe_suggestions(found: list[Suggestion]) -> str:
         mark = "* " if s.suggested else "  "
         size = f"~{s.code_tokens / 1000:.0f}k" if s.code_tokens else "-"
         lines.append(f"{mark}{s.score:>5}  {s.repo:<36} {s.language or '-':<12} {size:>7}  {'; '.join(s.reasons)}")
-    lines.append("* suggested. Code size in tokens.")
+    lines.append("* suggested. Code size in tokens. Add one with: lastcall project add <owner/name>")
     return "\n".join(lines)
 
 
-def login(account: Account) -> int:
+def login(acc: Account) -> int:
     if shutil.which("docker") is None:
         print("lastcall login runs Docker: install it, or run this command on the Docker host.", file=sys.stderr)
         return 2
@@ -302,29 +331,26 @@ def login(account: Account) -> int:
         )
         return 2
     try:
-        ensure_volume(account)
+        ensure_volume(acc)
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
     print(
-        f"Signing in {account.id} with {account.engine}'s own login. The login stays in the volume "
-        f"{account.volume}; lastcall never reads it.\n",
+        f"Signing in {acc.id} with {acc.engine}'s own login. The login stays in the volume "
+        f"{acc.volume}; lastcall never reads it.\n",
         flush=True,
     )
-    return subprocess.run(login_argv(account, engines.get(account.engine), cfg), check=False).returncode
+    return subprocess.run(login_argv(acc, engines.get(acc.engine), cfg), check=False).returncode
 
 
-def quota(account: Account) -> int:
-    sandbox = Sandbox(
-        Path(os.environ.get("LASTCALL_SOCKET", "/run/lastcall/supervisor.sock")),
-        Path(os.environ.get("LASTCALL_DATA_ROOT", "/data")),
-    )
+def quota(acc: Account) -> int:
     now = time.time()
     try:
-        reading = read_quota(account, sandbox, now)
+        reading = read_quota(acc, sandbox(), now)
     except (QuotaError, SandboxError) as e:
-        print(f"{account.id}: {e}", file=sys.stderr)
+        print(f"{acc.id}: {e}", file=sys.stderr)
         return 1
+    store().record_reading(reading)
     print(describe(reading, now))
     return 0
 

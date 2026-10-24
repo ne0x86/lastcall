@@ -29,7 +29,19 @@ ${language}, in short sentences. Answer only with the JSON of the schema.
 
 ## Findings from earlier runs
 
+They carry ids `#<n>` and a `state`. Do not duplicate them: if a reviewer finds one again, mark it `duplicate` with
+that id in `duplicate_of`.
+
+- `pending`: valid, and it did not fit in earlier pull requests. Prefer these: you may put their id in the `ids` of a
+  pull request of this run, even though they are not in your verdicts.
+- `in_pr`: already in an open pull request. `merged`: already fixed.
+- `rejected`: the owner closed its pull request without merging. `dismissed`: the owner decided against it. Do not
+  propose them again unless there is new and clear evidence.
+- `decide`: waiting for the owner's decision. `resolved`: the owner decided it.
+
+```json
 ${previous}
+```
 
 ## Findings of the reviewers
 
