@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings"],
+  "properties": {
+    "summary": {"type": "string"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "severity", "confidence", "file", "lines", "evidence", "why", "fix", "effort",
+                     "fix_risk", "verification"],
+        "properties": {
+          "title": {"type": "string"},
+          "severity": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "file": {"type": "string"},
+          "lines": {"type": "string"},
+          "evidence": {"type": "string"},
+          "why": {"type": "string"},
+          "fix": {"type": "string"},
+          "effort": {"type": "string", "enum": ["S", "M", "L"]},
+          "fix_risk": {"type": "string", "enum": ["low", "medium", "high"]},
+          "verification": {"type": "string"}
+        }
+      }
+    }
+  }
+}
