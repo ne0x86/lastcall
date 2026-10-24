@@ -103,6 +103,19 @@ class GitHub:
         jwt = app_jwt(self.app, self.clock())
         return str(self.request("POST", f"/app/installations/{installation_id}/access_tokens", jwt)["token"])
 
+    def repository_token(self, repo: str) -> str:
+        """An installation token for owner/name: the App must be installed on it."""
+        try:
+            inst = self.request("GET", f"/repos/{repo}/installation", app_jwt(self.app, self.clock()))
+        except GitHubError as e:
+            if e.status == 404:
+                raise GitHubError(404, f"{self.app.name} is not installed on {repo}: {self.app.install_url}") from e
+            raise
+        return self.installation_token(int(inst["id"]))
+
+    def repository(self, token: str, repo: str) -> dict[str, Any]:
+        return dict(self.request("GET", f"/repos/{repo}", token))
+
     def repositories(self, token: str) -> list[dict[str, Any]]:
         repos: list[dict[str, Any]] = []
         page = 1

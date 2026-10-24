@@ -4,6 +4,7 @@ lastcall login <account> --engine claude-code   # on the host: the CLI's own log
 lastcall quota <account> --engine claude-code   # where the supervisor socket is: read the account's quota
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
 lastcall github repos                           # installed repositories, with lastcall's suggestions
+lastcall audit <owner/name> --account <account> --engine claude-code   # reviewers and judge; a report, no changes
 """
 
 from __future__ import annotations
@@ -17,15 +18,18 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines
+from lastcall import engines, git, pack
 from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
+from lastcall.engines.base import Engine, StepResult, StepSpec
 from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
-from lastcall.quota import QuotaError, Reading, SpendPolicy, plan
+from lastcall.quota import Gate, QuotaError, Reading, SpendPolicy, gate, plan
+from lastcall.recipes.audit import StepRecord, markdown, run_audit
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.suggest import Suggestion, suggest
 from lastcall.supervisor import Config
+from lastcall.tiers import defaults
 
 DEFAULT_RATE = 2.0  # % of the week per hour until the rate is learned from readings
 
@@ -46,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     setup.add_argument("--org", action="store_true", help="the owner is an organization")
     setup.add_argument("--port", type=int, default=8765, help="port of the setup page (default 8765)")
     gh.add_parser("repos", help="installed repositories, with lastcall's suggestions")
+    audit_cmd = commands.add_parser("audit", help="audit a repository: reviewers and judge; a report, no changes")
+    audit_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
+    audit_cmd.add_argument("--account", required=True, help="the account whose quota the audit spends")
+    audit_cmd.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
+    audit_cmd.add_argument("--language", default="English", help="language of findings and reports")
+    audit_cmd.add_argument("--max-prs", type=int, default=3, help="pull requests the judge may plan (default 3)")
     args = parser.parse_args(argv)
     if args.command == "github":
         return github_setup(args.owner, args.org, args.port) if args.action == "setup" else github_repos()
@@ -53,11 +63,74 @@ def main(argv: list[str] | None = None) -> int:
         account = Account(args.account, args.engine)
     except ValueError as e:
         parser.error(str(e))
+    if args.command == "audit":
+        return audit(args.repo, account, args.language, args.max_prs)
     return login(account) if args.command == "login" else quota(account)
 
 
 def secret_store() -> SecretStore:
     return SecretStore(Path(os.environ.get("LASTCALL_SECRETS", "/secrets")))
+
+
+def sandbox() -> Sandbox:
+    return Sandbox(
+        Path(os.environ.get("LASTCALL_SOCKET", "/run/lastcall/supervisor.sock")),
+        Path(os.environ.get("LASTCALL_DATA_ROOT", "/data")),
+    )
+
+
+def audit(repo: str, account: Account, language: str, max_prs: int) -> int:
+    app = App.load(secret_store())
+    if app is None:
+        print("No GitHub App yet: run `lastcall github setup --owner <login>` first.", file=sys.stderr)
+        return 1
+    box, client = sandbox(), GitHub(app)
+    try:
+        token = client.repository_token(repo)
+        meta = client.repository(token, repo)
+    except GitHubError as e:
+        print(e, file=sys.stderr)
+        return 1
+    run_dir = box.data_root / "runs" / f"{meta['name']}-{account.engine}-{time.strftime('%Y%m%d-%H%M%S')}"
+    run_dir.mkdir(parents=True)
+    git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
+    context = pack.build(run_dir / "clone", run_dir, repo)
+    print(
+        f"Auditing {repo} @ {context.sha} with {account.id} ({account.engine}): {context.files} files, "
+        f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}",
+        flush=True,
+    )
+
+    def run_step(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
+        return box.run(engine, step, workspace=workspace, account_volume=account.volume)
+
+    def check_quota() -> tuple[Gate, Reading | None]:
+        try:
+            reading = read_quota(account, box, time.time())
+        except (QuotaError, SandboxError) as e:
+            return Gate(False, f"no quota reading: {e}"), None
+        return gate(reading, SpendPolicy(), time.time()), reading
+
+    def progress(s: StepRecord) -> None:
+        state = "ok" if s.ok else f"FAILED: {(s.error or '')[:200]}"
+        print(f"  {s.role}: {s.model} {s.effort or ''}, {s.seconds:g} s, {s.tool_uses} tools, {state}", flush=True)
+
+    report = run_audit(
+        repo=repo,
+        pack=context,
+        engine=engines.get(account.engine),
+        tiers=defaults(account.engine),
+        run_step=run_step,
+        check_quota=check_quota,
+        language=language,
+        max_prs=max_prs,
+        on_step=progress,
+    )
+    (run_dir / "report.json").write_text(report.to_json(), encoding="utf-8")
+    text = markdown(report)
+    (run_dir / "report.md").write_text(text, encoding="utf-8")
+    print("\n" + text)
+    return 1 if report.status == "failed" else 0
 
 
 def github_setup(owner: str, org: bool, port: int) -> int:
