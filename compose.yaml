@@ -6,6 +6,7 @@
 #   docker compose run --rm cli quota <account> --engine claude-code
 #   docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <login>
 #   docker compose run --rm cli github repos
+#   docker compose --profile service up -d                 # the service: bursts on its own (opt-in)
 #   docker compose --profile test run --rm it               # sandbox integration tests
 name: lastcall
 
@@ -68,6 +69,29 @@ services:
     depends_on:
       supervisor:
         condition: service_healthy
+
+  lastcall:  # the service. Opt-in: `docker compose --profile service up -d` lets it spend unused quota
+    build:
+      context: .
+      target: service
+    image: lastcall-service:dev
+    profiles: [service]
+    command: ["serve"]
+    networks: [outside]
+    environment:
+      LASTCALL_SOCKET: /run/lastcall/supervisor.sock
+      LASTCALL_DATA_ROOT: /data
+      LASTCALL_SECRETS: /secrets
+      LASTCALL_STATE: /state
+    volumes:
+      - data:/data
+      - run:/run/lastcall
+      - secrets:/secrets
+      - state:/state
+    depends_on:
+      supervisor:
+        condition: service_healthy
+    restart: unless-stopped
 
   it:
     build:
