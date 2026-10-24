@@ -1,0 +1,78 @@
+# The sandbox: egress proxy, supervisor and the runner image. The lastcall service joins later.
+#
+#   docker compose --profile build build           # build all images, the runner included
+#   docker compose up -d                           # egress proxy and supervisor
+#   docker compose --profile test run --rm it      # sandbox integration tests
+name: lastcall
+
+services:
+  egress:
+    build: egress
+    image: lastcall-egress:dev
+    networks: [sandbox, outside]
+    volumes:
+      - ./egress/filter:/etc/tinyproxy/filter:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8888"]
+      interval: 5s
+      retries: 12
+    restart: unless-stopped
+
+  supervisor:
+    build:
+      context: .
+      dockerfile: supervisor/Dockerfile
+      target: supervisor
+    image: lastcall-supervisor:dev
+    network_mode: none  # it talks to Docker through the socket and to the service through a Unix socket
+    environment:
+      LASTCALL_CLIENT_GID: "1000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - data:/data
+      - run:/run/lastcall
+    healthcheck:
+      test: ["CMD", "test", "-S", "/run/lastcall/supervisor.sock"]
+      interval: 5s
+      retries: 12
+    depends_on:
+      egress:
+        condition: service_healthy
+    restart: unless-stopped
+
+  runner:  # only built: the supervisor starts one container per step from this image
+    build: runner
+    image: lastcall-runner:dev
+    profiles: [build]
+
+  it:
+    build:
+      context: .
+      dockerfile: supervisor/Dockerfile
+      target: test
+    image: lastcall-it:dev
+    profiles: [test]
+    user: "1000:1000"
+    network_mode: none
+    environment:
+      LASTCALL_SOCKET: /run/lastcall/supervisor.sock
+      LASTCALL_DATA_ROOT: /data
+    volumes:
+      - data:/data
+      - run:/run/lastcall
+    command: ["python", "-m", "pytest", "-p", "no:cacheprovider", "-m", "integration", "tests/integration"]
+    depends_on:
+      supervisor:
+        condition: service_healthy
+
+networks:
+  sandbox:
+    name: lastcall-sandbox
+    internal: true
+  outside: {}
+
+volumes:
+  data:
+    name: lastcall-data
+  run:
+    name: lastcall-run

@@ -37,6 +37,13 @@ uv run pytest                # tests
 uv run ruff check && uv run ruff format --check && uv run mypy
 ```
 
+The sandbox (egress proxy, supervisor and runner image) needs Docker 26 or later:
+
+```sh
+docker compose --profile build --profile test build
+docker compose --profile test run --rm it   # sandbox tests against the real containers
+```
+
 ## License
 
 [Apache-2.0](LICENSE)

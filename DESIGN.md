@@ -115,13 +115,18 @@ flowchart LR
 
 - **Service.** One Python process: quota polling, scheduler, recipe engine, forge client, notifier and web UI. State
   lives in SQLite. The service holds the forge credentials; agents never do.
-- **Runner supervisor.** A small separate process, and the only component with the Docker socket. It accepts a
-  `StepSpec` (engine image from an allowlist, workspace mount and mode, account volume, timeout) and always applies
-  the same security flags. A bug in the service cannot start an arbitrary container.
-- **Runners.** One ephemeral container per step: non-root, `--cap-drop ALL`, `no-new-privileges`, memory and CPU
-  limits, on an `internal` Docker network whose only way out is the egress proxy. Reviewers and the judge get the
-  workspace read-only; each implementer gets its own writable clone. Runners have no forge token, no SSH keys and no
-  Docker socket.
+- **Runner supervisor.** A small separate process, and the only component with the Docker socket. It has no
+  network of its own and listens on a Unix socket. A request names an engine (never an image), the workspace, the
+  files for `/ctx`, the account volume and a timeout. The supervisor refuses any path outside `runs/` on the data
+  volume, any volume that is not an account volume and any proxy setting, and it always applies the same flags. A
+  bug in the service cannot start an arbitrary container.
+- **Runners.** One ephemeral container per step: user 1000, `--cap-drop ALL`, `no-new-privileges`, memory, CPU and
+  process limits, on an `internal` Docker network whose only way out is the egress proxy. Mounts: the workspace
+  (read-only for reviewers and the judge, writable for an implementer, on its own clone), `/ctx` read-only, and the
+  account's credential volume at the CLI's home. Runners have no forge token, no SSH keys and no Docker socket. The
+  image holds the official CLIs at pinned versions, Python 3.12 and Node.js 22.
+- **Data volume.** `runs/` belongs to the service, which runs as user 1000 like the runners, so an implementer can
+  write to its clone. `steps/<id>/ctx/` exists only while its step runs.
 - **Egress proxy.** Allows HTTPS `CONNECT` only to an allowlist built from the enabled engines (model APIs and auth
   endpoints) and from the project's package ecosystems. It relies on a Docker `internal` network, not on host
   firewall rules, so it works the same on Linux and on Docker Desktop.
@@ -428,6 +433,7 @@ gets a build or compile check instead, and the pull request says so.
 | An agent lies about the tests | lastcall runs them again in a clean container and reads the exit code itself. |
 | A bug in lastcall starts a dangerous container | Only the supervisor has the Docker socket, and it accepts a narrow spec. |
 | Subscription credentials leak | lastcall never reads them: they stay in the CLI's own storage, in a volume. |
+| An agent copies its CLI credentials into its output | Every text lastcall publishes (pull request, issue, comment) goes through the secret scanner first, and a hit blocks it. |
 | Unexpected bills | Hard stop when paid usage is active, and a reserve per account. |
 | Takeover of the web UI | Login with lockout; signed `HttpOnly`, `Secure`, `SameSite=Strict` cookies; CSRF token and `Origin` check on every POST; strict CSP. |
 
@@ -509,7 +515,8 @@ and signals. A plugin is a normal Python package. Recipes and reviewers are data
    time. Is that enough?
 3. The exact quota readers use experimental interfaces (Claude's usage request, the Codex app-server). How to detect
    breakage early?
-4. Windows and macOS hosts: the runner sandbox needs testing on Docker Desktop.
+4. Windows and macOS hosts: the sandbox tests pass on Docker Desktop for Windows (Docker 29). macOS is still to
+   test.
 5. Tier names and the default model table: who maintains them, and how often?
 6. ~~Packaging: Python version and dependency policy.~~ Decided in October 2026: Python 3.12 or later. A runtime
    dependency comes in only when a feature needs it, and its pull request says why. Few and well known: PyYAML for

@@ -42,6 +42,7 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
 python_version = "3.12"
+platform = "linux"  # lastcall runs in Linux containers, whatever the development machine
 strict = true
 files = ["src", "tests"]
 mypy_path = "src"
@@ -49,3 +50,4 @@ mypy_path = "src"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["integration: needs the sandbox from compose.yaml (docker compose --profile test run --rm it)"]
