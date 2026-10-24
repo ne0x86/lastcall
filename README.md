@@ -124,8 +124,8 @@ advice.
   - The whole audit: find, judge, fix, verify, deliver.
   - Engines: Claude Code and Codex. Forge: GitHub.
   - Memory of findings, and the service that bursts on its own.
-- 🔜 **v0.2.**
   - Scanners in the context pack: gitleaks, osv-scanner, semgrep and hadolint.
+- 🔜 **v0.2.**
   - A web UI in English and Spanish, with notifications: Telegram, ntfy, Discord, email and more.
 - 🔭 **v0.3.**
   - API keys and local models: opencode, OpenRouter, Ollama.

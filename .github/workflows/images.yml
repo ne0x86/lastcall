@@ -7,6 +7,12 @@ on:
     branches: [main]
     tags: ["v*"]
 
+# One build per branch or tag at a time: a newer push to main replaces an older one, so `edge` is never overwritten
+# by an older commit.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write
