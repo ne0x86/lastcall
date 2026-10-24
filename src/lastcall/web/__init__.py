@@ -18,7 +18,7 @@ import mimetypes
 import secrets as tokens
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import wraps
 from typing import Any
 from urllib.parse import urlsplit
@@ -28,9 +28,9 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, engines, i18n, projects
+from lastcall import __version__, destinations, engines, i18n, projects
 from lastcall.accounts import Account
-from lastcall.github import PERMISSIONS, App, GitHub, GitHubError
+from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
 from lastcall.github_setup import LOGIN, Exchange, exchange_code, form_action, manifest
 from lastcall.notify import EVENTS, Notifier, describe
 from lastcall.quota import QuotaError, Reading
@@ -79,11 +79,12 @@ def create_app(
     notifier: Notifier | None = None,
     read_quota: Callable[[Account], Reading] | None = None,
     exchange: Exchange = exchange_code,
+    fetch: Fetch = urlopen,
 ) -> Flask:
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
     reads an account's quota in the sandbox; without it, the web UI cannot check a new account's login.
-    `exchange` turns GitHub's one-time code into the App's credentials."""
+    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -338,31 +339,87 @@ def create_app(
     @app.get("/settings")
     @signed_in
     def settings_page() -> ResponseReturnValue:
-        return show_settings()
+        return show_settings(service=request.args.get("service", ""))
 
-    def show_settings(status: int = 200, error: str = "") -> ResponseReturnValue:
-        chosen, language = notifications.events(), notifications.language()
+    def show_settings(
+        status: int = 200,
+        error: str = "",
+        details: str = "",
+        service: str = "",
+        values: Mapping[str, str] | None = None,
+        chats: Sequence[tuple[str, str]] = (),
+    ) -> ResponseReturnValue:
+        chosen, language, filled = notifications.events(), notifications.language(), dict(values or {})
         view = {
             "destinations": [(n, describe(url) or "?") for n, url in enumerate(notifications.urls())],
             "events": [(e, t(f"web.notify.event.{e}"), e in chosen) for e in EVENTS],
             "languages": [(code, name, code == language) for code, name in LANGUAGES],
+            "services": [
+                ("telegram", "Telegram"),
+                ("ntfy", "ntfy"),
+                ("discord", "Discord"),
+                ("slack", "Slack"),
+                ("email", t("web.dest.email.name")),
+                ("apprise", t("web.dest.apprise.name")),
+            ],
+            "service": service if service in destinations.SERVICES else "",
+            "filled": filled,  # not "values": in a template, v.values is the dict's method
+            "topic": filled.get("topic") or destinations.random_topic(),
+            "chats": list(chats),
         }
         done = request.args.get("done", "")
-        known = ("saved", "notify_added", "notify_removed", "notify_sent", "notify_failed")
+        known = ("saved", "notify_added", "notify_removed", "notify_sent")
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page(
-            "settings.html", status, v=view, done=message, error=error, github=App.load(secrets), services=SERVICES
+            "settings.html",
+            status,
+            v=view,
+            done=message,
+            error=error,
+            details=details,
+            github=App.load(secrets),
+            services=SERVICES,
         )
 
     @app.post("/settings/notify/add")
     @signed_in
     def add_destination() -> ResponseReturnValue:
-        if not notifications.add_url(request.form.get("url", "")):
-            return show_settings(400, t("web.notify.bad_url"))
+        service, form = request.form.get("service", ""), request.form
+        try:
+            url = destinations.apprise_url(service, form)
+        except destinations.FormError as e:
+            return show_settings(400, t(e.key, **e.values), service=service, values=form)
         if not store.setting("notify_language"):  # until the owner picks one: the language of this page
             notifications.choose(sorted(notifications.events()), g.lang)
-        log("Web UI: notification destination added")
+        sent, said = notifications.test(url)
+        if not sent:
+            return show_settings(400, t("web.dest.failed"), said, service=service, values=form)
+        notifications.add_url(url)
+        log(f"Web UI: notification destination added ({service})")
         return redirect(url_for("settings_page", done="notify_added"))
+
+    @app.post("/settings/notify/telegram")
+    @signed_in
+    def find_telegram_chats() -> ResponseReturnValue:
+        token = request.form.get("token", "").strip()
+        try:
+            chats = destinations.telegram_chats(token, fetch)
+        except destinations.FormError as e:
+            return show_settings(400, t(e.key, **e.values), service="telegram", values={"token": token})
+        if not chats:
+            return show_settings(error=t("web.dest.telegram.none"), service="telegram", values={"token": token})
+        return show_settings(service="telegram", values={"token": token}, chats=chats)
+
+    @app.post("/settings/notify/test/<int:index>")
+    @signed_in
+    def test_destination(index: int) -> ResponseReturnValue:
+        urls = notifications.urls()
+        if not 0 <= index < len(urls):
+            return problem(404, "web.error.not_found")
+        sent, said = notifications.test(urls[index])
+        if not sent:
+            return show_settings(502, t("web.dest.test_failed"), said)
+        return redirect(url_for("settings_page", done="notify_sent"))
 
     @app.post("/settings/notify/remove")
     @signed_in
@@ -381,12 +438,6 @@ def create_app(
             return problem(400, "web.error.form")
         notifications.choose(request.form.getlist("events"), language)
         return redirect(url_for("settings_page", done="saved"))
-
-    @app.post("/settings/notify/test")
-    @signed_in
-    def test_notification() -> ResponseReturnValue:
-        sent = notifications.test()
-        return redirect(url_for("settings_page", done="notify_sent" if sent else "notify_failed"))
 
     @app.get("/github")
     @signed_in

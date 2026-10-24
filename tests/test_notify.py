@@ -16,9 +16,9 @@ class Outbox:
         self.sent: list[tuple[list[str], str, str]] = []
         self.ok = ok
 
-    def __call__(self, urls: Sequence[str], title: str, body: str) -> bool:
+    def __call__(self, urls: Sequence[str], title: str, body: str) -> tuple[bool, str]:
         self.sent.append((list(urls), title, body))
-        return self.ok
+        return self.ok, "" if self.ok else "There were not Telegram chat_ids to notify."
 
 
 @pytest.fixture
@@ -76,13 +76,17 @@ def test_an_early_stop_is_a_failed_event_with_its_own_words(notifier: Notifier, 
 def test_a_failing_notification_never_stops_lastcall(tmp_path: Path) -> None:
     logs: list[str] = []
 
-    def broken(urls: Sequence[str], title: str, body: str) -> bool:
+    def broken(urls: Sequence[str], title: str, body: str) -> tuple[bool, str]:
         raise OSError("network down")
 
     notifier = Notifier(SecretStore(tmp_path / "s"), Store(tmp_path / "db"), send=broken, log=logs.append)
     notifier.add_url(NTFY)
-    assert not notifier.test()
+    assert notifier.test() == (False, "network down")
     assert logs == ["notification test: network down"]
     quiet = Notifier(SecretStore(tmp_path / "s"), Store(tmp_path / "db"), send=Outbox(ok=False), log=logs.append)
-    assert not quiet.test()
-    assert "could not deliver" in logs[-1]
+    assert quiet.test() == (False, "There were not Telegram chat_ids to notify.")
+    assert (
+        logs[-1]
+        == "notification test: not delivered to every destination: There were not Telegram chat_ids to notify."
+    )
+    assert quiet.test(NTFY) == (False, "There were not Telegram chat_ids to notify.")  # one destination, saved or not
