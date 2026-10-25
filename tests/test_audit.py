@@ -302,3 +302,27 @@ def test_a_peer_checks_only_its_reviewers_models(tmp_path: Path) -> None:
         peers=[Peer("chatgpt", Scripted(quiet), TIERS, runner, peer_check)],
     )
     assert asked[0] == ["mid"]  # a peer does not judge
+
+
+def test_a_projects_reviewer_runs_with_the_others(tmp_path: Path) -> None:
+    from lastcall.recipes.audit import Reviewer, reviewers
+
+    asked: list[list[str]] = []
+
+    def check(models: Sequence[str]) -> tuple[Gate, Reading | None]:
+        asked.append(list(models))
+        return Gate(True), READING
+
+    script = {**SCRIPT, "reviewer:accessibility": ok({"summary": "", "findings": [finding("Unlabelled button")]})}
+    report = run_audit(
+        repo="ne0x86/demo",
+        pack=pack(tmp_path),
+        engine=Scripted(script),
+        tiers=TIERS,
+        run_step=runner,
+        check_quota=check,
+        team=[*reviewers(), Reviewer("accessibility", "A", "fast", "Find WCAG 2.2 AA failures.")],
+    )
+    assert "reviewer:accessibility" in [s.role for s in report.steps]
+    assert "A1" in [f["id"] for f in report.findings]
+    assert asked[0] == ["mid", "small", "big"]  # its model is checked with the others before the first step

@@ -24,7 +24,7 @@ from typing import Any, Protocol
 
 from lastcall import git, i18n
 from lastcall.engines.base import Engine, StepResult, StepSpec
-from lastcall.environment import RUNNER, Environment
+from lastcall.environment import RUNNER, ConfigError, Environment
 from lastcall.pack import Pack
 from lastcall.quota import Gate, Reading
 from lastcall.recipes import front_matter, prompt, render, schema
@@ -36,6 +36,11 @@ StepRunner = Callable[[Engine, StepSpec, Path], StepResult]  # (engine, step, wo
 QuotaCheck = Callable[[Sequence[str]], tuple[Gate, Reading | None]]  # the gate for the models of the next steps
 ATTEMPTS = 2  # an implementer whose change fails the check gets the failure and one more attempt
 Verifier = Callable[[Path, str], tuple[bool, str]]  # (the change, check command) -> (passed, last lines of output)
+PROJECT_REVIEWERS = ".lastcall/reviewers"  # a project's own reviewers, one Markdown file each
+MAX_PROJECT_REVIEWERS = 4  # each one is a step of every run
+MAX_REVIEWER_BYTES = 8_000
+REVIEWER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+REVIEWER_PREFIX = re.compile(r"[A-Z]{1,3}")  # finding ids: A1, A2...
 
 
 class Forge(Protocol):
@@ -68,6 +73,58 @@ def reviewers() -> list[Reviewer]:
             raise ValueError(f"reviewer {item.name} needs name, prefix and a tier among {TIERS}")
         found.append(Reviewer(meta["name"], meta["prefix"], meta["tier"], body))
     return found
+
+
+def project_reviewers(root: Path) -> list[Reviewer]:
+    """The project's own reviewers, from `.lastcall/reviewers/*.md` in its repository, with the front matter of the
+    built-in ones. Raises ConfigError when one is wrong: the run stops before it spends."""
+    folder = root / PROJECT_REVIEWERS
+    if not folder.is_dir():
+        return []
+    if not folder.resolve().is_relative_to(root.resolve()):
+        raise ConfigError(f"{PROJECT_REVIEWERS} is a link out of the repository")
+    paths = sorted(folder.glob("*.md"))
+    if len(paths) > MAX_PROJECT_REVIEWERS:
+        raise ConfigError(f"{PROJECT_REVIEWERS} has {len(paths)} reviewers, and a run takes {MAX_PROJECT_REVIEWERS}")
+    found = []
+    for path in paths:
+        rel = path.relative_to(root).as_posix()
+        if git.repo_file(root, rel) is None:
+            raise ConfigError(f"{rel} is a link that does not lead to a file of the repository")
+        if path.stat().st_size > MAX_REVIEWER_BYTES:
+            raise ConfigError(f"{rel} is over {MAX_REVIEWER_BYTES // 1000} KB: a focus takes a few paragraphs")
+        try:
+            meta, body = front_matter(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, ValueError) as e:
+            raise ConfigError(f"{rel}: {e}") from e
+        name, prefix, tier = meta.get("name", ""), meta.get("prefix", ""), meta.get("tier", "")
+        if not REVIEWER_NAME.fullmatch(name):
+            raise ConfigError(f"{rel}: `name` takes lowercase letters, digits and dashes, such as accessibility")
+        if not REVIEWER_PREFIX.fullmatch(prefix):
+            raise ConfigError(f"{rel}: `prefix` takes one to three capital letters, such as A")
+        if tier not in TIERS:
+            raise ConfigError(f"{rel}: `tier` is one of {', '.join(TIERS)}")
+        if not body:
+            raise ConfigError(f"{rel}: the reviewer's focus goes after the front matter")
+        found.append(Reviewer(name, prefix, tier, body))
+    return found
+
+
+def team(root: Path, chosen: Sequence[str] = ()) -> list[Reviewer]:
+    """The reviewers of a run: the built-in ones, then the project's own; only those that `.lastcall.yml` names, when
+    it names some. Raises ConfigError for a wrong reviewer, a name or prefix used twice, or an unknown name."""
+    everyone = [*reviewers(), *project_reviewers(root)]
+    for kind, values in (("name", [rv.name for rv in everyone]), ("prefix", [rv.prefix for rv in everyone])):
+        twice = sorted({v for v in values if values.count(v) > 1})
+        if twice:
+            raise ConfigError(f"each reviewer needs its own {kind}, and two have {', '.join(twice)}")
+    if not chosen:
+        return everyone
+    by_name = {rv.name: rv for rv in everyone}
+    unknown = [name for name in chosen if name not in by_name]
+    if unknown:
+        raise ConfigError(f"`reviewers` names {', '.join(unknown)}, and the reviewers are {', '.join(by_name)}")
+    return [by_name[name] for name in dict.fromkeys(chosen)]
 
 
 def models(tiers: Mapping[str, tuple[str, str | None]], team: Sequence[Reviewer] | None = None) -> list[str]:

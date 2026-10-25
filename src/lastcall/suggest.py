@@ -25,6 +25,7 @@ SUPPORTED = {"Python", "JavaScript", "TypeScript"}  # verified in the runner its
 ENVIRONMENT_FILES = re.compile(
     r"\.lastcall\.ya?ml|\.devcontainer\.json|\.devcontainer/([^/]+/)?devcontainer\.json|go\.mod|Cargo\.toml|pom\.xml"
 )
+REVIEWER_FILES = re.compile(r"\.lastcall/reviewers/[^/]+\.md")  # a project's own reviewers (lastcall.recipes.audit)
 SKIP = re.compile(
     r"(^|/)(vendor|node_modules|dist|build)/|\.min\.(js|css)$|(\.lock|lock\.json)$|"
     r"\.(png|jpe?g|gif|ico|webp|svg|pdf|zip|gz|db|sqlite3?|woff2?|ttf|mp[34]|csv|parquet|map)$"
@@ -89,6 +90,9 @@ def suggest(
             why.append(("env-file", {"file": environment}))
     else:
         why.append(("environment", {"language": language}) if language else ("no-language", {}))
+    reviewers = sum(1 for path, _ in files if REVIEWER_FILES.fullmatch(path))
+    if reviewers:
+        why.append(("reviewers", {"count": reviewers}))
     issues = int(repo.get("open_issues_count") or 0)
     if issues:
         score += min(10, issues)

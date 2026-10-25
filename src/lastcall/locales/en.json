@@ -20,6 +20,8 @@
   "suggest.environment": "{language}: add a .lastcall.yml with its environment, or a devcontainer",
   "suggest.no-language": "no main language: add a .lastcall.yml with its environment",
   "suggest.env-file": "checked in its own environment ({file})",
+  "suggest.reviewers.one": "{count} reviewer of its own",
+  "suggest.reviewers.other": "{count} reviewers of its own",
   "suggest.issues.one": "{count} open issue",
   "suggest.issues.other": "{count} open issues",
   "suggest.large": "large: an audit covers part of the code",

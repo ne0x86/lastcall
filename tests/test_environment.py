@@ -54,6 +54,7 @@ def test_settings(tmp_path: Path) -> None:
         ("environment:\n  image: '--privileged'\n", "not an image reference"),
         ("environment:\n  image: Golang:1\n", "not an image reference"),
         ("exclude: [1, 2]\n", "`exclude` is a list of paths"),
+        ("reviewers: bugs\n", "`reviewers` is a list of reviewer names"),
         ("test: [unclosed\n", "not valid YAML"),
     ],
 )
@@ -141,3 +142,8 @@ def test_maven_reads_the_sandbox_proxy(tmp_path: Path) -> None:
     xml = (tmp_path / ".m2" / "settings.xml").read_text(encoding="utf-8")
     assert "<protocol>https</protocol><host>egress</host><port>8888</port>" in xml
     assert "<protocol>http</protocol><host>egress</host><port>8888</port>" in xml
+
+
+def test_settings_choose_reviewers(tmp_path: Path) -> None:
+    found = settings(write(tmp_path, {".lastcall.yml": "reviewers: [bugs, security]\n"}))
+    assert found == Settings(reviewers=("bugs", "security"))
