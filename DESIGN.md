@@ -1,6 +1,6 @@
 # lastcall design
 
-Status: **v0.3 released, October 2026**, open for discussion. This document describes what lastcall is and how it
+Status: **v0.4 released, October 2026**, open for discussion. This document describes what lastcall is and how it
 works. Section 17 says what is done and what comes next; open decisions are listed in section 19.
 
 ## 1. What lastcall is
@@ -652,12 +652,13 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Community files: a contributing guide, a security policy, a code of conduct, issue and pull request templates,
   and Dependabot.
 
-**v0.4: better changes, closer to the merge**
+**v0.4: better changes, closer to the merge** (done, October 2026)
 
-- Project reviewers in the repository (`.lastcall/reviewers/`). Done.
-- Recipe `improve`: improvement plans, and pull requests for the ideas the owner ticks. Done.
-- The gate checks the weekly window of the step's model (question 7). Done.
-- Merge on approve; watch after the merge and open a revert pull request. Done.
+- Project reviewers in the repository (`.lastcall/reviewers/`).
+- Recipe `improve`: improvement plans, and pull requests for the ideas the owner ticks.
+- The gate checks the weekly window of the step's model (question 7).
+- Merge on approve; watch after the merge and open a revert pull request.
+- lastcall reads a repository's files on its own side only from inside the repository (section 12).
 
 **v0.5: wider reach**
 

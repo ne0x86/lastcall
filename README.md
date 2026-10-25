@@ -92,7 +92,7 @@ You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and W
 **1. Start lastcall:**
 
 ```sh
-git clone --branch v0.3.0 https://github.com/ne0x86/lastcall && cd lastcall
+git clone --branch v0.4.0 https://github.com/ne0x86/lastcall && cd lastcall
 docker compose up -d
 ```
 
@@ -131,7 +131,7 @@ and set `LASTCALL_TRUST_PROXY=1`.
 To upgrade, check out the new release and pull its images; your settings and history stay in Docker volumes:
 
 ```sh
-git fetch --tags && git checkout v0.3.0      # the release you want
+git fetch --tags && git checkout v0.4.0      # the release you want
 docker compose pull && docker compose up -d
 ```
 
@@ -226,12 +226,12 @@ advice.
   - Fan-out: several accounts, even from different providers, audit the same project, and one judge keeps what
     holds.
   - Engines are plug-ins: one module each, and one login command for all of them.
-- 🔜 **v0.4, closer to the merge.**
-  - ✅ Reviewers that your repository defines.
-  - ✅ The `improve` recipe: plans of small improvements, and pull requests for the ideas you tick.
-  - ✅ Merge on approve; watch after the merge and propose a revert.
-  - ✅ The gate checks the weekly window of each model.
-- 🔭 **v0.5, wider reach.**
+- ✅ **v0.4, closer to the merge.**
+  - Reviewers that your repository defines.
+  - The `improve` recipe: plans of small improvements, and pull requests for the ideas you tick.
+  - Merge on approve; watch after the merge and propose a revert.
+  - The gate checks the weekly window of each model.
+- 🔜 **v0.5, wider reach.**
   - API keys and local models: opencode, OpenRouter, Ollama.
   - More recipes: issues, tests, dependencies.
   - GitLab and Forgejo.
