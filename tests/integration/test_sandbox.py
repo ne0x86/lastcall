@@ -108,7 +108,8 @@ def test_egress_reaches_the_model_api(workspace: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "url", ["https://proxy.golang.org/", "https://index.crates.io/config.json", "https://repo.maven.apache.org/maven2/"]
+    "url",
+    ["https://proxy.golang.org/", "https://index.crates.io/config.json", "https://repo.maven.apache.org/maven2/"],
 )
 def test_egress_reaches_the_package_registries(workspace: Path, url: str) -> None:
     out = sh("curl -s -o /dev/null -w '%{http_code}' --max-time 20 " + url, workspace).output
