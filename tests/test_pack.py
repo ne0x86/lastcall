@@ -53,3 +53,13 @@ def test_code_over_the_budget_is_listed_not_included(repo: Path, tmp_path: Path)
     assert p.files == 0
     assert p.omitted == ["README.md", "app.py"]
     assert "Not in this pack (over the size budget): read them from /work" in text
+
+
+def test_the_owner_can_leave_paths_out() -> None:
+    from lastcall.pack import excluded
+
+    assert excluded("vendor/lib/x.go", ["vendor/"])
+    assert not excluded("src/vendor/x.go", ["vendor/"])  # a folder pattern starts at the root
+    assert excluded("web/app.min.js", ["*.min.js"])
+    assert excluded("docs/guide.md", ["/docs/*.md"])
+    assert not excluded("src/app.py", ["vendor/", "*.min.js"])

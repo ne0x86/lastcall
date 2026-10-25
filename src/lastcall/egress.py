@@ -15,6 +15,11 @@ from lastcall.engines.base import Engine
 REGISTRIES = {
     "npm": ("registry.npmjs.org",),
     "pypi": ("pypi.org", "files.pythonhosted.org"),
+    "go": ("proxy.golang.org", "sum.golang.org"),
+    "cargo": ("index.crates.io", "static.crates.io", "crates.io"),
+    "maven": ("repo.maven.apache.org", "repo1.maven.org"),
+    "rubygems": ("rubygems.org", "index.rubygems.org"),
+    "nuget": ("api.nuget.org",),
 }
 SCANNERS = ("api.deps.dev", "api.osv.dev", "semgrep.dev")  # vulnerability data and semgrep's rules
 DOMAIN = re.compile(r"(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+")

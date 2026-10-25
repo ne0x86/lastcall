@@ -1,7 +1,8 @@
 """Which repositories are worth lastcall's time, decided without any model call (DESIGN.md, section 8).
 
-Points: recent activity (30 within a month, 15 within three months, 5 within a year), tests (20), CI (5), a language
-v0.1 can verify (15) and open issues (1 each, up to 10). Large repositories lose 15, tiny ones 10. Archived, forked
+Points: recent activity (30 within a month, 15 within three months, 5 within a year), tests (20), CI (5), an
+environment lastcall can verify in (15: Python or Node.js, a .lastcall.yml, a devcontainer, go.mod, Cargo.toml or
+pom.xml) and open issues (1 each, up to 10). Large repositories lose 15, tiny ones 10. Archived, forked
 and empty repositories are left out. A repository is suggested from 40 points.
 
 Reasons are catalog keys with their values, so the web UI says them in the owner's language and the command line in
@@ -19,7 +20,11 @@ from typing import Any
 from lastcall.i18n import MESSAGES, plural, text
 
 SUGGEST_FROM = 40
-SUPPORTED = {"Python", "JavaScript", "TypeScript"}  # the default environments of v0.1 (section 10)
+SUPPORTED = {"Python", "JavaScript", "TypeScript"}  # verified in the runner itself (section 10)
+# Files that give a project its own environment (lastcall.environment)
+ENVIRONMENT_FILES = re.compile(
+    r"\.lastcall\.ya?ml|\.devcontainer\.json|\.devcontainer/([^/]+/)?devcontainer\.json|go\.mod|Cargo\.toml|pom\.xml"
+)
 SKIP = re.compile(
     r"(^|/)(vendor|node_modules|dist|build)/|\.min\.(js|css)$|(\.lock|lock\.json)$|"
     r"\.(png|jpe?g|gif|ico|webp|svg|pdf|zip|gz|db|sqlite3?|woff2?|ttf|mp[34]|csv|parquet|map)$"
@@ -64,7 +69,7 @@ def suggest(
     if left_out:
         return Suggestion(name, 0, False, language, tokens, ((left_out, {}),))
 
-    score, why = 0, []
+    score, why = 0, list[Reason]()
     pushed = repo.get("pushed_at")
     days = (now - datetime.fromisoformat(str(pushed)).timestamp()) / 86_400 if pushed else 10_000.0
     score += 30 if days <= 30 else 15 if days <= 90 else 5 if days <= 365 else 0
@@ -77,8 +82,11 @@ def suggest(
     if any(CI.search(path) for path, _ in files):
         score += 5
         why.append(("ci", {}))
-    if language in SUPPORTED:
+    environment = next((path for path, _ in files if ENVIRONMENT_FILES.fullmatch(path)), None)
+    if language in SUPPORTED or environment:
         score += 15
+        if environment and language not in SUPPORTED:
+            why.append(("env-file", {"file": environment}))
     else:
         why.append(("environment", {"language": language}) if language else ("no-language", {}))
     issues = int(repo.get("open_issues_count") or 0)

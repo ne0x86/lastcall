@@ -100,7 +100,7 @@ def test_reasons_in_spanish(tmp_path: Path) -> None:
     assert spanish[0] == "último push hace 5 días"
     assert "1 issue abierto" in spanish
     assert explain("es", ("environment", {"language": "Go"})) == (
-        "Go: necesita un entorno de proyecto (devcontainer, v0.2)"
+        "Go: añade un .lastcall.yml con su entorno, o un devcontainer"
     )
 
 

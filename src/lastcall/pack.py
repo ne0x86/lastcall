@@ -5,8 +5,9 @@ cache it (DESIGN.md, section 7).
 
 from __future__ import annotations
 
+import fnmatch
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,16 +28,30 @@ class Pack:
     tokens: int
 
 
-def code_files(root: Path) -> Iterator[tuple[str, str]]:
-    """(relative path, text) of the files worth reading: no vendored, generated, binary or huge files."""
+def code_files(root: Path, exclude: Sequence[str] = ()) -> Iterator[tuple[str, str]]:
+    """(relative path, text) of the files worth reading: no vendored, generated, binary or huge files, and none that
+    the owner excludes."""
     for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):  # same order on every OS
         rel = path.relative_to(root).as_posix()
         if not path.is_file() or path.is_symlink() or SKIP.search(rel) or path.stat().st_size > MAX_FILE:
+            continue
+        if excluded(rel, exclude):
             continue
         raw = path.read_bytes()
         if b"\0" in raw[:4096]:
             continue
         yield rel, raw.decode(errors="replace")
+
+
+def excluded(rel: str, patterns: Sequence[str]) -> bool:
+    """`dir/` leaves out that folder, from the root. Any other pattern is a glob on the whole path: `*.min.js`."""
+    for pattern in patterns:
+        if pattern.endswith("/"):
+            if rel.startswith(pattern.lstrip("/")):
+                return True
+        elif fnmatch.fnmatchcase(rel, pattern.lstrip("/")):
+            return True
+    return False
 
 
 def numbered(text: str) -> str:
@@ -46,13 +61,18 @@ def numbered(text: str) -> str:
 
 
 def build(
-    clone: Path, run_dir: Path, project: str, budget: int = CODE_BUDGET, extra: Mapping[str, str] | None = None
+    clone: Path,
+    run_dir: Path,
+    project: str,
+    budget: int = CODE_BUDGET,
+    extra: Mapping[str, str] | None = None,
+    exclude: Sequence[str] = (),
 ) -> Pack:
     src = run_dir / "src"
     git.snapshot(clone, src)
     sha = git.head(clone)[:7]
     code, rows, omitted, used = [], [], [], 0
-    for rel, text in code_files(src):
+    for rel, text in code_files(src, exclude):
         tokens = len(text) // 4
         rows.append(f"- {rel} ({len(text.splitlines())} lines)")
         if used + tokens > budget:

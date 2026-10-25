@@ -24,10 +24,7 @@ ${findings}
 3. Add **a test that fails without the fix and passes with it** for each finding where that is possible, next to
    the existing tests and following their conventions. If it is not possible (a dependency version, for example),
    say how the fix is verified.
-4. Run the whole check with: `${test_command}`. It must pass. If something already failed before your change, do
-   not fix it: say so in `pending`. Then lastcall checks your change again, in a clean container where only the
-   project's declared dependencies are installed. If you add tests, it runs them with `${verify_command}`: make sure
-   they pass exactly that way, and do not rely on anything you installed by hand.
+4. ${check}
 5. Do not commit and do not push: lastcall does that. Leave no temporary files, and create no file outside the
    repository that should be versioned.
 6. If a finding turns out not to be real when you read the code, do not force it: explain it in `pending`, and set

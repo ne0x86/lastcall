@@ -49,7 +49,7 @@ def test_without_tests_fixes_can_only_build() -> None:
 
 def test_a_language_without_default_environment() -> None:
     s = suggest(repo(language="Go"), [("main.go", 9_000), ("main_test.go", 2_000)], NOW)
-    assert "Go: needs a project environment (devcontainer, v0.2)" in s.reasons
+    assert "Go: add a .lastcall.yml with its environment, or a devcontainer" in s.reasons
     assert "tests" in s.reasons
 
 
@@ -81,3 +81,11 @@ def test_large_and_tiny_projects() -> None:
 )
 def test_test_detection(path: str) -> None:
     assert "tests" in suggest(repo(), [*CODE, (path, 100)], NOW).reasons
+
+
+@pytest.mark.parametrize("path", ["go.mod", ".lastcall.yml", ".devcontainer/go/devcontainer.json", "pom.xml"])
+def test_a_project_with_its_own_environment_is_not_held_back(path: str) -> None:
+    files = [("main.go", 9_000), ("main_test.go", 2_000), (path, 200)]
+    s = suggest(repo(language="Go"), files, NOW)
+    assert s.score == suggest(repo(), [("app.py", 9_000), ("test_app.py", 2_000)], NOW).score
+    assert f"checked in its own environment ({path})" in s.reasons

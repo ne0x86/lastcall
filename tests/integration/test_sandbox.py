@@ -107,6 +107,14 @@ def test_egress_reaches_the_model_api(workspace: Path) -> None:
     assert out not in ("", "000")
 
 
+@pytest.mark.parametrize(
+    "url", ["https://proxy.golang.org/", "https://index.crates.io/config.json", "https://repo.maven.apache.org/maven2/"]
+)
+def test_egress_reaches_the_package_registries(workspace: Path, url: str) -> None:
+    out = sh("curl -s -o /dev/null -w '%{http_code}' --max-time 20 " + url, workspace).output
+    assert out not in ("", "000")
+
+
 def test_egress_refuses_other_domains(workspace: Path) -> None:
     script = "curl -s -o /dev/null -w '%{http_connect}' --max-time 20 https://example.com/; echo \" rc=$?\""
     out = sh(script, workspace).output
@@ -197,3 +205,14 @@ def test_scanners_find_what_they_should_in_the_runner(workspace: Path) -> None:
     assert "urllib3 1.24.1" in found[TITLES["osv-scanner"]]  # pinned only in the Dockerfile
     assert "subprocess-shell-true" in found[TITLES["semgrep"]]
     assert "DL3006" in found[TITLES["hadolint"]]
+
+
+def test_a_check_runs_in_the_projects_image(workspace: Path) -> None:
+    """A verify step may name the project's image instead of the runner's, with the same isolation."""
+    lines: list[str] = []
+    script = "id -u; cat /work/hello.txt; grep CapEff /proc/self/status"
+    outcome = SANDBOX.call(
+        "claude-code", Invocation(("sh", "-c", script)), lines.append, workspace=workspace, image="busybox:1.36.1"
+    )
+    assert outcome.exit_code == 0
+    assert lines == ["1000", "hello", "CapEff:\t0000000000000000"]
