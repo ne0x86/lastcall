@@ -73,8 +73,8 @@ lastcall drives each vendor's official command-line tool, with your own login:
 | Codex (`codex`) | ChatGPT Plus, Pro and Business | the 5-hour and weekly windows, exactly |
 
 The rest of lastcall only knows the engine contract. Adding another tool is one module and a few small changes:
-[CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists them. Next on the roadmap: opencode, for API keys,
-OpenRouter and local models.
+[CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists them. The next engine on the roadmap is opencode, for
+API keys, OpenRouter and local models.
 
 ## 🚀 Quickstart
 
@@ -83,7 +83,7 @@ You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and W
 **1. Start lastcall:**
 
 ```sh
-git clone --branch v0.2.2 https://github.com/ne0x86/lastcall && cd lastcall
+git clone --branch v0.3.0 https://github.com/ne0x86/lastcall && cd lastcall
 docker compose up -d
 ```
 
@@ -121,7 +121,7 @@ and set `LASTCALL_TRUST_PROXY=1`.
 To upgrade, check out the new release and pull its images; your settings and history stay in Docker volumes:
 
 ```sh
-git fetch --tags && git checkout v0.2.2      # the release you want
+git fetch --tags && git checkout v0.3.0      # the release you want
 docker compose pull && docker compose up -d
 ```
 
@@ -181,11 +181,16 @@ advice.
 - ✅ **v0.2, web UI.**
   - Setup from the browser, dashboard, projects and accounts, in English and Spanish.
   - Notifications: Telegram, ntfy, Discord, email and more.
-- 🔜 **v0.3.**
-  - ✅ `.lastcall.yml` in your repositories, devcontainer images, and Go, Rust and Java out of the box.
-  - ✅ Fan-out: Claude and Codex audit the same project, and one judge keeps what holds.
-  - The `improve` recipe; merge on approve; watch after the merge and revert.
-- 🔭 **v0.4.**
+- ✅ **v0.3, more projects, more eyes.**
+  - `.lastcall.yml` in your repositories, devcontainer images, and Go, Rust and Java out of the box.
+  - A second attempt at a fix when the project's check fails, with the check's output.
+  - Fan-out: Claude and Codex audit the same project, and one judge keeps what holds.
+  - Engines are plug-ins: one module each, and one login command for all of them.
+- 🔜 **v0.4, closer to the merge.**
+  - The `improve` recipe, and reviewers that your repository defines.
+  - Merge on approve; watch after the merge and revert.
+  - The gate checks the weekly window of each model.
+- 🔭 **v0.5, wider reach.**
   - API keys and local models: opencode, OpenRouter, Ollama.
   - More recipes: issues, tests, dependencies.
   - GitLab and Forgejo.

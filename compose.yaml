@@ -10,7 +10,7 @@
 name: lastcall
 
 x-lastcall: &lastcall
-  image: ghcr.io/ne0x86/lastcall-service:${LASTCALL_VERSION:-0.2.2}
+  image: ghcr.io/ne0x86/lastcall-service:${LASTCALL_VERSION:-0.3.0}
   init: true  # stops at once on `docker compose stop`
   networks: [outside]  # lastcall itself talks to GitHub; agents never do
   environment:
@@ -28,7 +28,7 @@ x-lastcall: &lastcall
       condition: service_healthy
 
 x-login: &login  # the CLI's own interactive login, with the isolation of a step
-  image: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.2.2}
+  image: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.3.0}
   profiles: [login]
   networks: [sandbox]
   user: "1000:1000"
@@ -40,7 +40,7 @@ x-login: &login  # the CLI's own interactive login, with the isolation of a step
 
 services:
   egress:
-    image: ghcr.io/ne0x86/lastcall-egress:${LASTCALL_VERSION:-0.2.2}
+    image: ghcr.io/ne0x86/lastcall-egress:${LASTCALL_VERSION:-0.3.0}
     networks: [sandbox, outside]
     volumes:
       - ./egress/filter:/etc/tinyproxy/filter:ro
@@ -51,11 +51,11 @@ services:
     restart: unless-stopped
 
   supervisor:
-    image: ghcr.io/ne0x86/lastcall-supervisor:${LASTCALL_VERSION:-0.2.2}
+    image: ghcr.io/ne0x86/lastcall-supervisor:${LASTCALL_VERSION:-0.3.0}
     network_mode: none  # it talks to Docker through the socket and to lastcall through a Unix socket
     environment:
       LASTCALL_CLIENT_GID: "1000"
-      LASTCALL_RUNNER_IMAGE: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.2.2}
+      LASTCALL_RUNNER_IMAGE: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.3.0}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - data:/data
