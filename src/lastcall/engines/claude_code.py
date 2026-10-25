@@ -34,6 +34,8 @@ WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
 
 class ClaudeCode:
     name: str = "claude-code"
+    title: str = "Claude Code"
+    provider: str = "Claude"
     capabilities: frozenset[str] = frozenset({"json_schema", "system_prompt_file", "effort"})
     egress: tuple[str, ...] = ("api.anthropic.com", "platform.claude.com")  # inference; login token exchange
     home: str = "/home/runner/.claude"

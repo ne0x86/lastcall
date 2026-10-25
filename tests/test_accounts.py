@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from lastcall.accounts import Account, login_argv
@@ -62,3 +64,16 @@ def test_describe_a_reading() -> None:
     assert "week   36.0% used, resets Tue 19 12:00 UTC" in text
     assert "paid usage: off" in text
     assert "burst: no (burst in" in text
+
+
+def test_the_login_script_knows_every_engine() -> None:
+    """compose.yaml's `login` service runs runner/login.sh: each engine must have its login there, with its own
+    home variable pointed at the account volume."""
+    from lastcall import engines
+
+    script = (Path(__file__).parents[1] / "runner" / "login.sh").read_text(encoding="utf-8")
+    for name in engines.BUILTIN:
+        engine = engines.get(name)
+        branch = script[script.index(f"  {name})") :].split(";;")[0]
+        assert f'export {engine.home_env}="$account"' in branch, name
+        assert f"exec {' '.join(engine.login)}" in branch, name

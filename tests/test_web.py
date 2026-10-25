@@ -546,8 +546,9 @@ def test_accounts_page(tmp_path: Path) -> None:
         ("max", "claude-code", "English", 10),
     ]
     page = web.client.get("/accounts").get_data(as_text=True)
-    assert "ACCOUNT=max docker compose run --rm login-claude-code" in page
-    assert '$env:ACCOUNT="broken"; docker compose run --rm login-codex' in html.unescape(page)
+    assert "ACCOUNT=max ENGINE=claude-code docker compose run --rm login" in page
+    assert '$env:ACCOUNT="broken"; $env:ENGINE="codex"; docker compose run --rm login' in html.unescape(page)
+    assert '<option value="claude-code">Claude (Claude Code)</option>' in page  # engines name themselves
 
     for name in ("max", "broken"):
         response = web.client.post(f"/accounts/{name}/quota", data={"csrf": csrf}, headers=SITE)

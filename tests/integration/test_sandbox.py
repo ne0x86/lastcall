@@ -33,6 +33,8 @@ class Shell:
     """Runs a shell script in the runner image. The engine name only selects the image."""
 
     name: str = "claude-code"
+    title: str = "Shell"
+    provider: str = "tests"
     capabilities: frozenset[str] = frozenset()
     egress: tuple[str, ...] = ()
     home: str = "/home/runner/.claude"

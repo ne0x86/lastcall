@@ -173,3 +173,17 @@ def test_learned_rate_falls_back_to_the_default() -> None:
 
 def test_burst_rate_needs_the_window_duration() -> None:
     assert burst_rate(0.1, Window("5h", 0, None, "throttle"), POLICY) is None
+
+
+def test_the_burst_rate_uses_the_accounts_own_windows() -> None:
+    from lastcall.quota import account_rate
+
+    def day(used: float, five: float, t: float) -> Reading:
+        windows = (Window("day", used, 1e9, "expiring", 24.0), Window("1h", five, 5e8, "throttle", 1.0))
+        return Reading("x", windows, False, "exact", t)
+
+    readings = [day(10, 0, 0), day(30, 40, 1), day(50, 80, 2)]
+    # 40 points of the day per 80 points of the hourly window: 0.5 each, and 90% of it per hour
+    assert account_rate(readings, readings[-1], SpendPolicy(), 2.0) == pytest.approx(0.5 * 90 / 1.0)
+    alone = Reading("x", (Window("week", 10, 1e9, "expiring"),), False, "exact", 3)
+    assert account_rate([alone], alone, SpendPolicy(), 2.0) == 2.0  # no throttle window: the default

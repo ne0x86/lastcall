@@ -42,7 +42,7 @@ ENV DISABLE_AUTOUPDATER=1 \
 
 # The CLI homes exist in the image so that a new account volume starts owned by the runner user.
 RUN useradd -m -u 1000 runner \
-    && mkdir -p /home/runner/.claude /home/runner/.codex \
+    && mkdir -p /home/runner/.account /home/runner/.claude /home/runner/.codex \
     && chown -R runner:runner /home/runner
 USER runner
 WORKDIR /home/runner

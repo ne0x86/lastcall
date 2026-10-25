@@ -7,15 +7,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from lastcall import engines
 from lastcall.i18n import LANGUAGES, MESSAGES, number, percent, plural, span, text
-from lastcall.quota import Plan, SpendPolicy, learned_rate, plan
+from lastcall.quota import Plan, SpendPolicy, account_rate, plan
 from lastcall.service import DEFAULT_RATE, RATE_WINDOW
 from lastcall.store import AccountRow, Store
 
 HOUR = 3600.0
 SERVICE_GONE = 5 * 60.0  # the service writes its heartbeat every minute
 FINDING_ORDER = ("in_pr", "pending", "decide", "merged", "resolved", "rejected", "dismissed", "discarded")
-ENGINES = {"claude-code": "Claude Code", "codex": "Codex"}
 
 
 @dataclass(frozen=True)
@@ -149,7 +149,7 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
             )
         read = text(lang, "web.accounts.read", when=ago(lang, reading.taken_at, now))
         policy = SpendPolicy(reserve_pct=row.reserve_pct)
-        rate = learned_rate(store.readings(row.id, now - RATE_WINDOW), policy, "week", "5h", DEFAULT_RATE)
+        rate = account_rate(store.readings(row.id, now - RATE_WINDOW), reading, policy, DEFAULT_RATE)
         plan_text = describe_plan(lang, plan(reading, policy, rate, now), now)
         paid = reading.paid_usage
     working = ""
@@ -159,7 +159,8 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
             working = text(lang, "web.accounts.working", repo=run["repo"], when=when)
         else:  # a peer of someone else's run
             working = text(lang, "web.accounts.reviewing", repo=run["repo"], lead=run["account"], when=when)
-    return AccountView(row.id, ENGINES.get(row.engine, row.engine), line, windows, read, plan_text, paid, working)
+    title = engines.BUILTIN[row.engine]().title if row.engine in engines.BUILTIN else row.engine
+    return AccountView(row.id, title, line, windows, read, plan_text, paid, working)
 
 
 def working_on(running: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

@@ -28,7 +28,7 @@ from typing import Any
 from lastcall import i18n, projects
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
-from lastcall.quota import Plan, QuotaError, Reading, SpendPolicy, learned_rate, plan
+from lastcall.quota import Plan, QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.ranking import rank
 from lastcall.runs import Instance, Options, audit_repo
 from lastcall.sandbox import SandboxError
@@ -124,7 +124,7 @@ class Service:
             self.inst.store.record_reading(reading)
             policy = SpendPolicy(reserve_pct=account.reserve_pct)
             history = self.inst.store.readings(account.id, now - RATE_WINDOW)
-            rate = learned_rate(history, policy, "week", "5h", DEFAULT_RATE)
+            rate = account_rate(history, reading, policy, DEFAULT_RATE)
             before = self.plans.get(account.id)
             self.plans[account.id] = current = plan(reading, policy, rate, now)
             if current.burst and not (before and before.burst):

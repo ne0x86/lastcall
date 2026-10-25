@@ -1,7 +1,7 @@
 """The lastcall command line.
 
-lastcall login <account> --engine claude-code   # on the host: the CLI's own login, inside the sandbox
-lastcall account add <account> --engine claude-code [--language Spanish] [--reserve 10]
+lastcall login <account> --engine <engine>      # on the host: the CLI's own login, inside the sandbox
+lastcall account add <account> --engine <engine> [--language Spanish] [--reserve 10]
 lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive]
 lastcall quota <account>                        # read an account's quota through the supervisor
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
@@ -35,7 +35,7 @@ from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
 from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
 from lastcall.notify import Notifier
-from lastcall.quota import QuotaError, Reading, SpendPolicy, learned_rate, plan
+from lastcall.quota import QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.recipes.audit import AuditReport, StepRecord
 from lastcall.runs import Instance, Options, audit_repo, deliver_report, save
 from lastcall.sandbox import Sandbox, SandboxError
@@ -345,7 +345,7 @@ def status(st: Store) -> str:
         lines.append(f"  {a.id} ({a.engine}, {a.language}, reserve {a.reserve_pct:g}%): {quota_text}")
         if last:
             policy = SpendPolicy(reserve_pct=a.reserve_pct)
-            rate = learned_rate(st.readings(a.id, now - RATE_WINDOW), policy, "week", "5h", SERVICE_RATE)
+            rate = account_rate(st.readings(a.id, now - RATE_WINDOW), last, policy, SERVICE_RATE)
             next_burst = plan(last, policy, rate, now)
             when = "now" if next_burst.burst else "no"
             lines.append(f"    burst: {when} ({next_burst.reason}; {rate:.1f}% of the week per hour)")

@@ -267,8 +267,6 @@
   "web.accounts.id": "Name",
   "web.accounts.id_hint": "Lowercase letters, digits and dashes, such as claude-max.",
   "web.accounts.engine": "Plan",
-  "web.engine.claude-code": "Claude (Claude Code)",
-  "web.engine.codex": "ChatGPT (Codex)",
   "web.accounts.language_label": "Language of what it writes",
   "web.accounts.reserve_label": "Reserve for you, % of every week",
   "web.accounts.enabled": "lastcall may spend it",

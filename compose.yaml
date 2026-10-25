@@ -2,7 +2,7 @@
 #
 #   docker compose up -d                                     # the sandbox, and lastcall with its web UI on :8080
 #   docker compose logs lastcall                             # the web UI's setup code, the first time
-#   ACCOUNT=<id> docker compose run --rm login-claude-code   # an account's own login (or login-codex)
+#   ACCOUNT=<id> ENGINE=<engine> docker compose run --rm login   # an account's own login, such as claude-code
 #   docker compose run --rm cli <command>                    # the command line: status, audit, pause...
 #
 # The images are those of this file's release, so that the file and the images always match. LASTCALL_VERSION picks
@@ -84,27 +84,17 @@ services:
       retries: 3
     restart: unless-stopped
 
-  login-claude-code:  # ACCOUNT=<id> docker compose run --rm login-claude-code
+  login:  # ACCOUNT=<id> ENGINE=<engine> docker compose run --rm login
     <<: *login
     environment:
       HTTPS_PROXY: http://egress:8888
       HTTP_PROXY: http://egress:8888
       NO_PROXY: localhost,127.0.0.1
-      CLAUDE_CONFIG_DIR: /home/runner/.claude
+      LASTCALL_ENGINE: ${ENGINE:-}
     volumes:
-      - account-claude-code:/home/runner/.claude
-    command: ["claude", "auth", "login"]
-
-  login-codex:  # ACCOUNT=<id> docker compose run --rm login-codex
-    <<: *login
-    environment:
-      HTTPS_PROXY: http://egress:8888
-      HTTP_PROXY: http://egress:8888
-      NO_PROXY: localhost,127.0.0.1
-      CODEX_HOME: /home/runner/.codex
-    volumes:
-      - account-codex:/home/runner/.codex
-    command: ["codex", "login", "--device-auth"]
+      - account:/home/runner/.account
+      - ./runner/login.sh:/home/runner/login.sh:ro  # each engine's own login command
+    command: ["sh", "/home/runner/login.sh"]
 
 networks:
   sandbox:
@@ -121,11 +111,7 @@ volumes:
     name: lastcall-secrets
   state:
     name: lastcall-state
-  account-claude-code:  # one volume per account; the label stops one id from mixing two engines
+  account:  # one volume per account; the label stops one id from mixing two engines
     name: lastcall-account-${ACCOUNT:-unset}
     labels:
-      lastcall.engine: claude-code
-  account-codex:
-    name: lastcall-account-${ACCOUNT:-unset}
-    labels:
-      lastcall.engine: codex
+      lastcall.engine: ${ENGINE:-unset}

@@ -170,6 +170,14 @@ def burst_rate(ratio: float, throttle: Window, policy: SpendPolicy) -> float | N
     return ratio * policy.throttle_max_pct / throttle.duration_hours
 
 
+def account_rate(readings: Sequence[Reading], latest: Reading, policy: SpendPolicy, default: float) -> float:
+    """The burst rate learned from an account's readings, between its own windows: the first that expires and the
+    first that throttles. `default` when it has no such pair or not enough readings yet."""
+    if not latest.expiring or not latest.throttles:
+        return default
+    return learned_rate(readings, policy, latest.expiring[0].name, latest.throttles[0].name, default)
+
+
 def learned_rate(
     readings: Sequence[Reading], policy: SpendPolicy, expiring: str, throttle: str, default: float
 ) -> float:

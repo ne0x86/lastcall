@@ -62,6 +62,19 @@ flowchart LR
 - 🙈 Your subscription login stays in the official CLI's own storage. lastcall never reads it.
 - 🧑‍⚖️ Nothing is merged without you.
 
+## 🔌 Engines
+
+lastcall drives each vendor's official command-line tool, with your own login:
+
+| Engine | Plans | Quota it reads |
+|---|---|---|
+| Claude Code (`claude-code`) | Claude Pro, Max and Team | the 5-hour and weekly windows, exactly |
+| Codex (`codex`) | ChatGPT Plus, Pro and Business | the 5-hour and weekly windows, exactly |
+
+The rest of lastcall only knows the engine contract. Adding another tool is one module and a few small changes:
+[CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists them. Next on the roadmap: opencode, for API keys,
+OpenRouter and local models.
+
 ## 🚀 Quickstart
 
 You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and Windows with Docker Desktop.
@@ -87,11 +100,11 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
   sees it:
 
   ```sh
-  ACCOUNT=claude-max docker compose run --rm login-claude-code   # Claude: paste the code back
-  ACCOUNT=chatgpt docker compose run --rm login-codex            # Codex: a device code
+  ACCOUNT=claude-max ENGINE=claude-code docker compose run --rm login   # Claude: paste the code back
+  ACCOUNT=chatgpt ENGINE=codex docker compose run --rm login            # Codex: a device code
   ```
 
-  On PowerShell: `$env:ACCOUNT="claude-max"; docker compose run --rm login-claude-code`.
+  On PowerShell: `$env:ACCOUNT="claude-max"; $env:ENGINE="claude-code"; docker compose run --rm login`.
 - 📁 **Projects.** lastcall suggests your repositories and says why. Add the ones you want, or any by its address.
 - 🔔 **Settings.** Where lastcall should notify you. Choose the service and fill in what it asks for: Telegram (paste
   your bot's token and lastcall finds your chat), ntfy, Discord, Slack or email, or any of the
@@ -197,6 +210,11 @@ docker compose --profile test run --rm it
 
 A release sets the version in three places that a test keeps in agreement: `__version__`, the image tag in
 `compose.yaml` and the tag that the quickstart clones. How it all fits together: [DESIGN.md](DESIGN.md).
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) explains how, including how to add an
+engine. Please report security problems privately, as [SECURITY.md](SECURITY.md) says.
 
 ## 📄 License
 

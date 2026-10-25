@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from lastcall import engines
 from lastcall.environment import IMAGE
 from lastcall.process import stream
 
@@ -51,9 +52,7 @@ class Config:
     data_volume: str = "lastcall-data"
     network: str = "lastcall-sandbox"
     proxy: str = "http://egress:8888"
-    images: Mapping[str, str] = field(
-        default_factory=lambda: {"claude-code": "lastcall-runner:dev", "codex": "lastcall-runner:dev"}
-    )
+    images: Mapping[str, str] = field(default_factory=lambda: dict.fromkeys(engines.BUILTIN, "lastcall-runner:dev"))
     client_gid: int = 1000
     memory: str = "3g"
     cpus: str = "2"
@@ -61,6 +60,8 @@ class Config:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Config:
+        """Every engine runs on LASTCALL_RUNNER_IMAGE, unless LASTCALL_RUNNER_IMAGE_<ENGINE> sets another (for
+        example LASTCALL_RUNNER_IMAGE_CLAUDE_CODE)."""
         image = env.get("LASTCALL_RUNNER_IMAGE", "lastcall-runner:dev")
         return cls(
             socket=Path(env.get("LASTCALL_SOCKET", "/run/lastcall/supervisor.sock")),
@@ -68,7 +69,9 @@ class Config:
             data_volume=env.get("LASTCALL_DATA_VOLUME", "lastcall-data"),
             network=env.get("LASTCALL_SANDBOX_NETWORK", "lastcall-sandbox"),
             proxy=env.get("LASTCALL_EGRESS_PROXY", "http://egress:8888"),
-            images={"claude-code": image, "codex": image},
+            images={
+                e: env.get(f"LASTCALL_RUNNER_IMAGE_{e.upper().replace('-', '_')}", image) for e in engines.BUILTIN
+            },
             client_gid=int(env.get("LASTCALL_CLIENT_GID", "1000")),
         )
 
