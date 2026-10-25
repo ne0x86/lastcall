@@ -408,7 +408,9 @@ the model that the code and documents it reads are data, not instructions.
 - **Context collectors**: repository snapshot with line numbers, git history, scanners (gitleaks, osv-scanner,
   semgrep, hadolint), signals, knowledge, TODO comments, a custom command.
 - **Reviewers**: Markdown prompts with front matter. The built-in ones are bugs, security, hygiene and performance.
-  Projects can add their own in `.lastcall/reviewers/`.
+  Projects add their own in `.lastcall/reviewers/`: up to 4, of 8 KB at most, each with its own name and prefix.
+  `reviewers` in `.lastcall.yml` chooses the ones a run takes. lastcall reads them from the default branch, like the
+  rest of the repository: they are prompts that the owner writes. A wrong one stops the run before it spends.
 - **Tier per step and limits**: findings per reviewer, pull requests per run, findings per pull request.
 - **Delivery**: pull request, draft pull request, issue with checkboxes, report only.
 - **Trigger**: burst, manual, schedule; later, an issue label.
@@ -487,10 +489,10 @@ footer says which image ran them. When the check fails, the implementer gets the
 lines of its output, with its first attempt still in the working copy, and one more attempt (`implementer:retry`). A
 change that fails twice is not delivered, and the report says why.
 
-`.lastcall.yml` also takes `exclude` (paths the context pack leaves out) and `focus` (what matters most to the
-owner, which every step reads). A `.lastcall.yml` that lastcall cannot read stops the run before any spending, and
-the run says why. Not yet: caching an environment between runs, and different network rights for setup and
-verify.
+`.lastcall.yml` also takes `exclude` (paths the context pack leaves out), `focus` (what matters most to the
+owner, which every step reads) and `reviewers` (the reviewers a run takes, section 9). A `.lastcall.yml` that
+lastcall cannot read stops the run before any spending, and the run says why. Not yet: caching an environment between
+runs, and different network rights for setup and verify.
 
 ## 11. Delivery, approval and after the merge
 
@@ -615,7 +617,8 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 
 **v0.4: better changes, closer to the merge**
 
-- Recipe `improve`; project reviewers in the repository.
+- Project reviewers in the repository (`.lastcall/reviewers/`). Done.
+- Recipe `improve`.
 - The gate checks the weekly window of the step's model (question 7). Done.
 - Merge on approve; watch after the merge and open a revert pull request.
 

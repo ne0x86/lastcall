@@ -30,6 +30,7 @@ from lastcall.recipes.audit import (
     markdown,
     models,
     run_audit,
+    team,
 )
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.store import Store
@@ -152,8 +153,10 @@ def audit_repo(
     try:
         git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
         own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
+        panel = team(run_dir / "clone", own.reviewers if own else ())  # and so does a wrong reviewer of its own
         env = environment.detect(run_dir / "clone", own)
         log(f"Checks of {repo} run in {env.name} ({env.source})" + (f"; {env.note}" if env.note else ""))
+        log(f"Reviewers: {', '.join(rv.name for rv in panel)}")
         log(f"Scanning {repo}: gitleaks, osv-scanner, semgrep and hadolint, in the sandbox.")
         found = scanners.scan(inst.box, account.engine, run_dir / "clone")
         if own and own.focus:
@@ -180,6 +183,7 @@ def audit_repo(
             language=opts.language,
             max_prs=opts.max_prs,
             earlier=inst.store.earlier(repo),
+            team=panel,
             on_step=on_step,
             peers=crew,
         )

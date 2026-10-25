@@ -89,3 +89,10 @@ def test_a_project_with_its_own_environment_is_not_held_back(path: str) -> None:
     s = suggest(repo(language="Go"), files, NOW)
     assert s.score == suggest(repo(), [("app.py", 9_000), ("test_app.py", 2_000)], NOW).score
     assert f"checked in its own environment ({path})" in s.reasons
+
+
+def test_a_repository_with_its_own_reviewers() -> None:
+    own = [(".lastcall/reviewers/accessibility.md", 300), (".lastcall/reviewers/api.md", 400)]
+    s = suggest(repo(), CODE + TESTS + own, NOW)
+    assert "2 reviewers of its own" in s.reasons
+    assert s.score == suggest(repo(), CODE + TESTS + [], NOW).score  # it says so; it does not rank higher

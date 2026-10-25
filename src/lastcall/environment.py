@@ -2,7 +2,7 @@
 
 lastcall looks, in this order, at:
 1. `.lastcall.yml` in the repository: the test command, the environment (an image and the setup before the tests),
-   the paths the context pack leaves out, and what matters most;
+   the paths the context pack leaves out, what matters most, and the reviewers a run takes;
 2. a devcontainer (`.devcontainer/devcontainer.json`): its image and its create commands;
 3. the project's own files: Go (go.mod), Rust (Cargo.toml) and Java with Maven (pom.xml) run in their official
    images; Python and Node.js run in the runner, with the commands of lastcall.verify.
@@ -53,7 +53,8 @@ MAVEN_PROXY = (
 
 
 class ConfigError(ValueError):
-    """A `.lastcall.yml` that lastcall cannot use. The run stops before spending anything and says why."""
+    """A project's setting that lastcall cannot use: its `.lastcall.yml` or one of its own reviewers. The run stops
+    before spending anything and says why."""
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class Settings:
     setup: str = ""
     exclude: tuple[str, ...] = ()
     focus: str = ""
+    reviewers: tuple[str, ...] = ()  # the reviewers a run takes, by name; empty: all of them
 
 
 @dataclass(frozen=True)
@@ -102,7 +104,7 @@ def settings(root: Path) -> Settings | None:
         return Settings()
     if not isinstance(data, dict):
         raise ConfigError(f"{path.name} must be a mapping of keys, such as `test: pytest -q`")
-    known = {"test", "environment", "exclude", "focus"}
+    known = {"test", "environment", "exclude", "focus", "reviewers"}
     unknown = sorted(str(k) for k in data if k not in known)
     if unknown:
         raise ConfigError(f"unknown key in {path.name}: {', '.join(unknown)} (known: {', '.join(sorted(known))})")
@@ -117,12 +119,16 @@ def settings(root: Path) -> Settings | None:
         exclude = [exclude]
     if not isinstance(exclude, list) or not all(isinstance(e, str) and e.strip() for e in exclude):
         raise ConfigError("`exclude` is a list of paths, such as `[vendor/, testdata/]`")
+    reviewers = data.get("reviewers") or []
+    if not isinstance(reviewers, list) or not all(isinstance(r, str) and r.strip() for r in reviewers):
+        raise ConfigError("`reviewers` is a list of reviewer names, such as `[bugs, security, accessibility]`")
     return Settings(
         test=_string(data.get("test"), "test"),
         image=image,
         setup=_commands(env.get("setup"), "environment.setup"),
         exclude=tuple(e.strip() for e in exclude),
         focus=_string(data.get("focus"), "focus") or "",
+        reviewers=tuple(r.strip() for r in reviewers),
     )
 
 

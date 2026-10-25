@@ -17,9 +17,10 @@ It works through each vendor's official command-line tool, with your own login: 
 
 ## ✨ What it does
 
-- 🔎 **Audits.** Four reviewers (bugs, security, hygiene, performance) read your code. A judge checks every finding
-  against the code and throws out the noise. Several accounts, even from different providers, can review the same
-  project together, and one judge keeps what holds: each finds things the others miss.
+- 🔎 **Audits.** Four reviewers (bugs, security, hygiene, performance), and any that your repository adds, read your
+  code. A judge checks every finding against the code and throws out the noise. Several accounts, even from
+  different providers, can review the same project together, and one judge keeps what holds: each finds things the
+  others miss.
 - 🛠️ **Fixes.** One implementer per pull request writes the smallest fix, with a regression test.
 - ✅ **Verifies.** lastcall, not the agent, runs your tests again in a clean container and scans the change for
   secrets.
@@ -43,7 +44,7 @@ flowchart LR
   Q["⏱️ Quota, every 15 min"] --> B{"Reset close and<br/>capacity left?"}
   B -- no --> Q
   B -- yes --> P["🎯 Pick a project"]
-  P --> R["🔎 4 reviewers"] --> J["⚖️ Judge"]
+  P --> R["🔎 Reviewers"] --> J["⚖️ Judge"]
   J --> I["🛠️ One implementer<br/>per pull request"]
   I --> V["✅ Tests in a clean container<br/>and secret scan"] --> PR["📬 Pull request"]
   J --> D["🗳️ One issue with<br/>your decisions"]
@@ -159,9 +160,28 @@ environment:
   setup: go mod download         # before the tests: a command, or a list of them
 exclude: [vendor/, testdata/]    # paths the audit leaves out
 focus: The HTTP handlers in internal/api matter most.
+reviewers: [bugs, security, accessibility]   # the reviewers a run takes; all of them when left out
 ```
 
 Every key is optional. The suggestions on the Projects page say which repositories bring their own environment.
+
+**Your own reviewers.** Each Markdown file in `.lastcall/reviewers/` adds a reviewer to the audits of your
+repository, next to bugs, security, hygiene and performance. The front matter gives its name (lowercase letters,
+digits and dashes), the prefix of its findings (`A` makes them A1, A2...) and its tier (`fast`, `balanced` or
+`deep`, the model it runs on); the text after it says what to look for:
+
+```markdown
+---
+name: accessibility
+prefix: A
+tier: balanced
+---
+Find WCAG 2.2 AA failures in templates and components: missing labels,
+contrast set in code, keyboard traps, focus order. Cite file and lines.
+```
+
+A repository can have up to 4 reviewers of its own, of 8 KB at most each. A wrong one stops the run before it
+spends anything, and the run says why.
 
 ## ⚖️ Provider terms and responsible use
 
@@ -191,7 +211,8 @@ advice.
     holds.
   - Engines are plug-ins: one module each, and one login command for all of them.
 - 🔜 **v0.4, closer to the merge.**
-  - The `improve` recipe, and reviewers that your repository defines.
+  - ✅ Reviewers that your repository defines.
+  - The `improve` recipe.
   - Merge on approve; watch after the merge and revert.
   - ✅ The gate checks the weekly window of each model.
 - 🔭 **v0.5, wider reach.**
