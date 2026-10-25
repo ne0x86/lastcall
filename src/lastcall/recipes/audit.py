@@ -33,6 +33,7 @@ from lastcall.verify import check_command, describe, summary_line
 
 StepRunner = Callable[[Engine, StepSpec, Path], StepResult]  # (engine, step, workspace)
 QuotaCheck = Callable[[], tuple[Gate, Reading | None]]
+ATTEMPTS = 2  # an implementer whose change fails the check gets the failure and one more attempt
 Verifier = Callable[[Path, str], tuple[bool, str]]  # (the change, check command) -> (passed, last lines of output)
 
 
@@ -253,26 +254,37 @@ def deliver(
         )
         record: dict[str, Any] = {"title": pr["title"], "ids": pr["ids"], "branch": branch}
         report.deliveries = [d for d in report.deliveries if d["title"] != pr["title"]] + [record]
-        res = steps.run("implementer", "deep", text, "implementation", work, writable=True)
-        if res is None:  # a gate closed: the rest waits for the next run
-            record |= {"status": "stopped", "note": report.stopped}
-            break
-        out = res.output or {}
-        if not res.ok or not out.get("done"):
-            record |= {"status": "not_done", "note": str(out.get("pending") or res.error or "")[:800]}
-            continue
-        diff = git.stage_all(work)
-        if not diff.strip():
-            record |= {"status": "unchanged", "note": "the implementer reported done but changed nothing"}
-            continue
-        command, kind = check_command(work)  # the implementer may have added the project's first tests
-        if environment.test:
-            command, kind = environment.test, "tests"
-        passed, tail = verify(work, command)
-        last = summary_line(tail)
-        if not passed:
+        asked, passed, tail = text, False, ""
+        for attempt in range(1, ATTEMPTS + 1):
+            role = "implementer" if attempt == 1 else "implementer:retry"
+            res = steps.run(role, "deep", asked, "implementation", work, writable=True)
+            if res is None:  # a gate closed: the rest waits for the next run
+                record |= {"status": "stopped", "note": report.stopped}
+                break
+            out = res.output or {}
+            if not res.ok or not out.get("done"):
+                record |= {"status": "not_done", "note": str(out.get("pending") or res.error or "")[:800]}
+                break
+            diff = git.stage_all(work)
+            if not diff.strip():
+                record |= {"status": "unchanged", "note": "the implementer reported done but changed nothing"}
+                break
+            command, kind = check_command(work)  # the implementer may have added the project's first tests
+            if environment.test:
+                command, kind = environment.test, "tests"
+            passed, tail = verify(work, command)
+            record["attempts"] = attempt
+            if passed:
+                record.pop("status", None)  # what the failed attempt left
+                record.pop("note", None)
+                break
             record |= {"status": "red", "note": tail[-1500:]}
+            asked = text + retry_text(environment, command, tail)
+        if record.get("status") == "stopped":
+            break
+        if not passed:
             continue
+        last = summary_line(tail)
         title, body = str(out["pr_title"]), str(out["pr_body"])
         leaks = scan(f"{added_lines(diff)}\n{title}\n{body}")
         if leaks:
@@ -292,6 +304,12 @@ def deliver(
         if not scan(body):
             report.issue_url = forge.open_issue(issue_title(report, len(decide)), body)
     return report
+
+
+def retry_text(environment: Environment, command: str, tail: str) -> str:
+    """What the implementer's second attempt adds to its prompt: the check that failed, and how."""
+    where = f"in the project's environment (`{environment.image}`)" if environment.image else "in a clean container"
+    return render(prompt("retry.md"), command=command, where=where, tail=tail[-3000:].strip())
 
 
 def check_text(environment: Environment, command: str, with_tests: str) -> str:
@@ -368,7 +386,9 @@ def markdown(report: AuditReport) -> str:
         out += ["", "## Delivered", ""]
         for d in report.deliveries:
             out.append(
-                f"- {d['title']} ({', '.join(d['ids'])}): **{d.get('status', 'pending')}** "
+                f"- {d['title']} ({', '.join(d['ids'])}): **{d.get('status', 'pending')}**"
+                + (f" after {d['attempts']} attempts" if d.get("attempts", 1) > 1 else "")
+                + " "
                 + (d.get("url") or d.get("note") or "")[:300]
             )
         if report.issue_url:

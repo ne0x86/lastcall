@@ -442,7 +442,9 @@ account volume. Tools that expect a writable home get one in /tmp, and Maven get
 
 The agents still run in the runner image, which has no toolchain for other languages. The implementer's prompt says
 so: it writes the change and its tests, and lastcall runs them in the project's environment. The pull request's
-footer says which image ran them.
+footer says which image ran them. When the check fails, the implementer gets the command, where it ran and the last
+lines of its output, with its first attempt still in the working copy, and one more attempt (`implementer:retry`). A
+change that fails twice is not delivered, and the report says why.
 
 `.lastcall.yml` also takes `exclude` (paths the context pack leaves out) and `focus` (what matters most to the
 owner, which every step reads). A `.lastcall.yml` that lastcall cannot read stops the run before any spending, and

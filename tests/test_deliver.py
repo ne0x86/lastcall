@@ -8,7 +8,7 @@ import pytest
 from lastcall.engines.base import Engine, StepResult, StepSpec
 from lastcall.engines.scripted import Scripted
 from lastcall.quota import Gate, Reading
-from lastcall.recipes.audit import AuditReport, deliver, slug
+from lastcall.recipes.audit import AuditReport, deliver, markdown, slug
 
 TIERS = {"fast": ("small", None), "balanced": ("mid", "high"), "deep": ("big", "high")}
 FINDING = {
@@ -75,7 +75,7 @@ def implementer(text: str | None, out: dict[str, Any]) -> Callable[[Engine, Step
     """Stands in for the agent: edits app.py in the workspace (when text is given) and answers `out`."""
 
     def run(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
-        assert step.writable and step.role == "implementer"
+        assert step.writable and step.role.startswith("implementer")
         if text is not None:
             (workspace / "app.py").write_text(text, encoding="utf-8")
         return StepResult(True, out)
@@ -136,8 +136,39 @@ def test_a_verified_change_becomes_a_pull_request(run_dir: Path) -> None:
 def test_red_checks_open_nothing(run_dir: Path) -> None:
     forge = FakeForge()
     rep = run(run_dir, report(), implementer("def f(x):\n    return None\n", output()), forge, passed=False)
-    assert rep.deliveries[0]["status"] == "red"
+    assert rep.deliveries[0]["status"] == "red" and rep.deliveries[0]["attempts"] == 2
+    assert [s.role for s in rep.steps] == ["implementer", "implementer:retry"]
     assert forge.pushed == [] and forge.prs == []
+
+
+def test_a_failed_check_gets_one_more_attempt(run_dir: Path) -> None:
+    prompts: list[str] = []
+    results = [(False, "FAILED test_app.py::test_empty - IndexError"), (True, "2 passed in 0.10s")]
+
+    def step(engine: Engine, spec: StepSpec, workspace: Path) -> StepResult:
+        prompts.append(spec.prompt)
+        text = "def f(x):\n    return x[0] if x else None\n" if len(prompts) == 2 else "def f(x):\n    return 1\n"
+        (workspace / "app.py").write_text(text, encoding="utf-8")
+        return StepResult(True, output())
+
+    forge = FakeForge()
+    rep = deliver(
+        report=report(),
+        run_dir=run_dir,
+        engine=Scripted({}),
+        tiers=TIERS,
+        run_step=step,
+        check_quota=always,
+        verify=lambda work, command: results.pop(0),
+        forge=forge,
+    )
+    (delivery,) = rep.deliveries
+    assert delivery["status"] == "opened" and delivery["attempts"] == 2 and "note" not in delivery
+    assert "## Your first attempt did not pass" not in prompts[0]
+    assert "## Your first attempt did not pass" in prompts[1] and "IndexError" in prompts[1]
+    assert "in a clean container" in prompts[1]
+    assert "`2 passed in 0.10s`" in forge.prs[0][2]
+    assert "**opened** after 2 attempts" in markdown(rep)
 
 
 def test_a_secret_in_the_change_blocks_it(run_dir: Path) -> None:
