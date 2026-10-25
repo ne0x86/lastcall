@@ -1,6 +1,6 @@
 # lastcall design
 
-Status: **v0.2 released, October 2026**, open for discussion. This document describes what lastcall is and how it
+Status: **v0.3 released, October 2026**, open for discussion. This document describes what lastcall is and how it
 works. Section 17 says what is done and what comes next; open decisions are listed in section 19.
 
 ## 1. What lastcall is
@@ -227,11 +227,11 @@ accounts:
     login: cli
     tiers: {fast: gpt-6-luna/high, balanced: gpt-6.1-sol/medium, deep: gpt-6.1-sol/high}
     spend: {policy: before-reset, reserve_pct: 10}
-  - id: openrouter             # v0.3
+  - id: openrouter             # v0.5
     engine: opencode
     login: api-key
     spend: {policy: budget, usd_per_month: 20}
-  - id: local                  # v0.3
+  - id: local                  # v0.5
     engine: codex
     base_url: http://ollama:11434/v1
     spend: {policy: schedule, cron: "0 1-6 * * *"}
@@ -246,7 +246,7 @@ therefore fan out across accounts, and one judge merges the results.
 |---|---|---|---|
 | `claude-code` (v0.1) | Claude plans, through the `claude` login | Anthropic API | Anthropic-compatible gateways (`ANTHROPIC_BASE_URL`) |
 | `codex` (v0.1) | ChatGPT plans, through `codex login`; access tokens for Business and Enterprise | OpenAI API | OpenAI-compatible providers (`model_providers`), local models |
-| `opencode` (v0.4) | — | Many providers | OpenRouter, OpenAI-compatible endpoints, Ollama |
+| `opencode` (v0.5) | — | Many providers | OpenRouter, OpenAI-compatible endpoints, Ollama |
 
 ## 7. Engine contract
 
@@ -364,7 +364,7 @@ engine runs all of them with the same guarantees.
 
 - **find → judge → fix → verify → deliver**: `audit`, and later `tests` and `deps`.
 - **ideate → edit → deliver**: `improve`.
-- **issue → fix → verify → deliver**: `issues` (v0.3). The owner labels an issue, and leftover quota solves it.
+- **issue → fix → verify → deliver**: `issues` (v0.5). The owner labels an issue, and leftover quota solves it.
 
 Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` it stops after the judge, and
 `lastcall deliver <run>` later opens the pull requests of that report, so the owner can read the findings first.
@@ -585,15 +585,25 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Notifications through Apprise, set up in the web UI.
 - `docker compose up -d` starts everything, and the quickstart starts in the browser.
 
-**v0.3: more of what matters, in more projects**
+**v0.3: more of what matters, in more projects** (done, October 2026)
 
-- `.lastcall.yml` in the repository, and devcontainer environments for languages beyond Python and Node.js.
+- Project environments (section 10): `.lastcall.yml` in the repository (the check, the image and its setup, the
+  paths to leave out and the ones to focus on), the devcontainer's image, and official images for Go, Rust and
+  Java. The egress allowlist reaches the package registries of those languages.
+- The implementer gets a second attempt when the check fails, with the check's output.
 - Fan-out across accounts with one judge: Claude and Codex audit the same project, and one judge keeps what holds.
+- Pluggable engines: the code names engines only in `lastcall.engines` and `runner/`. One login command for every
+  engine, and an engine can run on its own runner image (`LASTCALL_RUNNER_IMAGE_<ENGINE>`).
+- Community files: a contributing guide, a security policy, a code of conduct, issue and pull request templates,
+  and Dependabot.
+
+**v0.4: better changes, closer to the merge**
+
 - Recipe `improve`; project reviewers in the repository.
 - The gate checks the weekly window of the step's model (question 7).
 - Merge on approve; watch after the merge and open a revert pull request.
 
-**v0.4: wider reach**
+**v0.5: wider reach**
 
 - Engine `opencode` (API keys, OpenRouter, local models); spend policies `budget` and `schedule`.
 - Recipes `issues`, `tests` and `deps`.
