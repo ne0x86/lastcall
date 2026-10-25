@@ -129,3 +129,11 @@ def test_bad_image_references(config: Config, image: object) -> None:
 def test_an_environment_image_never_gets_an_account(config: Config) -> None:
     with pytest.raises(Invalid, match="never gets an account volume"):
         StepRequest.parse(body(image="golang:1.23"), config)
+
+
+def test_every_engine_runs_on_the_runner_image_unless_set_apart() -> None:
+    from lastcall import engines
+
+    config = Config.from_env({"LASTCALL_RUNNER_IMAGE": "runner:1", "LASTCALL_RUNNER_IMAGE_CODEX": "runner-codex:1"})
+    assert set(config.images) == set(engines.BUILTIN)
+    assert config.images["claude-code"] == "runner:1" and config.images["codex"] == "runner-codex:1"

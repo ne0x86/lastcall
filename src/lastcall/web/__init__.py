@@ -514,8 +514,8 @@ def create_app(
                 "row": row,
                 "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
                 "error": quota_errors.get(row.id, ""),
-                "login": f"ACCOUNT={row.id} docker compose run --rm login-{row.engine}",
-                "login_ps": f'$env:ACCOUNT="{row.id}"; docker compose run --rm login-{row.engine}',
+                "login": f"ACCOUNT={row.id} ENGINE={row.engine} docker compose run --rm login",
+                "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
             }
             for row in store.accounts()
         ]
@@ -526,7 +526,7 @@ def create_app(
             "accounts.html",
             status,
             cards=cards,
-            engines=[(name, t(f"web.engine.{name}")) for name in sorted(engines.BUILTIN)],
+            engines=[(e.name, f"{e.provider} ({e.title})") for e in map(engines.get, sorted(engines.BUILTIN))],
             writing=[(name, dashboard.language_name(g.lang, name).capitalize()) for name in project_views.LANGUAGES],
             known=project_views.LANGUAGES,
             can_read=read_quota is not None,

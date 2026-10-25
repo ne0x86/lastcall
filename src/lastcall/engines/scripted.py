@@ -20,6 +20,8 @@ from lastcall.engines.base import Event, EventKind, Invocation, StepResult, Step
 
 class Scripted:
     name: str = "scripted"
+    title: str = "Scripted"
+    provider: str = "tests"
     capabilities: frozenset[str] = frozenset({"json_schema"})
     egress: tuple[str, ...] = ()
     home: str = "/home/runner"

@@ -69,7 +69,9 @@ class StepResult:
 
 
 class Engine(Protocol):
-    name: str
+    name: str  # the id in accounts, settings and commands: "claude-code"
+    title: str  # the CLI as people know it: "Claude Code"
+    provider: str  # whose plans or keys it spends: "Claude"
     capabilities: frozenset[str]  # "json_schema", "system_prompt_file", "effort"
     egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist; "*.x.com" adds subdomains
     home: str  # where the CLI keeps its login; the account's credential volume is mounted here

@@ -246,21 +246,40 @@ therefore fan out across accounts, and one judge merges the results.
 |---|---|---|---|
 | `claude-code` (v0.1) | Claude plans, through the `claude` login | Anthropic API | Anthropic-compatible gateways (`ANTHROPIC_BASE_URL`) |
 | `codex` (v0.1) | ChatGPT plans, through `codex login`; access tokens for Business and Enterprise | OpenAI API | OpenAI-compatible providers (`model_providers`), local models |
-| `opencode` (v0.3) | — | Many providers | OpenRouter, OpenAI-compatible endpoints, Ollama |
+| `opencode` (v0.4) | — | Many providers | OpenRouter, OpenAI-compatible endpoints, Ollama |
 
 ## 7. Engine contract
 
 ```python
 class Engine(Protocol):
-    name: str
+    name: str  # the id in accounts, settings and commands: "claude-code"
+    title: str  # the CLI as people know it: "Claude Code"
+    provider: str  # whose plans or keys it spends: "Claude"
     capabilities: frozenset[str]  # "json_schema", "system_prompt_file", "effort"
     egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist
     home: str  # where the CLI keeps its login; the account's credential volume is mounted here
+    home_env: str  # the variable that points the CLI at `home`
+    login: tuple[str, ...]  # the CLI's own interactive login
 
     def invocation(self, step: StepSpec) -> Invocation: ...  # argv, stdin, env, files and mounts
     def parse(self, line: str) -> Event | None: ...  # tool use, message, usage, rate limit, result, error
     def result(self, step: StepSpec, events: Sequence[Event]) -> StepResult: ...
+
+
+class QuotaProbe(Protocol):  # an engine that can read its account's quota without calling the model
+    def quota_invocation(self) -> Invocation: ...
+    def quota_reading(self, account: str, lines: Sequence[str], now: float) -> Reading: ...
 ```
+
+The rest of lastcall works only through this contract:
+- the supervisor runs every engine of the registry (`lastcall.engines.BUILTIN`) on the runner image, unless
+  `LASTCALL_RUNNER_IMAGE_<ENGINE>` sets another;
+- the egress allowlist comes from the engines' `egress`;
+- the web UI shows `provider` and `title`;
+- the burst rate is learned from whatever windows an engine's quota reader reports;
+- one compose service, `login`, signs in any engine through `runner/login.sh`.
+
+[CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists the steps to add an engine.
 
 Rules for engines:
 
@@ -519,8 +538,9 @@ into each other.
 
 ## 14. Extensibility
 
-Python entry points for engines, quota readers, context collectors, deliveries, forges, notifiers, secret stores
-and signals. A plugin is a normal Python package. Recipes and reviewers are data files.
+Today an engine is one module in `lastcall.engines` plus one line in its registry (section 7), and recipes and
+reviewers are data files. Planned: Python entry points for engines, quota readers, context collectors, deliveries,
+forges, notifiers, secret stores and signals, so that a plugin can be a normal Python package outside lastcall.
 
 ## 15. Quality
 

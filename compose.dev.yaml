@@ -34,10 +34,7 @@ services:
       target: service
     image: lastcall-service:dev
 
-  login-claude-code:
-    image: lastcall-runner:dev
-
-  login-codex:
+  login:
     image: lastcall-runner:dev
 
   it:  # the integration tests play lastcall's part against the real supervisor, proxy and runner

@@ -26,6 +26,8 @@ def test_step_without_result_fails() -> None:
 
 class Sleeper:
     name: str = "sleeper"
+    title: str = "Sleeper"
+    provider: str = "tests"
     capabilities: frozenset[str] = frozenset()
     egress: tuple[str, ...] = ()
     home: str = "/tmp"
