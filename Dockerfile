@@ -2,7 +2,7 @@
 #   supervisor  the only container with the Docker socket; starts one runner container per step
 #   service     lastcall itself, as user 1000 like the runners: the service, its web UI and the command line
 #   test        the service image plus the integration tests
-FROM docker:28-cli AS docker-cli
+FROM docker:29-cli AS docker-cli
 
 FROM python:3.12-slim-bookworm AS app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
