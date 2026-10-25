@@ -30,6 +30,8 @@ from lastcall.quota import QuotaError, Reading, Window, epoch
 
 READ_TOOLS = "Read,Grep,Glob"
 WRITE_TOOLS = "Read,Grep,Glob,Edit,Write,Bash"
+# The weekly windows of one model in the usage answer; `model_scoped` lists any others, named by the server.
+MODEL_WINDOWS = {"seven_day_opus": "Opus", "seven_day_sonnet": "Sonnet"}
 
 
 class ClaudeCode:
@@ -124,8 +126,20 @@ class ClaudeCode:
         if week.get("utilization") is None:
             raise QuotaError("the answer has no weekly usage")
         extra = body.get("extra_usage") or limits.get("extra_usage") or {}
-        windows = (
+        windows = [
             Window("5h", float(five.get("utilization") or 0.0), epoch(five.get("resets_at")), "throttle", 5.0),
             Window("week", float(week["utilization"]), epoch(week.get("resets_at")), "expiring", 168.0),
-        )
-        return Reading(account, windows, bool(extra.get("is_enabled")), "exact", now)
+        ]
+        named = [(model, limits.get(key)) for key, model in MODEL_WINDOWS.items()]
+        named += [
+            (str(w.get("display_name") or ""), w) for w in limits.get("model_scoped") or [] if isinstance(w, dict)
+        ]
+        seen: set[str] = set()
+        for model, w in named:
+            if not model or model.lower() in seen or not isinstance(w, dict) or w.get("utilization") is None:
+                continue
+            seen.add(model.lower())
+            windows.append(
+                Window("week", float(w["utilization"]), epoch(w.get("resets_at")), "expiring", 168.0, model)
+            )
+        return Reading(account, tuple(windows), bool(extra.get("is_enabled")), "exact", now)

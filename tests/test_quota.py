@@ -187,3 +187,45 @@ def test_the_burst_rate_uses_the_accounts_own_windows() -> None:
     assert account_rate(readings, readings[-1], SpendPolicy(), 2.0) == pytest.approx(0.5 * 90 / 1.0)
     alone = Reading("x", (Window("week", 10, 1e9, "expiring"),), False, "exact", 3)
     assert account_rate([alone], alone, SpendPolicy(), 2.0) == 2.0  # no throttle window: the default
+
+
+# windows of one model
+
+
+def with_opus(opus: float) -> Reading:
+    base = reading(week=30, week_reset_h=33)
+    model = Window("week", opus, NOW + 50 * HOUR, "expiring", 168.0, "Opus")
+    return Reading(base.account, (*base.windows, model), False, "exact", NOW)
+
+
+def test_a_models_window_limits_only_the_steps_on_that_model() -> None:
+    r = with_opus(95)
+    assert gate(r, POLICY, NOW).ok  # without models, only the account's windows count
+    assert gate(r, POLICY, NOW, ["sonnet", "haiku"]).ok
+    closed = gate(r, POLICY, NOW, ["sonnet", "claude-opus-5-5"])
+    assert not closed.ok and closed.reason == "week Opus window at 95% (reserve 10%)"
+    assert closed.wait_seconds == 0  # a weekly window stops the run; it does not make it wait
+
+
+def test_model_names_match_word_by_word() -> None:
+    opus = Window("week", 50, None, "expiring", model="Opus")
+    assert opus.limits("opus") and opus.limits("opus[1m]") and opus.limits("claude-opus-5-5")
+    assert not opus.limits("haiku") and not opus.limits("opusplan") and not opus.limits("")
+    assert Window("week", 50, None, "expiring", model="Fable").limits("claude-fable-5-1")
+    assert Window("week", 50, None, "expiring").limits("anything")  # the account's window limits every step
+
+
+def test_a_models_window_is_not_the_accounts() -> None:
+    r = with_opus(80)
+    assert r.window("week") == r.windows[0]
+    assert [w.label for w in r.expiring] == ["week"]
+    assert [w.label for w in r.limiting(["opus"])] == ["week", "5h", "week Opus"]
+    assert [w.label for w in r.limiting(["haiku"])] == ["week", "5h"]
+
+
+def test_no_burst_while_a_model_it_needs_is_out_of_room() -> None:
+    p = plan(with_opus(92), POLICY, 2.0, NOW, ["sonnet", "opus"])
+    assert not p.burst and p.code == "model"
+    assert p.full is not None and p.full.model == "Opus"
+    q = plan(with_opus(92), POLICY, 2.0, NOW, ["sonnet"])  # a burst that does not need Opus
+    assert q.burst and q.leftover_pct == 60  # the model's window does not change the leftover

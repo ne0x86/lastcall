@@ -28,6 +28,7 @@ from lastcall.recipes.audit import (
     Verifier,
     deliver,
     markdown,
+    models,
     run_audit,
 )
 from lastcall.sandbox import Sandbox, SandboxError
@@ -74,19 +75,24 @@ def agent_hooks(
     def run_step(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
         return box.run(engine, step, workspace=workspace, account_volume=account.volume)
 
-    def check_quota() -> tuple[Gate, Reading | None]:
+    def check_quota(models: Sequence[str]) -> tuple[Gate, Reading | None]:
         while True:
             try:
                 reading = read_quota(account, box, time.time())
             except (QuotaError, SandboxError) as e:
                 return Gate(False, f"no quota reading: {e}"), None
-            verdict = gate(reading, policy, time.time())
+            verdict = gate(reading, policy, time.time(), models)
             if verdict.ok or not wait or verdict.wait_seconds <= 0:
                 return verdict, reading
             log(f"{account.id}: {verdict.reason}; waiting {verdict.wait_seconds / 60:.0f} min for it to reset")
             sleep(verdict.wait_seconds)
 
     return run_step, check_quota
+
+
+def audit_models(engine: str) -> list[str]:
+    """The models that an audit on this engine's accounts uses: no burst starts while one of them is out of room."""
+    return models(defaults(engine))
 
 
 FOCUS = "What matters most to the owner (.lastcall.yml)"

@@ -599,3 +599,17 @@ def test_fan_out_from_the_web(github_web: Web) -> None:
     page = web.client.get("/").get_data(as_text=True)
     assert "Working on acme/api, started" in page  # the run's start comes from the real clock
     assert "Reviewing acme/api with claude, started" in page
+
+
+def test_the_dashboard_shows_the_window_of_a_model(web: Web) -> None:
+    web.store.add_account("claude", "claude-code", "Spanish", 10)
+    week = Window("week", 30, NOW + 30 * HOUR, "expiring", 168.0)
+    opus = Window("week", 93, NOW + 30 * HOUR, "expiring", 168.0, "Opus")
+    web.store.record_reading(Reading("claude", (week, opus), False, "exact", NOW - 600))
+    web.set_up()
+    page = web.client.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert "Weekly window for Opus" in page
+    assert "No burst: the audit needs Opus, and its own window is at 93%. The rest is your reserve." in page
+    page = web.client.get("/", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Ventana semanal de Opus" in page
+    assert "Sin ráfaga: la auditoría necesita Opus, y su propia ventana está al 93\u00a0%." in page

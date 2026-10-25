@@ -10,6 +10,7 @@ from typing import Any
 from lastcall import engines
 from lastcall.i18n import LANGUAGES, MESSAGES, number, percent, plural, span, text
 from lastcall.quota import Plan, SpendPolicy, account_rate, plan
+from lastcall.runs import audit_models
 from lastcall.service import DEFAULT_RATE, RATE_WINDOW
 from lastcall.store import AccountRow, Store
 
@@ -141,7 +142,7 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
             resets = text(lang, "web.window.resets", when=until(lang, w.resets_at, now)) if w.resets_at else ""
             windows.append(
                 WindowView(
-                    window_label(lang, w.name),
+                    window_label(lang, w.name, w.model),
                     w.used_pct,
                     text(lang, "web.window.used", pct=percent(lang, w.used_pct)),
                     resets,
@@ -150,7 +151,8 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
         read = text(lang, "web.accounts.read", when=ago(lang, reading.taken_at, now))
         policy = SpendPolicy(reserve_pct=row.reserve_pct)
         rate = account_rate(store.readings(row.id, now - RATE_WINDOW), reading, policy, DEFAULT_RATE)
-        plan_text = describe_plan(lang, plan(reading, policy, rate, now), now)
+        models = audit_models(row.engine) if row.engine in engines.BUILTIN else []
+        plan_text = describe_plan(lang, plan(reading, policy, rate, now, models), now)
         paid = reading.paid_usage
     working = ""
     if run is not None:
@@ -183,6 +185,8 @@ def describe_plan(lang: str, p: Plan, now: float) -> str:
             return text(lang, "web.plan.later", when=when, leftover=leftover)
         case "small":
             return text(lang, "web.plan.small", leftover=leftover)
+        case "model" if p.full:
+            return text(lang, "web.plan.model", model=p.full.model, used=percent(lang, p.full.used_pct))
         case "paid" | "no-window" | "no-reset" | "manual":
             return text(lang, f"web.plan.{p.code}")
     return p.reason
@@ -235,9 +239,11 @@ def opened(lang: str, when: float, now: float) -> str:
     return text(lang, "web.review.opened", when=ago(lang, when, now))
 
 
-def window_label(lang: str, name: str) -> str:
+def window_label(lang: str, name: str, model: str = "") -> str:
+    """The window's name in the owner's language, with the model when it limits only one."""
     key = f"web.window.{name}"
-    return text(lang, key) if key in MESSAGES["en"] else text(lang, "web.window.other", name=name)
+    label = text(lang, key) if key in MESSAGES["en"] else text(lang, "web.window.other", name=name)
+    return text(lang, "web.window.model", window=label, model=model) if model else label
 
 
 def language_name(lang: str, language: str) -> str:

@@ -184,3 +184,12 @@ def test_a_database_from_before_v03_gets_the_crew_column(tmp_path: Path) -> None
     assert store.runs()[0]["crew"] == ""
     store.start_run("r2", "ne0x86/demo", "claude", "manual", ["chatgpt"])
     assert store.running()[0]["crew"] == "chatgpt"
+
+
+def test_readings_keep_the_model_of_a_window(store: Store) -> None:
+    opus = Window("week", 80.0, None, "expiring", 168.0, "Opus")
+    store.record_reading(Reading("claude", (opus,), False, "exact", 100.0))
+    assert store.readings("claude", 0)[0].windows == (opus,)
+    old = '[{"name": "week", "used_pct": 5.0, "resets_at": null, "role": "expiring", "duration_hours": 168.0}]'
+    store.db.execute("INSERT INTO readings VALUES ('codex', 50.0, ?, 0, 'exact')", (old,))  # saved by v0.3
+    assert store.readings("codex", 0)[0].windows == (Window("week", 5.0, None, "expiring", 168.0),)

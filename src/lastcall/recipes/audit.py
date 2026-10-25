@@ -33,7 +33,7 @@ from lastcall.tiers import TIERS
 from lastcall.verify import check_command, describe, summary_line
 
 StepRunner = Callable[[Engine, StepSpec, Path], StepResult]  # (engine, step, workspace)
-QuotaCheck = Callable[[], tuple[Gate, Reading | None]]
+QuotaCheck = Callable[[Sequence[str]], tuple[Gate, Reading | None]]  # the gate for the models of the next steps
 ATTEMPTS = 2  # an implementer whose change fails the check gets the failure and one more attempt
 Verifier = Callable[[Path, str], tuple[bool, str]]  # (the change, check command) -> (passed, last lines of output)
 
@@ -68,6 +68,12 @@ def reviewers() -> list[Reviewer]:
             raise ValueError(f"reviewer {item.name} needs name, prefix and a tier among {TIERS}")
         found.append(Reviewer(meta["name"], meta["prefix"], meta["tier"], body))
     return found
+
+
+def models(tiers: Mapping[str, tuple[str, str | None]], team: Sequence[Reviewer] | None = None) -> list[str]:
+    """The models an audit uses: its reviewers', then the judge's and the implementers' (deep)."""
+    crew = team if team is not None else reviewers()
+    return list(dict.fromkeys([*(tiers[rv.tier][0] for rv in crew), tiers["deep"][0]]))
 
 
 @dataclass
@@ -138,20 +144,29 @@ class _Steps:
     peer: str = ""  # a peer's closed gate stops that peer, not the run
 
     def run(
-        self, role: str, tier: str, text: str, schema_name: str, workspace: Path, writable: bool = False
+        self,
+        role: str,
+        tier: str,
+        text: str,
+        schema_name: str,
+        workspace: Path,
+        writable: bool = False,
+        then: Sequence[str] = (),
     ) -> StepResult | None:
-        gate, reading = self.check_quota()
+        """Run one step behind the gate for its model and for `then`, the models of the steps that come after it:
+        a run whose later steps could not start stops before it spends."""
+        model, effort = self.tiers[tier]
+        gate, reading = self.check_quota(list(dict.fromkeys([model, *then])))
         if not gate.ok:
             if self.peer:
                 self.report.notes.append(f"{self.peer} stopped reviewing: {gate.reason}")
             else:
                 self.report.status, self.report.stopped = "partial", gate.reason
             return None
-        model, effort = self.tiers[tier]
         spec = StepSpec(role, model, text, effort, self.shared, schema(schema_name), writable)
         t0 = time.monotonic()
         res = self.run_step(self.engine, spec, workspace)
-        usage = {w.name: w.used_pct for w in reading.windows} if reading else None
+        usage = {w.label: w.used_pct for w in reading.windows} if reading else None
         seconds = round(time.monotonic() - t0, 1)
         record = StepRecord(role, model, effort, res.ok, seconds, res.tool_uses, res.cost_usd, res.error, usage)
         self.report.steps.append(record)
@@ -184,11 +199,14 @@ def run_audit(
     crew = list(team if team is not None else reviewers())
 
     def review(steps: _Steps, mark: str) -> list[dict[str, Any]] | None:
-        """The findings of one account's reviewers; None when this run's own gate closes."""
+        """The findings of one account's reviewers; None when this run's own gate closes. The first reviewer's gate
+        checks every model the account needs in the run, the judge's too for the run's own account."""
         found: list[dict[str, Any]] = []
-        for rv in crew:
+        needed = models(steps.tiers, crew) if not mark else [steps.tiers[rv.tier][0] for rv in crew]
+        for n, rv in enumerate(crew):
             text = render(prompt("reviewer.md"), role=rv.name, project=project, focus=rv.focus, language=language)
-            res = steps.run(f"reviewer:{rv.name}{mark}", rv.tier, text, "findings", pack.src)
+            then = needed if n == 0 else ()
+            res = steps.run(f"reviewer:{rv.name}{mark}", rv.tier, text, "findings", pack.src, then=then)
             if res is None:
                 return found if mark else None
             if res.ok:  # a reviewer that fails costs its findings, not the run

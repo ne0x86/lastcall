@@ -114,6 +114,7 @@
   "web.window.day": "Ventana diaria",
   "web.window.month": "Ventana mensual",
   "web.window.other": "Ventana {name}",
+  "web.window.model": "{window} de {model}",
   "web.window.used": "{pct} usado",
   "web.window.resets": "se reinicia {when}",
 
@@ -123,6 +124,7 @@
   "web.plan.paid": "Sin ráfaga: el uso de pago está activo.",
   "web.plan.no-window": "Sin ráfaga: ninguna ventana de esta cuenta caduca.",
   "web.plan.no-reset": "Sin ráfaga: el proveedor no dice cuándo se reinicia la ventana.",
+  "web.plan.model": "Sin ráfaga: la auditoría necesita {model}, y su propia ventana está al {used}. El resto es tu reserva.",
   "web.plan.manual": "Manual: solo las ejecuciones que lances tú.",
 
   "web.review.title": "Pendiente de ti",

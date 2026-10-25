@@ -43,9 +43,10 @@ def test_claude_probe_and_reading() -> None:
     assert code == 0
     assert len(lines) == 1
     reading = ClaudeCode().quota_reading("claude-max", lines, NOW)
-    five, week = reading.windows
+    five, week, opus = reading.windows
     assert (five.name, five.used_pct, five.role, five.duration_hours) == ("5h", 12.0, "throttle", 5.0)
     assert (week.name, week.used_pct, week.role) == ("week", 36.0, "expiring")
+    assert (opus.label, opus.used_pct, opus.role) == ("week Opus", 10.0, "expiring")
     assert week.resets_at == epoch("2026-10-26T12:00:00+00:00")
     assert not reading.paid_usage
     assert reading.fidelity == "exact"
@@ -119,3 +120,27 @@ def test_epoch() -> None:
     assert epoch("2026-10-26T12:00:00Z") == epoch("2026-10-26T12:00:00+00:00")
     with pytest.raises(QuotaError):
         epoch(["not", "a", "time"])
+
+
+def test_claude_reads_the_window_of_each_model() -> None:
+    body = {
+        "rate_limits": {
+            "seven_day": {"utilization": 40, "resets_at": "2026-10-26T12:00:00+00:00"},
+            "seven_day_opus": None,
+            "seven_day_sonnet": {"utilization": 55, "resets_at": "2026-10-26T12:00:00+00:00"},
+            "model_scoped": [
+                {"display_name": "Fable", "utilization": 70, "resets_at": "2026-10-27T08:00:00+00:00"},
+                {"display_name": "Sonnet", "utilization": 55, "resets_at": None},  # already read
+                {"display_name": "Haiku", "utilization": None, "resets_at": None},  # nothing to read
+            ],
+        }
+    }
+    reading = ClaudeCode().quota_reading("a", [control("success", response=body)], NOW)
+    assert [(w.label, w.used_pct) for w in reading.windows] == [
+        ("5h", 0.0),
+        ("week", 40.0),
+        ("week Sonnet", 55.0),
+        ("week Fable", 70.0),
+    ]
+    assert reading.windows[-1].resets_at == epoch("2026-10-27T08:00:00+00:00")
+    assert [w.label for w in reading.expiring] == ["week"]  # only the account's window decides whether to spend
