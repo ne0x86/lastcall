@@ -69,7 +69,8 @@ engine is one module and a few small changes:
    - with event streams recorded from the real CLI, in `tests/fixtures`, as `tests/test_engines.py` does for the
      existing engines;
    - its quota reader with a fake CLI, in `tests/fakes`.
-8. **Add it to the engines tables** in README.md and DESIGN.md (section 6).
+8. **Add it to the engines tables** in README.md and DESIGN.md (section 6), and to the tools that the README's
+   introduction names.
 
 ## License
 

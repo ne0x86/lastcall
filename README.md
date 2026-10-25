@@ -7,16 +7,19 @@
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 
-Your Claude and ChatGPT plans come with weekly limits, and whatever you do not use before the reset is gone. lastcall
-watches those limits. When a reset is coming with capacity left over, it spends that capacity on your repositories:
-it audits them, fixes what it can in small pull requests verified by your own tests, and leaves the rest in an issue
-for you to decide. Nothing reaches your default branch without your approval. 🙌
+Your AI subscriptions come with usage limits that reset, and whatever you do not use before the reset is gone.
+lastcall watches those limits. When a reset is coming with capacity left over, it spends that capacity on your
+repositories: it audits them, fixes what it can in small pull requests verified by your own tests, and leaves the
+rest in an issue for you to decide. Nothing reaches your default branch without your approval. 🙌
+
+It works through each vendor's official command-line tool, with your own login: today Claude Code and Codex, and
+[more can plug in](#-engines).
 
 ## ✨ What it does
 
 - 🔎 **Audits.** Four reviewers (bugs, security, hygiene, performance) read your code. A judge checks every finding
-  against the code and throws out the noise. With several accounts, Claude and Codex can review the same project
-  together, and one judge keeps what holds: each finds things the other misses.
+  against the code and throws out the noise. Several accounts, even from different providers, can review the same
+  project together, and one judge keeps what holds: each finds things the others miss.
 - 🛠️ **Fixes.** One implementer per pull request writes the smallest fix, with a regression test.
 - ✅ **Verifies.** lastcall, not the agent, runs your tests again in a clean container and scans the change for
   secrets.
@@ -97,8 +100,8 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 **3. Follow the dashboard.** It walks you through the rest:
 
 - 🐙 **GitHub App.** One click creates it, private to you. Then install it on the repositories lastcall may work on.
-- 🤖 **Accounts.** Add your Claude or ChatGPT plan, and sign it in with its own official login. lastcall never
-  sees it:
+- 🤖 **Accounts.** Add each AI subscription that lastcall may use, and sign it in with its tool's own official
+  login. lastcall never sees it:
 
   ```sh
   ACCOUNT=claude-max ENGINE=claude-code docker compose run --rm login   # Claude: paste the code back
@@ -184,7 +187,8 @@ advice.
 - ✅ **v0.3, more projects, more eyes.**
   - `.lastcall.yml` in your repositories, devcontainer images, and Go, Rust and Java out of the box.
   - A second attempt at a fix when the project's check fails, with the check's output.
-  - Fan-out: Claude and Codex audit the same project, and one judge keeps what holds.
+  - Fan-out: several accounts, even from different providers, audit the same project, and one judge keeps what
+    holds.
   - Engines are plug-ins: one module each, and one login command for all of them.
 - 🔜 **v0.4, closer to the merge.**
   - The `improve` recipe, and reviewers that your repository defines.
