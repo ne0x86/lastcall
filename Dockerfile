@@ -4,7 +4,7 @@
 #   test        the service image plus the integration tests
 FROM docker:29-cli AS docker-cli
 
-FROM python:3.12-slim-bookworm AS app
+FROM python:3.15-slim-bookworm AS app
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
