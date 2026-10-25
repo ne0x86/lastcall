@@ -14,44 +14,28 @@ from __future__ import annotations
 import json
 import re
 import time
-import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from importlib import resources
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from lastcall import git, i18n
-from lastcall.engines.base import Engine, StepResult, StepSpec
+from lastcall.engines.base import Engine
 from lastcall.environment import RUNNER, ConfigError, Environment
 from lastcall.pack import Pack
-from lastcall.quota import Gate, Reading
-from lastcall.recipes import front_matter, prompt, render, schema
-from lastcall.secretscan import added_lines, scan
+from lastcall.recipes import front_matter, prompt, render
+from lastcall.recipes.build import Forge, Job, Verifier, build
+from lastcall.recipes.steps import QuotaCheck, StepRecord, StepRunner, Steps, table
+from lastcall.secretscan import scan
 from lastcall.tiers import TIERS
-from lastcall.verify import check_command, describe, summary_line
 
-StepRunner = Callable[[Engine, StepSpec, Path], StepResult]  # (engine, step, workspace)
-QuotaCheck = Callable[[Sequence[str]], tuple[Gate, Reading | None]]  # the gate for the models of the next steps
-ATTEMPTS = 2  # an implementer whose change fails the check gets the failure and one more attempt
-Verifier = Callable[[Path, str], tuple[bool, str]]  # (the change, check command) -> (passed, last lines of output)
 PROJECT_REVIEWERS = ".lastcall/reviewers"  # a project's own reviewers, one Markdown file each
 MAX_PROJECT_REVIEWERS = 4  # each one is a step of every run
 MAX_REVIEWER_BYTES = 8_000
 REVIEWER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 REVIEWER_PREFIX = re.compile(r"[A-Z]{1,3}")  # finding ids: A1, A2...
-
-
-class Forge(Protocol):
-    @property
-    def author(self) -> tuple[str, str]: ...  # name and email of the commits
-
-    def push(self, workdir: Path, branch: str) -> None: ...
-
-    def open_pull_request(self, branch: str, title: str, body: str) -> str: ...
-
-    def open_issue(self, title: str, body: str) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -134,19 +118,6 @@ def models(tiers: Mapping[str, tuple[str, str | None]], team: Sequence[Reviewer]
 
 
 @dataclass
-class StepRecord:
-    role: str
-    model: str
-    effort: str | None
-    ok: bool
-    seconds: float
-    tool_uses: int
-    cost_usd: float | None
-    error: str | None
-    quota_before: dict[str, float] | None  # window name -> % used, to measure what each step costs
-
-
-@dataclass
 class AuditReport:
     repo: str
     sha: str
@@ -187,51 +158,6 @@ class Peer:
     check_quota: QuotaCheck
 
 
-@dataclass
-class _Steps:
-    """Runs the agent steps of a report: the gate before each one, and a record of what it cost."""
-
-    report: AuditReport
-    engine: Engine
-    tiers: Mapping[str, tuple[str, str | None]]
-    run_step: StepRunner
-    check_quota: QuotaCheck
-    shared: Path
-    on_step: Callable[[StepRecord], None] | None = None
-    peer: str = ""  # a peer's closed gate stops that peer, not the run
-
-    def run(
-        self,
-        role: str,
-        tier: str,
-        text: str,
-        schema_name: str,
-        workspace: Path,
-        writable: bool = False,
-        then: Sequence[str] = (),
-    ) -> StepResult | None:
-        """Run one step behind the gate for its model and for `then`, the models of the steps that come after it:
-        a run whose later steps could not start stops before it spends."""
-        model, effort = self.tiers[tier]
-        gate, reading = self.check_quota(list(dict.fromkeys([model, *then])))
-        if not gate.ok:
-            if self.peer:
-                self.report.notes.append(f"{self.peer} stopped reviewing: {gate.reason}")
-            else:
-                self.report.status, self.report.stopped = "partial", gate.reason
-            return None
-        spec = StepSpec(role, model, text, effort, self.shared, schema(schema_name), writable)
-        t0 = time.monotonic()
-        res = self.run_step(self.engine, spec, workspace)
-        usage = {w.label: w.used_pct for w in reading.windows} if reading else None
-        seconds = round(time.monotonic() - t0, 1)
-        record = StepRecord(role, model, effort, res.ok, seconds, res.tool_uses, res.cost_usd, res.error, usage)
-        self.report.steps.append(record)
-        if self.on_step:
-            self.on_step(record)
-        return res
-
-
 def run_audit(
     *,
     repo: str,
@@ -251,11 +177,11 @@ def run_audit(
     """First half: find and judge. With peers, every account's reviewers work at the same time, one after another
     within each account, on the same pack; one judge, this account's, weighs all their findings."""
     report = AuditReport(repo, pack.sha, engine.name, language, peers=[p.name for p in peers])
-    steps = _Steps(report, engine, tiers, run_step, check_quota, pack.path, on_step)
+    steps = Steps(report, engine, tiers, run_step, check_quota, pack.path, on_step)
     project = repo.split("/")[-1]
     crew = list(team if team is not None else reviewers())
 
-    def review(steps: _Steps, mark: str) -> list[dict[str, Any]] | None:
+    def review(steps: Steps, mark: str) -> list[dict[str, Any]] | None:
         """The findings of one account's reviewers; None when this run's own gate closes. The first reviewer's gate
         checks every model the account needs in the run, the judge's too for the run's own account."""
         found: list[dict[str, Any]] = []
@@ -273,7 +199,7 @@ def run_audit(
 
     if peers:
         others = [
-            _Steps(report, p.engine, p.tiers, p.run_step, p.check_quota, pack.path, on_step, p.name) for p in peers
+            Steps(report, p.engine, p.tiers, p.run_step, p.check_quota, pack.path, on_step, p.name) for p in peers
         ]
         with ThreadPoolExecutor(max_workers=1 + len(peers)) as pool:
             own = pool.submit(review, steps, "")
@@ -319,11 +245,6 @@ def run_audit(
     return report
 
 
-def slug(title: str, size: int = 40) -> str:
-    plain = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-")[:size].rstrip("-") or "change"
-
-
 def deliver(
     *,
     report: AuditReport,
@@ -340,7 +261,7 @@ def deliver(
 ) -> AuditReport:
     """Second half: implement each planned pull request, verify it outside the agent, in the project's environment,
     and open it. Pull requests already opened for this report are not opened again."""
-    steps = _Steps(report, engine, tiers, run_step, check_quota, run_dir / "shared.md", on_step)
+    steps = Steps(report, engine, tiers, run_step, check_quota, run_dir / "shared.md", on_step)
     by_id = {f["id"]: f for f in report.findings}
     verdict = {v["id"]: v for v in report.verdicts}
     opened = {d["title"] for d in report.deliveries if d["status"] == "opened"}
@@ -349,69 +270,41 @@ def deliver(
     for n, pr in enumerate(report.prs[:max_prs] if max_prs else report.prs, 1):
         if pr["title"] in opened:
             continue
-        branch = f"lastcall/{stamp}-{n}-{slug(pr['title'])}"
-        work = run_dir / f"pr{n}"
-        git.remove(work)
-        git.branch_from(run_dir / "clone", work, branch)
-        command = environment.test or check_command(work)[0]
-        with_tests = environment.test or check_command(work, assume_tests=True)[0]  # once tests exist
         covered = [dict(by_id[i], judge=verdict.get(i)) for i in pr["ids"]]
-        text = render(
-            prompt("implementer.md"),
-            project=project,
-            branch=branch,
-            title=pr["title"],
-            risk=pr["risk"],
-            plan=pr["plan"],
-            findings=json.dumps(covered, ensure_ascii=False, indent=1),
-            check=check_text(environment, command, with_tests),
+
+        def ask(branch: str, check: str, pr: Mapping[str, Any] = pr, covered: list[Any] = covered) -> str:
+            return render(
+                prompt("implementer.md"),
+                project=project,
+                branch=branch,
+                title=pr["title"],
+                risk=pr["risk"],
+                plan=pr["plan"],
+                findings=json.dumps(covered, ensure_ascii=False, indent=1),
+                check=check,
+                language=report.language,
+            )
+
+        def footer(checked: str, model: str, effort: str | None, ids: Sequence[str] = pr["ids"]) -> str:
+            return pr_footer(report, ids, model, effort, checked)
+
+        job = Job(pr["title"], ask, f"Findings: {', '.join(pr['ids'])}", footer)
+        record = build(
+            job,
+            {"title": pr["title"], "ids": pr["ids"]},
+            report.deliveries,
+            n=n,
+            stamp=stamp,
+            steps=steps,
+            run_dir=run_dir,
+            tiers=tiers,
+            environment=environment,
+            verify=verify,
+            forge=forge,
             language=report.language,
         )
-        record: dict[str, Any] = {"title": pr["title"], "ids": pr["ids"], "branch": branch}
-        report.deliveries = [d for d in report.deliveries if d["title"] != pr["title"]] + [record]
-        asked, passed, tail = text, False, ""
-        for attempt in range(1, ATTEMPTS + 1):
-            role = "implementer" if attempt == 1 else "implementer:retry"
-            res = steps.run(role, "deep", asked, "implementation", work, writable=True)
-            if res is None:  # a gate closed: the rest waits for the next run
-                record |= {"status": "stopped", "note": report.stopped}
-                break
-            out = res.output or {}
-            if not res.ok or not out.get("done"):
-                record |= {"status": "not_done", "note": str(out.get("pending") or res.error or "")[:800]}
-                break
-            diff = git.stage_all(work)
-            if not diff.strip():
-                record |= {"status": "unchanged", "note": "the implementer reported done but changed nothing"}
-                break
-            command, kind = check_command(work)  # the implementer may have added the project's first tests
-            if environment.test:
-                command, kind = environment.test, "tests"
-            passed, tail = verify(work, command)
-            record["attempts"] = attempt
-            if passed:
-                record.pop("status", None)  # what the failed attempt left
-                record.pop("note", None)
-                break
-            record |= {"status": "red", "note": tail[-1500:]}
-            asked = text + retry_text(environment, command, tail)
-        if record.get("status") == "stopped":
+        if record.get("status") == "stopped":  # a gate closed: the rest waits for the next run
             break
-        if not passed:
-            continue
-        last = summary_line(tail)
-        title, body = str(out["pr_title"]), str(out["pr_body"])
-        leaks = scan(f"{added_lines(diff)}\n{title}\n{body}")
-        if leaks:
-            record |= {"status": "secrets", "note": f"blocked by the secret scan: {', '.join(leaks)}"}
-            continue
-        model, effort = tiers["deep"]
-        message = f"{title}\n\n{out.get('summary') or ''}\n\nFindings: {', '.join(pr['ids'])}"
-        git.commit(work, message, forge.author)
-        forge.push(work, branch)
-        checked = describe(kind, last, report.language, environment.image)
-        footer = "\n\n---\n<sub>" + pr_footer(report, pr["ids"], model, effort, checked) + "</sub>"
-        record |= {"status": "opened", "url": forge.open_pull_request(branch, title, body + footer), "check": checked}
 
     decide = [v for v in report.verdicts if v["verdict"] == "valid" and v["decision"] == "issue"]
     if decide and not report.issue_url:
@@ -419,31 +312,6 @@ def deliver(
         if not scan(body):
             report.issue_url = forge.open_issue(issue_title(report, len(decide)), body)
     return report
-
-
-def retry_text(environment: Environment, command: str, tail: str) -> str:
-    """What the implementer's second attempt adds to its prompt: the check that failed, and how."""
-    where = f"in the project's environment (`{environment.image}`)" if environment.image else "in a clean container"
-    return render(prompt("retry.md"), command=command, where=where, tail=tail[-3000:].strip())
-
-
-def check_text(environment: Environment, command: str, with_tests: str) -> str:
-    """Step 4 of the implementer's prompt: how its change is checked."""
-    if environment.image is None:
-        return (
-            f"Run the whole check with: `{command}`. It must pass. If something already failed before your change, "
-            "do not fix it: say so in `pending`. Then lastcall checks your change again, in a clean container "
-            "where only the project's declared dependencies are installed. If you add tests, it runs them with "
-            f"`{with_tests}`: make sure they pass exactly that way, and do not rely on anything you installed by "
-            "hand."
-        )
-    return (
-        f"The project's checks run in its own environment, the image `{environment.image}` "
-        f"({environment.source}), which this container does not have: you cannot run them here. When you finish, "
-        f"lastcall prepares that environment and runs `{command}` in a clean container. Write the change and its "
-        "tests so that they pass that way: read the existing tests and follow them closely. In `tests.result`, "
-        f"write that the tests run in {environment.image} after you finish."
-    )
 
 
 def pr_footer(report: AuditReport, ids: Sequence[str], model: str, effort: str | None, checked: str) -> str:
@@ -528,14 +396,6 @@ def markdown(report: AuditReport) -> str:
         "",
         "## Steps",
         "",
-        "| step | model | ok | seconds | tools | cost (USD eq.) | quota before |",
-        "|---|---|---|---|---|---|---|",
+        *table(report.steps),
     ]
-    for s in report.steps:
-        quota = ", ".join(f"{k} {v:g}%" for k, v in (s.quota_before or {}).items()) or "-"
-        cost = f"{s.cost_usd:.2f}" if s.cost_usd is not None else "-"
-        out.append(
-            f"| {s.role} | {s.model} {s.effort or ''} | {'yes' if s.ok else 'no'} | {s.seconds:g} | "
-            f"{s.tool_uses} | {cost} | {quota} |"
-        )
     return "\n".join(out) + "\n"

@@ -8,6 +8,7 @@ lastcall github setup --owner <login>           # create the instance's GitHub A
 lastcall github repos                           # installed repositories, with lastcall's suggestions
 lastcall audit <owner/name> --account <account> # audit, then pull requests; --account again: fan-out
 lastcall deliver <run> --account <account>      # the pull requests of a report-only audit
+lastcall improve <owner/name> --account <account> # an improvement plan; later runs build the ideas you tick
 lastcall sync                                   # what the owner did with lastcall's pull requests and issues
 lastcall status                                 # accounts, projects and what happened to their findings
 lastcall serve [--port 8080]                    # the service, which bursts on its own, and its web UI
@@ -36,8 +37,9 @@ from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
 from lastcall.notify import Notifier
 from lastcall.quota import QuotaError, Reading, SpendPolicy, account_rate, plan
-from lastcall.recipes.audit import AuditReport, StepRecord
-from lastcall.runs import Instance, Options, audit_models, audit_repo, deliver_report, save
+from lastcall.recipes.audit import AuditReport
+from lastcall.recipes.steps import StepRecord
+from lastcall.runs import Instance, Options, audit_models, audit_repo, deliver_report, improve_repo, save
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.service import DEFAULT_RATE as SERVICE_RATE
@@ -105,6 +107,11 @@ def main(argv: list[str] | None = None) -> int:
         "the first one judges and implements",
     )
     deliver_cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
+    improve_cmd = commands.add_parser(
+        "improve", help="an improvement plan, an issue with a checkbox per idea: later runs build the ideas you tick"
+    )
+    improve_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
+    improve_cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
 
     commands.add_parser("sync", help="what the owner did with lastcall's pull requests and issues")
     commands.add_parser("status", help="accounts, projects and what happened to their findings")
@@ -172,6 +179,8 @@ def dispatch(args: argparse.Namespace) -> int:
             return audit(args.repo, lead, args.max_prs, args.report_only, others)
         case "deliver", _:
             return deliver_run(args.run, account(args.account), args.max_prs)
+        case "improve", _:
+            return improve(args.repo, account(args.account))
         case "sync", _:
             client = github_client()
             if client is None:
@@ -264,6 +273,19 @@ def audit(repo: str, acc: Account, max_prs: int, report_only: bool, peers: Seque
         run_dir, report = audit_repo(
             inst, repo, acc, options(acc, repo, max_prs=max_prs, report_only=report_only), progress, log, crew
         )
+    except GitHubError as e:
+        print(e, file=sys.stderr)
+        return 1
+    print("\n" + (run_dir / "report.md").read_text(encoding="utf-8"))
+    return 1 if report.status == "failed" else 0
+
+
+def improve(repo: str, acc: Account) -> int:
+    client = github_client()
+    if client is None:
+        return 1
+    try:
+        run_dir, report = improve_repo(instance(client), repo, acc, options(acc, repo), progress, log)
     except GitHubError as e:
         print(e, file=sys.stderr)
         return 1

@@ -1,7 +1,8 @@
-"""One audit run from start to end, as the command line and the service both run it.
+"""One run from start to end, an audit or an improvement, as the command line and the service both run it.
 
-The run's folder lives in the data volume (`runs/<repo>-<engine>-<time>`) and holds the clone, the context pack, a
-working copy per pull request and the report. The store keeps the run, its findings and their pull requests.
+The run's folder lives in the data volume (`runs/<repo>-<engine>-<time>`, or `<repo>-improve-<engine>-<time>`) and
+holds the clone, the context pack, a working copy per pull request and the report. The store keeps the run, its
+findings or ideas, and their pull requests.
 """
 
 from __future__ import annotations
@@ -22,16 +23,16 @@ from lastcall.quota import Gate, QuotaError, Reading, SpendPolicy, gate
 from lastcall.recipes.audit import (
     AuditReport,
     Peer,
-    QuotaCheck,
-    StepRecord,
-    StepRunner,
-    Verifier,
     deliver,
     markdown,
     models,
     run_audit,
     team,
 )
+from lastcall.recipes.build import Verifier
+from lastcall.recipes.improve import ImproveReport, build_ideas, publish, run_improve
+from lastcall.recipes.improve import markdown as improve_markdown
+from lastcall.recipes.steps import QuotaCheck, StepRecord, StepRunner
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.store import Store
 from lastcall.tiers import defaults
@@ -127,11 +128,19 @@ def verifier(box: Sandbox, engine: str, env: Environment = environment.RUNNER) -
     return verify
 
 
-def save(run_dir: Path, report: AuditReport) -> str:
+def save(run_dir: Path, report: AuditReport | ImproveReport) -> str:
     (run_dir / "report.json").write_text(report.to_json(), encoding="utf-8")
-    text = markdown(report)
+    text = improve_markdown(report) if isinstance(report, ImproveReport) else markdown(report)
     (run_dir / "report.md").write_text(text, encoding="utf-8")
     return text
+
+
+def tell(inst: Instance, run: str, report: AuditReport | ImproveReport, prefix: str = "") -> None:
+    """Tell the owner when a run failed or stopped early, and why."""
+    if inst.notify and report.status in ("failed", "partial"):
+        error = next((s.error for s in reversed(report.steps) if s.error), None)
+        reason = report.stopped or error or f"run {run}"
+        inst.notify.notify("failed", prefix + report.status, repo=report.repo, reason=reason[:400])
 
 
 def audit_repo(
@@ -198,10 +207,90 @@ def audit_repo(
             inst.notify.notify("failed", repo=repo, reason=f"{type(e).__name__}: {e}"[:400])
         raise
     inst.store.finish_run(run_dir.name, report.status, report.sha)
-    if inst.notify and report.status in ("failed", "partial"):
-        error = next((s.error for s in reversed(report.steps) if s.error), None)
-        reason = report.stopped or error or f"run {run_dir.name}"
-        inst.notify.notify("failed", report.status, repo=repo, reason=reason[:400])
+    tell(inst, run_dir.name, report)
+    return run_dir, report
+
+
+def improve_repo(
+    inst: Instance,
+    repo: str,
+    account: Account,
+    opts: Options,
+    on_step: Callable[[StepRecord], None] | None = None,
+    log: Log = print,
+) -> tuple[Path, ImproveReport]:
+    """An improvement run. When the owner has ticked ideas, it builds them, one pull request each, up to the
+    project's `max_prs`. Otherwise it makes a plan: the ideator and the critic, and the plan as an issue with a
+    checkbox per idea. While a plan still has ideas to tick, a new one waits."""
+    token = inst.client.repository_token(repo)
+    meta = inst.client.repository(token, repo)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    run_dir = inst.box.data_root / "runs" / f"{meta['name']}-improve-{account.engine}-{stamp}"
+    run_dir.mkdir(parents=True)
+    inst.store.start_run(run_dir.name, repo, account.id, opts.trigger, recipe="improve")
+    try:
+        git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
+        wanted = inst.store.wanted_ideas(repo)
+        waiting = [p["issue_url"] for p in inst.store.plans() if p["repo"] == repo]
+        if wanted or not waiting:
+            own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
+            extra = {FOCUS: own.focus} if own and own.focus else {}
+            context = pack.build(run_dir / "clone", run_dir, repo, extra=extra, exclude=own.exclude if own else ())
+            run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+            if wanted:
+                env = environment.detect(run_dir / "clone", own)
+                log(f"Building {min(len(wanted), opts.max_prs)} idea(s) for {repo}, checked in {env.name}.")
+                report = ImproveReport(repo, context.sha, account.engine, opts.language)
+                build_ideas(
+                    report=report,
+                    wanted=wanted,
+                    run_dir=run_dir,
+                    shared=context.path,
+                    engine=engines.get(account.engine),
+                    tiers=defaults(account.engine),
+                    run_step=run_step,
+                    check_quota=check_quota,
+                    verify=verifier(inst.box, account.engine, env),
+                    forge=GitHubForge.connect(inst.client, repo),
+                    environment=env,
+                    max_prs=opts.max_prs,
+                    on_step=on_step,
+                )
+                inst.store.record_idea_deliveries(run_dir.name, report)
+            else:
+                log(f"Ideas for {repo} @ {context.sha} with {account.id} ({account.engine}). Run: {run_dir.name}")
+                report = run_improve(
+                    repo=repo,
+                    pack=context,
+                    engine=engines.get(account.engine),
+                    tiers=defaults(account.engine),
+                    run_step=run_step,
+                    check_quota=check_quota,
+                    language=opts.language,
+                    earlier=inst.store.earlier_ideas(repo),
+                    on_step=on_step,
+                )
+                if report.status == "ok":
+                    publish(report, GitHubForge.connect(inst.client, repo))
+                inst.store.record_ideas(run_dir.name, report)
+        else:
+            report = ImproveReport(repo, git.head(run_dir / "clone")[:7], account.engine, opts.language)
+            report.notes.append(f"The plan {waiting[0]} still has ideas to tick: close it to get a new one.")
+            log(f"{repo}: {report.notes[-1]}")
+        save(run_dir, report)
+    except Exception as e:
+        inst.store.finish_run(run_dir.name, "failed", None)
+        if inst.notify:
+            inst.notify.notify("failed", "improve-failed", repo=repo, reason=f"{type(e).__name__}: {e}"[:400])
+        raise
+    inst.store.finish_run(run_dir.name, report.status, report.sha)
+    if inst.notify:
+        for d in report.deliveries:
+            if d.get("status") == "opened":
+                inst.notify.notify("pr", repo=repo, title=d["title"], url=d["url"])
+        if report.issue_url:
+            inst.notify.notify("decisions", "plan", repo=repo, count=len(report.plan), url=report.issue_url)
+    tell(inst, run_dir.name, report, "improve-")
     return run_dir, report
 
 

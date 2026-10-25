@@ -8,7 +8,8 @@ import pytest
 from lastcall.engines.base import Engine, StepResult, StepSpec
 from lastcall.engines.scripted import Scripted
 from lastcall.quota import Gate, Reading
-from lastcall.recipes.audit import AuditReport, deliver, markdown, slug
+from lastcall.recipes.audit import AuditReport, deliver, markdown
+from lastcall.recipes.build import slug
 
 TIERS = {"fast": ("small", None), "balanced": ("mid", "high"), "deep": ("big", "high")}
 FINDING = {

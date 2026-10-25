@@ -1,5 +1,5 @@
-"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, pull requests, the suggestions for
-the installed repositories, the owner's orders and the web UI's sessions.
+"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, ideas, pull requests, the
+suggestions for the installed repositories, the owner's orders and the web UI's sessions.
 
 Findings keep their story across runs, so the judge never proposes again what the owner rejected:
     pending    valid, meant for a pull request, not opened yet (it did not fit, or delivery failed)
@@ -10,6 +10,16 @@ Findings keep their story across runs, so the judge never proposes again what th
     resolved   the owner closed that issue as done
     dismissed  the owner closed that issue as not planned
     discarded  the judge discarded it
+
+Ideas, from improvement plans, keep theirs too:
+    proposed   in an open plan, not ticked
+    wanted     the owner ticked it: a run builds it
+    in_pr      in an open lastcall pull request
+    merged     its pull request was merged
+    rejected   its pull request was closed without merging
+    dismissed  its plan was closed without it
+    stuck      a run tried to build it and could not
+    discarded  the critic left it out of the plan
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ from lastcall.suggest import Suggestion
 
 if TYPE_CHECKING:
     from lastcall.recipes.audit import AuditReport
+    from lastcall.recipes.improve import ImproveReport
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -42,11 +53,14 @@ CREATE TABLE IF NOT EXISTS readings (
 CREATE INDEX IF NOT EXISTS readings_by_account ON readings (account, taken_at);
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY, repo TEXT NOT NULL, account TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL,
-    sha TEXT, started REAL NOT NULL, ended REAL, crew TEXT NOT NULL DEFAULT '');
+    sha TEXT, started REAL NOT NULL, ended REAL, crew TEXT NOT NULL DEFAULT '', recipe TEXT NOT NULL DEFAULT 'audit');
 CREATE TABLE IF NOT EXISTS findings (
     id INTEGER PRIMARY KEY, repo TEXT NOT NULL, run TEXT NOT NULL, fid TEXT NOT NULL, data TEXT NOT NULL,
     verdict TEXT, decision TEXT, severity TEXT, reason TEXT, status TEXT NOT NULL, pr_url TEXT, issue_url TEXT,
     created REAL NOT NULL, UNIQUE (run, fid));
+CREATE TABLE IF NOT EXISTS ideas (
+    id INTEGER PRIMARY KEY, repo TEXT NOT NULL, run TEXT NOT NULL, iid TEXT NOT NULL, data TEXT NOT NULL,
+    status TEXT NOT NULL, issue_url TEXT, pr_url TEXT, note TEXT, created REAL NOT NULL, UNIQUE (run, iid));
 CREATE TABLE IF NOT EXISTS prs (
     url TEXT PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, run TEXT NOT NULL, title TEXT NOT NULL,
     state TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL);
@@ -87,7 +101,8 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.lock = threading.Lock()
         self.db.executescript(SCHEMA)
-        self._add_columns("runs", {"crew": "TEXT NOT NULL DEFAULT ''"})  # added in v0.3
+        # crew came in v0.3, recipe in v0.4
+        self._add_columns("runs", {"crew": "TEXT NOT NULL DEFAULT ''", "recipe": "TEXT NOT NULL DEFAULT 'audit'"})
 
     def _add_columns(self, table: str, columns: Mapping[str, str]) -> None:
         """Columns that later versions added, for databases made before them."""
@@ -212,12 +227,14 @@ class Store:
 
     # runs
 
-    def start_run(self, run: str, repo: str, account: str, trigger: str, crew: Sequence[str] = ()) -> None:
+    def start_run(
+        self, run: str, repo: str, account: str, trigger: str, crew: Sequence[str] = (), recipe: str = "audit"
+    ) -> None:
         """`crew`: the other accounts whose reviewers take part (fan-out)."""
         self.x(
-            "INSERT INTO runs (id, repo, account, trigger, status, started, crew) "
-            "VALUES (?, ?, ?, ?, 'running', ?, ?)",
-            (run, repo, account, trigger, time.time(), ",".join(crew)),
+            "INSERT INTO runs (id, repo, account, trigger, status, started, crew, recipe) "
+            "VALUES (?, ?, ?, ?, 'running', ?, ?, ?)",
+            (run, repo, account, trigger, time.time(), ",".join(crew), recipe),
         )
 
     def finish_run(self, run: str, status: str, sha: str | None) -> None:
@@ -241,8 +258,9 @@ class Store:
         return {r["repo"]: r for r in rows}
 
     def last_run(self, repo: str, account: str) -> dict[str, Any] | None:
+        """The account's last audit of the project that got somewhere."""
         rows = self.q(
-            "SELECT * FROM runs WHERE repo = ? AND account = ? AND status IN ('ok', 'partial') "
+            "SELECT * FROM runs WHERE repo = ? AND account = ? AND status IN ('ok', 'partial') AND recipe = 'audit' "
             "ORDER BY started DESC LIMIT 1",
             (repo, account),
         )
@@ -278,19 +296,22 @@ class Store:
                 ),
             )
 
+    def _record_pr(self, url: str, repo: str, run: str, title: str) -> None:
+        number = int(url.rstrip("/").rsplit("/", 1)[1])
+        now = time.time()
+        self.x(
+            "INSERT INTO prs (url, repo, number, run, title, state, created, updated) "
+            "VALUES (?, ?, ?, ?, ?, 'open', ?, ?) ON CONFLICT (url) DO NOTHING",
+            (url, repo, number, run, title, now, now),
+        )
+
     def record_deliveries(self, run: str, report: AuditReport) -> None:
         """Opened pull requests and the decisions issue of a report."""
         for d in report.deliveries:
             if d.get("status") != "opened":
                 continue
             url = str(d["url"])
-            number = int(url.rstrip("/").rsplit("/", 1)[1])
-            now = time.time()
-            self.x(
-                "INSERT INTO prs (url, repo, number, run, title, state, created, updated) "
-                "VALUES (?, ?, ?, ?, ?, 'open', ?, ?) ON CONFLICT (url) DO NOTHING",
-                (url, report.repo, number, run, d["title"], now, now),
-            )
+            self._record_pr(url, report.repo, run, d["title"])
             for fid in d["ids"]:
                 self._finding(run, fid, "UPDATE findings SET status = 'in_pr', pr_url = ? WHERE {where}", (url,))
         if report.issue_url:
@@ -335,10 +356,11 @@ class Store:
     def close_pr(self, url: str, merged: bool) -> None:
         state = "merged" if merged else "closed"
         self.x("UPDATE prs SET state = ?, updated = ? WHERE url = ?", (state, time.time(), url))
-        self.x(
-            "UPDATE findings SET status = ? WHERE pr_url = ? AND status = 'in_pr'",
-            ("merged" if merged else "rejected", url),
-        )
+        for table in ("findings", "ideas"):
+            self.x(
+                f"UPDATE {table} SET status = ? WHERE pr_url = ? AND status = 'in_pr'",
+                ("merged" if merged else "rejected", url),
+            )
 
     def open_issues(self) -> list[str]:
         return [
@@ -358,6 +380,95 @@ class Store:
         """Issues with findings that wait for the owner's decision: repo, issue_url and n."""
         return self.q(
             "SELECT repo, issue_url, count(*) AS n FROM findings WHERE status = 'decide' AND issue_url IS NOT NULL "
+            "GROUP BY repo, issue_url ORDER BY min(created)"
+        )
+
+    # ideas
+
+    def record_ideas(self, run: str, report: ImproveReport) -> None:
+        """The ideas of an improvement run, once: those in its published plan are `proposed`, the rest `discarded`."""
+        verdicts = {v["id"]: v for v in report.verdicts}
+        planned = set(report.plan) if report.issue_url else set()
+        for idea in report.ideas:
+            status = "proposed" if idea["id"] in planned else "discarded"
+            self.x(
+                "INSERT INTO ideas (repo, run, iid, data, status, issue_url, created) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (run, iid) DO NOTHING",
+                (
+                    report.repo,
+                    run,
+                    idea["id"],
+                    json.dumps({**idea, "verdict": verdicts.get(idea["id"])}, ensure_ascii=False),
+                    status,
+                    report.issue_url if status == "proposed" else None,
+                    time.time(),
+                ),
+            )
+
+    def earlier_ideas(self, repo: str) -> list[dict[str, Any]]:
+        """What the ideator and the critic must know of earlier plans, with ids #<n>: the ideas the critic kept."""
+        rows = self.q("SELECT * FROM ideas WHERE repo = ? AND status != 'discarded' ORDER BY id", (repo,))
+        out = []
+        for r in rows:
+            data = json.loads(r["data"])
+            keep = ("title", "kind", "change")
+            out.append({"id": f"#{r['id']}", "state": r["status"], **{k: data.get(k) for k in keep}})
+        return out
+
+    def open_plans(self) -> list[str]:
+        """The plans that still have ideas to tick or to build."""
+        rows = self.q(
+            "SELECT DISTINCT issue_url FROM ideas WHERE status IN ('proposed', 'wanted') AND issue_url IS NOT NULL"
+        )
+        return [r["issue_url"] for r in rows]
+
+    def tick_ideas(self, url: str, ticks: Mapping[str, bool]) -> int:
+        """The owner's ticks in an open plan: a ticked idea is `wanted`, an unticked one `proposed` again. Returns
+        how many changed."""
+        changed = 0
+        for iid, on in ticks.items():
+            new, old = ("wanted", "proposed") if on else ("proposed", "wanted")
+            changed += self.x(
+                "UPDATE ideas SET status = ? WHERE issue_url = ? AND iid = ? AND status = ?", (new, url, iid, old)
+            ).rowcount
+        return changed
+
+    def close_plan(self, url: str, completed: bool) -> int:
+        """A closed plan: the ideas it did not get ticked are dismissed. Closed as not planned, so are the ticked
+        ones that are not built yet."""
+        states = ("proposed",) if completed else ("proposed", "wanted")
+        marks = ",".join("?" * len(states))
+        return self.x(
+            f"UPDATE ideas SET status = 'dismissed' WHERE issue_url = ? AND status IN ({marks})", (url, *states)
+        ).rowcount
+
+    def wanted_ideas(self, repo: str) -> list[dict[str, Any]]:
+        """The ideas the owner ticked that no run has built yet, the oldest first, as their plan gave them, with
+        `row` (their id here) and `plan` (the plan's URL)."""
+        rows = self.q("SELECT * FROM ideas WHERE repo = ? AND status = 'wanted' ORDER BY id", (repo,))
+        return [{**json.loads(r["data"]), "row": r["id"], "plan": r["issue_url"]} for r in rows]
+
+    def wanted_count(self, repo: str) -> int:
+        return int(self.q("SELECT count(*) AS n FROM ideas WHERE repo = ? AND status = 'wanted'", (repo,))[0]["n"])
+
+    def record_idea_deliveries(self, run: str, report: ImproveReport) -> None:
+        """What a run did with the ideas it built: an opened pull request makes its idea `in_pr`; an idea that could
+        not be built is `stuck`, with why. One that a gate stopped stays `wanted`, for the next run."""
+        for d in report.deliveries:
+            status = d.get("status")
+            if status == "opened":
+                url = str(d["url"])
+                self._record_pr(url, report.repo, run, d["title"])
+                self.x("UPDATE ideas SET status = 'in_pr', pr_url = ? WHERE id = ?", (url, d["row"]))
+            elif status not in (None, "stopped"):
+                note = f"{status}: {d.get('note') or ''}"[:800]
+                sql = "UPDATE ideas SET status = 'stuck', note = ? WHERE id = ? AND status = 'wanted'"
+                self.x(sql, (note, d["row"]))
+
+    def plans(self) -> list[dict[str, Any]]:
+        """Open plans with ideas to choose from: repo, issue_url and n."""
+        return self.q(
+            "SELECT repo, issue_url, count(*) AS n FROM ideas WHERE status = 'proposed' AND issue_url IS NOT NULL "
             "GROUP BY repo, issue_url ORDER BY min(created)"
         )
 

@@ -8,6 +8,7 @@ from lastcall.accounts import Account
 from lastcall.github import GitHub
 from lastcall.notify import Notifier
 from lastcall.quota import HOUR, QuotaError, Reading, Window
+from lastcall.recipes.improve import ImproveReport
 from lastcall.runs import Instance
 from lastcall.sandbox import Sandbox
 from lastcall.secretstore import SecretStore
@@ -235,3 +236,40 @@ def test_no_burst_while_the_judges_model_is_out_of_room(store: Store) -> None:
     svc.tick()
     assert started == []
     assert svc.plans["claude"].code == "model"
+
+
+def test_an_improvement_order_runs_the_improve_recipe(store: Store) -> None:
+    started: list[Callable[[], None]] = []
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 30, 150),
+        "chatgpt": reading("chatgpt", 30, 150),
+    }
+    audits: list[tuple[str, str]] = []
+    svc = service(store, readings, audits, Clock(), started)
+    improved: list[tuple[str, str, str]] = []
+    svc.improve = lambda repo, account, trigger: improved.append((account.id, repo, trigger))
+    store.add_order("improve", "ne0x86/a", "*", NOW)  # "all accounts" means any free one: nobody else reviews
+    svc.tick()
+    assert len(svc.running) == 1
+    for work in started:
+        work()
+    assert [(repo, trigger) for _, repo, trigger in improved] == [("ne0x86/a", "manual")] and audits == []
+
+
+def test_a_burst_builds_the_ideas_the_owner_ticked(store: Store) -> None:
+    plan = ImproveReport("ne0x86/b", "abc", "claude-code", "English")
+    plan.ideas = [{"id": "I1", "title": "A", "kind": "feature", "change": "c"}]
+    plan.verdicts, plan.plan = [{"id": "I1", "verdict": "keep"}], ["I1"]
+    plan.issue_url = "https://github.com/ne0x86/b/issues/3"
+    store.record_ideas("r0", plan)
+    store.tick_ideas(plan.issue_url, {"I1": True})
+    started: list[Callable[[], None]] = []
+    audits: list[tuple[str, str]] = []
+    readings: dict[str, Reading | Exception] = {"claude": reading("claude", 30, 20), "chatgpt": QuotaError("x")}
+    svc = service(store, readings, audits, Clock(), started)
+    improved: list[tuple[str, str]] = []
+    svc.improve = lambda repo, account, trigger: improved.append((account.id, repo))
+    svc.tick()
+    for work in started:
+        work()
+    assert improved == [("claude", "ne0x86/b")] and audits == []

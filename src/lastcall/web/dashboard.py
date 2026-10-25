@@ -85,6 +85,7 @@ class Dashboard:
     accounts: list[AccountView] = field(default_factory=list)
     prs: list[Link] = field(default_factory=list)
     decisions: list[Link] = field(default_factory=list)
+    plans: list[Link] = field(default_factory=list)
     projects: list[ProjectView] = field(default_factory=list)
     runs: list[RunView] = field(default_factory=list)
 
@@ -116,6 +117,10 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
     view.decisions = [
         Link(safe_url(d["issue_url"]), plural(lang, "web.review.decide", int(d["n"]), repo=d["repo"]))
         for d in store.decisions()
+    ]
+    view.plans = [
+        Link(safe_url(p["issue_url"]), plural(lang, "web.review.plan", int(p["n"]), repo=p["repo"]))
+        for p in store.plans()
     ]
     latest = store.latest_runs()
     view.projects = [
@@ -215,7 +220,7 @@ def run_view(run: dict[str, Any], lang: str, now: float) -> RunView:
         iso(started),
         run["repo"],
         run["account"],
-        label(lang, "web.trigger", run["trigger"]),
+        trigger(lang, run),
         label(lang, "web.run", run["status"]),
         run["status"],
         span(lang, ended - started) if ended else "",
@@ -250,6 +255,12 @@ def language_name(lang: str, language: str) -> str:
     """An account's language in the owner's language, when the catalogs know it."""
     known = LANGUAGES.get(language.strip().lower())
     return text(lang, f"web.language.{known}") if known else language
+
+
+def trigger(lang: str, run: dict[str, Any]) -> str:
+    """What started a run, and the recipe when it is not an audit: "manual · improvement"."""
+    started, recipe = label(lang, "web.trigger", run["trigger"]), run.get("recipe", "audit")
+    return started if recipe == "audit" else f"{started} · {label(lang, 'web.recipe', recipe)}"
 
 
 def label(lang: str, prefix: str, value: str) -> str:

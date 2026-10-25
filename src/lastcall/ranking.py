@@ -1,11 +1,13 @@
 """Which project an account audits next, decided without any model call (DESIGN.md, section 8).
 
-Left out: projects the same account audited in the last 7 days, projects with 2 or more lastcall pull requests the
-owner has not reviewed yet, and projects another account is auditing right now.
+Left out: projects the same account audited in the last 7 days, unless the owner ticked ideas to build there;
+projects with 2 or more lastcall pull requests the owner has not reviewed yet; and projects another account is
+working on right now.
 
 Points: never audited by this account (100), or days since its last audit (2 a day, up to 30) and new commits since
-the audited commit (3 each, up to 30); pending findings (5 each, up to 25); one unreviewed lastcall pull request
-(minus 20). The project's weight multiplies the total.
+the audited commit (3 each, up to 30); pending findings (5 each, up to 25); ideas the owner ticked (100, and 5 each
+up to 25: they go first); one unreviewed lastcall pull request (minus 20). The project's weight multiplies the
+total.
 """
 
 from __future__ import annotations
@@ -37,13 +39,14 @@ def rank(
     new_commits: Callable[[str, str], int | None],
     busy: set[str],
     now: float,
+    wanted: Callable[[str], int] = lambda repo: 0,
 ) -> list[Candidate]:
     found = []
     for p in projects:
         if not p.active or p.weight <= 0 or p.repo in busy:
             continue
-        last = last_run(p.repo)
-        if last and now - float(last["started"]) < RECENT_DAYS * DAY:
+        last, chosen = last_run(p.repo), wanted(p.repo)
+        if last and now - float(last["started"]) < RECENT_DAYS * DAY and not chosen:
             continue
         unreviewed = open_prs(p.repo)
         if unreviewed >= MAX_OPEN_PRS:
@@ -64,6 +67,9 @@ def rank(
         if waiting:
             score += min(25, 5 * waiting)
             reasons.append(f"{waiting} pending findings")
+        if chosen:
+            score += 100 + min(25, 5 * chosen)
+            reasons.append(f"{chosen} ideas the owner chose")
         if unreviewed == 1:
             score -= 20
             reasons.append("1 lastcall pull request to review")

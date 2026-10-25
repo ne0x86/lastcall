@@ -613,3 +613,39 @@ def test_the_dashboard_shows_the_window_of_a_model(web: Web) -> None:
     page = web.client.get("/", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert "Ventana semanal de Opus" in page
     assert "Sin ráfaga: la auditoría necesita Opus, y su propia ventana está al 93\u00a0%." in page
+
+
+def test_improve_now(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_account("claude", "claude-code")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'formaction="/projects/acme/api/improve">Improve now</button>' in page
+    assert "Improve now: lastcall proposes small improvements in an issue with checkboxes" in page
+    csrf = web.csrf()
+    wrong = web.client.post("/projects/acme/api/improve", data={"csrf": csrf, "account": "nobody"}, headers=SITE)
+    assert wrong.status_code == 400
+    response = web.client.post("/projects/acme/api/improve", data={"csrf": csrf, "account": "*"}, headers=SITE)
+    assert response.headers["Location"] == "/projects?done=improve"
+    assert [(o["kind"], o["repo"], o["account"]) for o in web.store.orders()] == [("improve", "acme/api", None)]
+    page = web.client.get("/projects?done=improve").get_data(as_text=True)
+    assert "Improvement queued. It starts within a minute" in page and "Improvement queued: it starts" in page
+    web.store.start_order(web.store.orders()[0]["id"], NOW)
+    web.store.start_run("r1", "acme/api", "claude", "manual", recipe="improve")
+    assert "lastcall is improving this project." in web.client.get("/projects").get_data(as_text=True)
+
+
+def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:
+    from lastcall.recipes.improve import ImproveReport
+
+    web.set_up()
+    plan = ImproveReport("ne0x86/demo", "abc", "claude-code", "English")
+    plan.ideas = [{"id": f"I{n}", "title": "A", "kind": "feature", "change": "c"} for n in (1, 2)]
+    plan.verdicts = [{"id": "I1", "verdict": "keep"}, {"id": "I2", "verdict": "keep"}]
+    plan.plan, plan.issue_url = ["I1", "I2"], "https://github.com/ne0x86/demo/issues/3"
+    web.store.record_ideas("r1", plan)
+    web.store.start_run("r1", "ne0x86/demo", "claude", "manual", recipe="improve")
+    page = web.client.get("/", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Ideas para elegir" in page
+    assert '<a href="https://github.com/ne0x86/demo/issues/3">2 ideas para ne0x86/demo</a>' in page
+    assert "manual · mejora" in page

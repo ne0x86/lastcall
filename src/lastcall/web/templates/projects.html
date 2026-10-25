@@ -46,10 +46,8 @@
         </div>
         <button class="secondary">{{ t("web.project.save") }}</button>
       </form>
-      {%- if p.running %}
-      <p class="working">{{ t("web.project.running") }}</p>
-      {%- elif p.queued %}
-      <p class="working">{{ t("web.project.queued") }}</p>
+      {%- if p.busy %}
+      <p class="working">{{ p.busy }}</p>
       {%- elif v.accounts|length > 1 %}
       <form method="post" action="{{ url_for('audit_now', owner=p.owner, name=p.name) }}" class="audit">
         <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -59,7 +57,9 @@
             {%- for o in v.accounts %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
           </select>
           <button>{{ t("web.project.audit") }}</button>
+          <button class="secondary" formaction="{{ url_for('improve_now', owner=p.owner, name=p.name) }}">{{ t("web.project.improve") }}</button>
         </div>
+        <p class="muted">{{ t("web.project.improve_hint") }}</p>
       </form>
       {%- else %}
       <p class="muted">{{ t("web.project.no_accounts") }}</p>

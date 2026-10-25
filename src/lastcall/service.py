@@ -6,10 +6,11 @@ Every minute it ticks:
   account's readings and plans whether to burst;
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
 - every 6 hours it refreshes the suggestions for the installed repositories;
-- the owner's orders ("audit this project now", from the web UI) start on a free account, or on all of them
-  together (fan-out);
+- the owner's orders ("audit this project now" or "improve it now", from the web UI) start on a free account; an
+  audit can start on all of them together (fan-out);
 - with fan-out on, accounts that burst at the same time review one project together, with one judge;
-- each bursting account that is free starts a full audit of the project the ranking puts first. One run per account
+- each bursting account that is free starts a full audit of the project the ranking puts first, or builds the
+  ideas its owner ticked in an improvement plan, which go first. One run per account
   at a time, and never the same project by two accounts at once. Inside a run, a full 5-hour window makes the run
   wait for its reset; the reserve or any paid usage stops it. An account does not burst while the window of a model
   that the audit needs, such as Claude's weekly window for Opus, is at the reserve.
@@ -31,7 +32,7 @@ from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.ranking import rank
-from lastcall.runs import Instance, Options, audit_models, audit_repo
+from lastcall.runs import Instance, Options, audit_models, audit_repo, improve_repo
 from lastcall.sandbox import SandboxError
 from lastcall.store import AccountRow
 from lastcall.sync import sync
@@ -51,6 +52,7 @@ class Service:
         *,
         read: Callable[[Account, float], Reading] | None = None,
         audit: Callable[[str, AccountRow, str, list[AccountRow]], Any] | None = None,
+        improve: Callable[[str, AccountRow, str], Any] | None = None,
         start: Callable[[Callable[[], None]], None] | None = None,
         clock: Callable[[], float] = time.time,
         log: Log = print,
@@ -58,6 +60,7 @@ class Service:
         self.inst, self.clock, self.log = inst, clock, log
         self.read = read or (lambda account, now: read_quota(account, inst.box, now))
         self.audit = audit or self._audit
+        self.improve = improve or self._improve
         self.start = start or (lambda work: threading.Thread(target=work, daemon=True).start())
         self.running: dict[str, str] = {}  # account id -> repository
         self.plans: dict[str, Plan] = {}
@@ -107,7 +110,7 @@ class Service:
                 continue
             repo = self.pick(account, now)
             if repo:
-                self.launch(account, repo)
+                self.launch(account, repo, recipe=self.recipe(repo))
 
     # quota
 
@@ -170,10 +173,11 @@ class Service:
             if not free:
                 continue
             account = max(free, key=self.leftover)
-            crew = [a for a in free if a is not account] if order["account"] == "*" else []
+            recipe = "improve" if order["kind"] == "improve" else "audit"
+            crew = [a for a in free if a is not account] if order["account"] == "*" and recipe == "audit" else []
             store.start_order(order["id"], now)
-            self.log(f"{account.id}: audit of {order['repo']} ordered by the owner")
-            self.launch(account, order["repo"], "manual", crew)
+            self.log(f"{account.id}: {recipe} of {order['repo']} ordered by the owner")
+            self.launch(account, order["repo"], "manual", crew, recipe)
 
     def leftover(self, account: AccountRow) -> float:
         """The quota an account has left before its reset; -1 when it has no plan yet."""
@@ -193,7 +197,13 @@ class Service:
         lead = max(bursting, key=self.leftover)
         repo = self.pick(lead, now)
         if repo:
-            self.launch(lead, repo, "burst", [a for a in bursting if a is not lead])
+            recipe = self.recipe(repo)
+            crew = [a for a in bursting if a is not lead] if recipe == "audit" else []
+            self.launch(lead, repo, "burst", crew, recipe)
+
+    def recipe(self, repo: str) -> str:
+        """What a burst does with a project: build the ideas its owner ticked, or else audit it."""
+        return "improve" if self.inst.store.wanted_count(repo) else "audit"
 
     # projects
 
@@ -207,6 +217,7 @@ class Service:
             open_prs=lambda repo: len(store.open_prs(repo)),
             pending=store.pending_count,
             new_commits=self.new_commits,
+            wanted=store.wanted_count,
             busy=busy,
             now=now,
         )
@@ -225,7 +236,14 @@ class Service:
         except (GitHubError, OSError, ValueError):
             return None
 
-    def launch(self, account: AccountRow, repo: str, trigger: str = "burst", crew: Sequence[AccountRow] = ()) -> None:
+    def launch(
+        self,
+        account: AccountRow,
+        repo: str,
+        trigger: str = "burst",
+        crew: Sequence[AccountRow] = (),
+        recipe: str = "audit",
+    ) -> None:
         """Start a run on `account`, with `crew` reviewing too. They all stay busy until it ends."""
         members = [account, *crew]
         with self.lock:
@@ -234,7 +252,10 @@ class Service:
 
         def work() -> None:
             try:
-                self.audit(repo, account, trigger, list(crew))
+                if recipe == "improve":
+                    self.improve(repo, account, trigger)
+                else:
+                    self.audit(repo, account, trigger, list(crew))
             except Exception:
                 self.log(f"{account.id} on {repo}: {traceback.format_exc()}")
             finally:
@@ -244,22 +265,35 @@ class Service:
 
         self.start(work)
 
-    def _audit(self, repo: str, account: AccountRow, trigger: str, crew: list[AccountRow]) -> Any:
+    def options(self, repo: str, account: AccountRow, trigger: str) -> Options:
         project = self.inst.store.project(repo)
-        opts = Options(
+        return Options(
             language=(project.language if project and project.language else None) or account.language,
             max_prs=project.max_prs if project else 3,
             policy=SpendPolicy(reserve_pct=account.reserve_pct),
             wait=True,
             trigger=trigger,
         )
+
+    def _audit(self, repo: str, account: AccountRow, trigger: str, crew: list[AccountRow]) -> Any:
         prefix = f"[{account.id} {repo}]"
         return audit_repo(
             self.inst,
             repo,
             Account(account.id, account.engine),
-            opts,
+            self.options(repo, account, trigger),
             on_step=lambda s: self.log(f"{prefix} {s.role}: {'ok' if s.ok else 'failed'} in {s.seconds:g} s"),
             log=lambda message: self.log(f"{prefix} {message}"),
             peers=[(Account(c.id, c.engine), SpendPolicy(reserve_pct=c.reserve_pct)) for c in crew],
+        )
+
+    def _improve(self, repo: str, account: AccountRow, trigger: str) -> Any:
+        prefix = f"[{account.id} {repo}]"
+        return improve_repo(
+            self.inst,
+            repo,
+            Account(account.id, account.engine),
+            self.options(repo, account, trigger),
+            on_step=lambda s: self.log(f"{prefix} {s.role}: {'ok' if s.ok else 'failed'} in {s.seconds:g} s"),
+            log=lambda message: self.log(f"{prefix} {message}"),
         )

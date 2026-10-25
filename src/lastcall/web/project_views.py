@@ -14,6 +14,8 @@ from lastcall.web.dashboard import ago, language_name, project_view
 WEIGHTS = (("0.5", "low"), ("1", "normal"), ("2", "high"), ("3", "top"))
 LANGUAGES = ("English", "Spanish")
 MAX_PRS = range(1, 6)
+QUEUED = ("web.project.queued", "web.project.queued.improve")  # by whether the order is an improvement
+RUNNING = ("web.project.running", "web.project.running.improve")
 
 
 @dataclass(frozen=True)
@@ -35,8 +37,7 @@ class ProjectCard:
     weights: list[Option]
     languages: list[Option]
     max_prs: list[Option]
-    queued: bool
-    running: bool
+    busy: str  # what it waits for or what runs on it, in words; "" when nothing does
 
 
 @dataclass(frozen=True)
@@ -63,14 +64,11 @@ class ProjectsPage:
 
 def build(store: Store, lang: str, now: float, install_url: str, reading: bool) -> ProjectsPage:
     projects = store.projects()
-    queued = {o["repo"].lower() for o in store.orders()}
-    running = {r["repo"].lower() for r in store.running()}
+    busy = {o["repo"].lower(): text(lang, QUEUED[o["kind"] == "improve"]) for o in store.orders()}
+    busy |= {r["repo"].lower(): text(lang, RUNNING[r["recipe"] == "improve"]) for r in store.running()}
     latest = store.latest_runs()
     page = ProjectsPage(bool(install_url), install_url, refreshed(store, lang, now, reading))
-    page.projects = [
-        card(store, p, lang, now, latest.get(p.repo), p.repo.lower() in queued, p.repo.lower() in running)
-        for p in projects
-    ]
+    page.projects = [card(store, p, lang, now, latest.get(p.repo), busy.get(p.repo.lower(), "")) for p in projects]
     enabled = store.accounts(enabled_only=True)
     page.accounts = [Option("", text(lang, "web.project.any"), True)]
     if len(enabled) > 1:
@@ -85,9 +83,7 @@ def build(store: Store, lang: str, now: float, install_url: str, reading: bool) 
     return page
 
 
-def card(
-    store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any] | None, queued: bool, running: bool
-) -> ProjectCard:
+def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any] | None, busy: str) -> ProjectCard:
     active = p.active and p.weight > 0
     view = project_view(store, p.repo, active, p.weight, lang, now, last)
     last_run = text(lang, "web.project.last", when=view.last)
@@ -119,8 +115,7 @@ def card(
         weights,
         languages,
         max_prs,
-        queued,
-        running,
+        busy,
     )
 
 
