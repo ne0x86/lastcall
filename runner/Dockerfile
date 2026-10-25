@@ -1,7 +1,7 @@
 # Runner: one ephemeral container per step, started by the supervisor. It holds the official agent CLIs at pinned
 # versions, the scanners of the context pack, Python and Node.js for the projects' tests, and read-only tools. No
 # Docker socket and no keys: only the workspace, /ctx and the account's credential volume are mounted.
-FROM node:22-bookworm-slim AS node
+FROM node:26-bookworm-slim AS node
 FROM zricethezav/gitleaks:v8.30.1 AS gitleaks
 FROM ghcr.io/google/osv-scanner:v2.7.0 AS osv
 FROM hadolint/hadolint:v2.15.1 AS hadolint
