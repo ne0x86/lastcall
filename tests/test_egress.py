@@ -14,8 +14,8 @@ def test_patterns() -> None:
 
 
 def test_default_filter_matches_the_builtin_engines() -> None:
-    """egress/filter is the allowlist for the built-in engines plus PyPI and npm. Regenerate it when they change:
-    python -c "from lastcall import egress, engines; print(egress.render([f() for f in engines.BUILTIN.values()],
-    ['pypi', 'npm']), end='')" > egress/filter"""
-    expected = egress.render([make() for make in BUILTIN.values()], ["pypi", "npm"])
+    """egress/filter is the allowlist for the built-in engines and every package registry. Regenerate it when they
+    change: python -c "from lastcall import egress, engines; print(egress.render([f() for f in
+    engines.BUILTIN.values()], egress.REGISTRIES), end='')" > egress/filter"""
+    expected = egress.render([make() for make in BUILTIN.values()], egress.REGISTRIES)
     assert (Path(__file__).parents[1] / "egress" / "filter").read_text(encoding="utf-8") == expected

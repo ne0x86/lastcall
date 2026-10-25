@@ -127,6 +127,24 @@ docker compose run --rm cli pause                                               
 
 </details>
 
+## ⚙️ Your project's settings
+
+lastcall verifies every change by running your tests again in a clean container. It finds the environment on its
+own for Python and Node.js, and for Go (`go.mod`), Rust (`Cargo.toml`) and Java with Maven (`pom.xml`), which run in
+their official images. A devcontainer with an `image` works too. For anything else, or to change what it found, add
+a `.lastcall.yml` to the root of your repository:
+
+```yaml
+test: go test ./...              # the command that runs your tests
+environment:
+  image: golang:1.23             # where the setup and the tests run
+  setup: go mod download         # before the tests: a command, or a list of them
+exclude: [vendor/, testdata/]    # paths the audit leaves out
+focus: The HTTP handlers in internal/api matter most.
+```
+
+Every key is optional. The suggestions on the Projects page say which repositories bring their own environment.
+
 ## ⚖️ Provider terms and responsible use
 
 Subscription plans are meant for each vendor's own tools. lastcall follows these rules:
@@ -149,7 +167,7 @@ advice.
   - Setup from the browser, dashboard, projects and accounts, in English and Spanish.
   - Notifications: Telegram, ntfy, Discord, email and more.
 - 🔜 **v0.3.**
-  - `.lastcall.yml` in your repositories, and devcontainer environments for any language.
+  - ✅ `.lastcall.yml` in your repositories, devcontainer images, and Go, Rust and Java out of the box.
   - Fan-out: Claude and Codex audit the same project, and one judge keeps what holds.
   - The `improve` recipe; merge on approve; watch after the merge and revert.
 - 🔭 **v0.4.**

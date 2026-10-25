@@ -188,3 +188,37 @@ def test_a_closed_gate_stops_delivery(run_dir: Path) -> None:
 def test_slug() -> None:
     assert slug("Códigos de salida fieles: diagnóstico y publicar") == "codigos-de-salida-fieles-diagnostico-y-p"
     assert slug("!!!") == "change"
+
+
+def test_checks_run_in_the_projects_environment(run_dir: Path) -> None:
+    from lastcall.environment import Environment
+
+    prompts: list[str] = []
+    commands: list[str] = []
+    edit = implementer("def f(x):\n    return x[0] if x else None\n", output())
+
+    def step(engine: Engine, spec: StepSpec, workspace: Path) -> StepResult:
+        prompts.append(spec.prompt)
+        return edit(engine, spec, workspace)
+
+    def verify(work: Path, command: str) -> tuple[bool, str]:
+        commands.append(command)
+        return True, "ok  \texample.com/demo\t0.01s"
+
+    forge = FakeForge()
+    env = Environment("golang:1.23", "go mod download", "go test ./...", "go.mod")
+    rep = deliver(
+        report=report(),
+        run_dir=run_dir,
+        engine=Scripted({}),
+        tiers=TIERS,
+        run_step=step,
+        check_quota=always,
+        verify=verify,
+        forge=forge,
+        environment=env,
+    )
+    assert rep.deliveries[0]["status"] == "opened"
+    assert commands == ["go test ./..."]  # the project's command, not lastcall's guess for Python
+    assert "the image `golang:1.23` (go.mod), which this container does not have" in prompts[0]
+    assert "tests run again in a clean golang:1.23 container" in forge.prs[0][2]

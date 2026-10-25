@@ -1,9 +1,10 @@
 """The runner supervisor: the only component with the Docker socket. See DESIGN.md, section 5.
 
-It listens on a Unix socket and runs each request in a fresh runner container. A request names an engine (never an
-image), a workspace and the files the step needs. The supervisor validates every path and always applies the same
-isolation: unprivileged user, no capabilities, resource limits, and the internal network whose only way out is the
-egress proxy.
+It listens on a Unix socket and runs each request in a fresh runner container. A request names an engine, a workspace
+and the files the step needs. The supervisor validates every path and always applies the same isolation:
+unprivileged user, no capabilities, resource limits, and the internal network whose only way out is the egress
+proxy. A step that verifies a change may name a project's environment image instead of the runner's; such a step
+never gets an account volume.
 
 Data volume layout: `runs/` belongs to the service (uid 1000, like the runners) and holds workspaces and shared
 files; `steps/<id>/ctx/` is written here for one step and mounted read-only at /ctx.
@@ -29,6 +30,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from lastcall.environment import IMAGE
 from lastcall.process import stream
 
 log = logging.getLogger("lastcall.supervisor")
@@ -88,6 +90,7 @@ class StepRequest:
     account_volume: str | None
     home: str | None
     timeout: float
+    image: str | None = None  # a project's environment, instead of the engine's runner image
 
     @classmethod
     def parse(cls, body: Mapping[str, Any], config: Config) -> StepRequest:
@@ -128,7 +131,15 @@ class StepRequest:
         timeout = body.get("timeout", 45 * 60.0)
         if isinstance(timeout, bool) or not isinstance(timeout, int | float) or not 0 < timeout <= MAX_TIMEOUT:
             raise Invalid(f"timeout must be between 0 and {MAX_TIMEOUT:g} s")
-        return cls(engine, tuple(argv), stdin, env, files, copies, workspace, writable, volume, home, float(timeout))
+        image = body.get("image")
+        if image is not None:
+            if not isinstance(image, str) or len(image) > 255 or not IMAGE.fullmatch(image):
+                raise Invalid(f"not an image reference: {image!r}")
+            if volume is not None:
+                raise Invalid("an environment image never gets an account volume")
+        return cls(
+            engine, tuple(argv), stdin, env, files, copies, workspace, writable, volume, home, float(timeout), image
+        )
 
 
 def _strings(value: object, what: str) -> dict[str, str]:
@@ -177,7 +188,7 @@ def docker_argv(req: StepRequest, step_id: str, config: Config) -> list[str]:
     argv += ["--mount", _volume(config.data_volume, "/ctx", f"steps/{step_id}/ctx", readonly=True)]
     if req.account_volume and req.home:
         argv += ["--mount", f"type=volume,src={req.account_volume},dst={req.home}"]
-    return [*argv, "-w", "/work", config.images[req.engine], *req.argv]
+    return [*argv, "-w", "/work", req.image or config.images[req.engine], *req.argv]
 
 
 def container_name(step_id: str) -> str:
@@ -252,8 +263,9 @@ class Handler(BaseHTTPRequestHandler):
         final = run_step(req, self.config, send)
         send(final)
         log.info(
-            "step engine=%s workspace=%s writable=%s exit=%s timed_out=%s seconds=%.0f",
+            "step engine=%s image=%s workspace=%s writable=%s exit=%s timed_out=%s seconds=%.0f",
             req.engine,
+            req.image or "runner",
             req.workspace,
             req.writable,
             final["exit"],

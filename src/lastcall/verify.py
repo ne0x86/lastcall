@@ -102,6 +102,8 @@ def summary_line(output: str) -> str:
     return next((line for line in reversed(lines) if SUMMARY.search(line)), lines[-1] if lines else "")
 
 
-def describe(kind: Kind, last_line: str, language: str = "English") -> str:
-    """One line for the pull request, in the run's language: what the clean-container check proved."""
+def describe(kind: Kind, last_line: str, language: str = "English", image: str | None = None) -> str:
+    """One line for the pull request, in the run's language: what the clean-container check proved, and where."""
+    if image and kind == "tests":
+        return text(language, "check.tests.image", line=last_line or "passed", image=image)
     return text(language, f"check.{kind}", line=last_line or "passed")

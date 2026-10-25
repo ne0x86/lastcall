@@ -109,3 +109,23 @@ def test_implementer_gets_a_writable_workspace(config: Config) -> None:
 def test_step_without_account(config: Config) -> None:
     argv = docker_argv(StepRequest.parse(body(account_volume=None, home=None), config), "abc123", config)
     assert len(values(argv, "--mount")) == 2
+
+
+def test_a_check_may_run_in_the_projects_image(config: Config) -> None:
+    req = StepRequest.parse(body(image="golang:1.23", account_volume=None, home=None, env={}), config)
+    argv = docker_argv(req, "abc", config)
+    assert argv[argv.index("-w") + 2] == "golang:1.23"  # the image comes right after the working directory
+    assert values(argv, "--user") == ["1000:1000"] and "--cap-drop" in argv  # the same isolation as any step
+    runner = docker_argv(StepRequest.parse(body(), config), "abc", config)
+    assert runner[runner.index("-w") + 2] == "lastcall-runner:dev"
+
+
+@pytest.mark.parametrize("image", ["--privileged", "Golang:1", "golang:1 sh", "a/../b", "", 7])
+def test_bad_image_references(config: Config, image: object) -> None:
+    with pytest.raises(Invalid, match="not an image reference"):
+        StepRequest.parse(body(image=image, account_volume=None, home=None), config)
+
+
+def test_an_environment_image_never_gets_an_account(config: Config) -> None:
+    with pytest.raises(Invalid, match="never gets an account volume"):
+        StepRequest.parse(body(image="golang:1.23"), config)

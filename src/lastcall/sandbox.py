@@ -76,8 +76,10 @@ class Sandbox:
         home: str | None = None,
         writable: bool = False,
         timeout: float = STEP_TIMEOUT,
+        image: str | None = None,
     ) -> Outcome:
-        """Run any invocation in the runner image of `engine` and pass on each line it prints."""
+        """Run any invocation in the runner image of `engine`, or in a project's environment `image`, and pass on
+        each line it prints."""
         body = {
             "engine": engine,
             "argv": list(inv.argv),
@@ -90,6 +92,7 @@ class Sandbox:
             "account_volume": account_volume,
             "home": home,
             "timeout": timeout,
+            "image": image,
         }
         final: dict[str, Any] = {}
         conn = _UnixConnection(str(self.socket_path), timeout + 120)

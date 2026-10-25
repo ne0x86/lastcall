@@ -420,22 +420,34 @@ the owner ticked in earlier plans.
 
 ## 10. Project environments
 
-An implementer and the verify step need the project's toolchain to run the tests. lastcall resolves the environment
-in this order:
+The verify step needs the project's toolchain to run the tests. lastcall (`lastcall.environment`) resolves the
+environment in this order:
 
-1. `environment.image` and `environment.setup` in `.lastcall.yml`;
-2. the repository's devcontainer (`.devcontainer/devcontainer.json`), image or Dockerfile;
-3. a default image per detected language (v0.1: Python and Node.js).
+1. `test`, `environment.image` and `environment.setup` in `.lastcall.yml`;
+2. the repository's devcontainer (`.devcontainer/devcontainer.json`): its image and its create commands. A
+   devcontainer that builds its own image from a Dockerfile, and devcontainer features, are not supported yet: the
+   run says so and falls back to the next source;
+3. the project's files: Go (`go.mod`, `golang:<version>`), Rust (`Cargo.toml`, `rust:<rust-version>`) and Java with
+   Maven (`pom.xml`, `maven:3-eclipse-temurin-<release>`) get their official image, their dependencies and their
+   test command;
+4. Python and Node.js run in the runner itself, with the commands that `lastcall.verify` detects (pytest,
+   `npm test`…).
 
-lastcall builds the environment once and caches it per project and lockfile hash. Each phase has different network
-rights:
+A project without tests gets a build or compile check instead, and the pull request says so.
 
-- **setup**: the package registries of the project's ecosystems;
-- **agent**: the model API and the package registries;
-- **verify**: the package registries only.
+The setup and the tests run in a fresh container of that image with the isolation of any step: user 1000, no
+capabilities, the sandbox network, whose way out allows the package registries (PyPI, npm, Go, crates.io, Maven
+Central, RubyGems, NuGet), and never an account's credentials: the supervisor refuses an environment image with an
+account volume. Tools that expect a writable home get one in /tmp, and Maven gets the proxy in its own settings.
 
-The test command comes from `.lastcall.yml`, or lastcall detects it (pytest, `npm test`…). A project without tests
-gets a build or compile check instead, and the pull request says so.
+The agents still run in the runner image, which has no toolchain for other languages. The implementer's prompt says
+so: it writes the change and its tests, and lastcall runs them in the project's environment. The pull request's
+footer says which image ran them.
+
+`.lastcall.yml` also takes `exclude` (paths the context pack leaves out) and `focus` (what matters most to the
+owner, which every step reads). A `.lastcall.yml` that lastcall cannot read stops the run before any spending, and
+the run says why. Not yet: caching an environment between runs, and different network rights for setup and
+verify.
 
 ## 11. Delivery, approval and after the merge
 
@@ -459,6 +471,7 @@ gets a build or compile check instead, and the pull request says so.
 | Exfiltration of code or secrets | Egress allowlist. Logs are redacted. Scanners report secrets without their values. |
 | An agent lies about the tests | lastcall runs them again in a clean container and reads the exit code itself. |
 | A bug in lastcall starts a dangerous container | Only the supervisor has the Docker socket, and it accepts a narrow spec. |
+| A project's environment image is hostile | The owner's repository chooses it, and it runs with the isolation of any step: user 1000, no capabilities, the sandbox network, the change's copy as its only writable mount, and never an account volume or the Docker socket. |
 | Subscription credentials leak | lastcall never reads them: they stay in the CLI's own storage, in a volume. |
 | An agent copies its CLI credentials into its output | Every text lastcall publishes (pull request, issue, comment) goes through the secret scanner first, and a hit blocks it. |
 | Unexpected bills | Hard stop when paid usage is active, and a reserve per account. |

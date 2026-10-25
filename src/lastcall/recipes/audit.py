@@ -23,6 +23,7 @@ from typing import Any, Protocol
 
 from lastcall import git, i18n
 from lastcall.engines.base import Engine, StepResult, StepSpec
+from lastcall.environment import RUNNER, Environment
 from lastcall.pack import Pack
 from lastcall.quota import Gate, Reading
 from lastcall.recipes import front_matter, prompt, render, schema
@@ -95,6 +96,7 @@ class AuditReport:
     summary: str = ""
     deliveries: list[dict[str, Any]] = field(default_factory=list)  # one per planned pull request, once tried
     issue_url: str | None = None
+    environment: str = ""  # where the checks run: an image, or the runner, and what decided it
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=1)
@@ -218,9 +220,10 @@ def deliver(
     forge: Forge,
     max_prs: int | None = None,
     on_step: Callable[[StepRecord], None] | None = None,
+    environment: Environment = RUNNER,
 ) -> AuditReport:
-    """Second half: implement each planned pull request, verify it outside the agent, and open it. Pull requests
-    already opened for this report are not opened again."""
+    """Second half: implement each planned pull request, verify it outside the agent, in the project's environment,
+    and open it. Pull requests already opened for this report are not opened again."""
     steps = _Steps(report, engine, tiers, run_step, check_quota, run_dir / "shared.md", on_step)
     by_id = {f["id"]: f for f in report.findings}
     verdict = {v["id"]: v for v in report.verdicts}
@@ -234,8 +237,8 @@ def deliver(
         work = run_dir / f"pr{n}"
         git.remove(work)
         git.branch_from(run_dir / "clone", work, branch)
-        command, _ = check_command(work)
-        with_tests, _ = check_command(work, assume_tests=True)  # what verification runs once tests exist
+        command = environment.test or check_command(work)[0]
+        with_tests = environment.test or check_command(work, assume_tests=True)[0]  # once tests exist
         covered = [dict(by_id[i], judge=verdict.get(i)) for i in pr["ids"]]
         text = render(
             prompt("implementer.md"),
@@ -245,8 +248,7 @@ def deliver(
             risk=pr["risk"],
             plan=pr["plan"],
             findings=json.dumps(covered, ensure_ascii=False, indent=1),
-            test_command=command,
-            verify_command=with_tests,
+            check=check_text(environment, command, with_tests),
             language=report.language,
         )
         record: dict[str, Any] = {"title": pr["title"], "ids": pr["ids"], "branch": branch}
@@ -264,6 +266,8 @@ def deliver(
             record |= {"status": "unchanged", "note": "the implementer reported done but changed nothing"}
             continue
         command, kind = check_command(work)  # the implementer may have added the project's first tests
+        if environment.test:
+            command, kind = environment.test, "tests"
         passed, tail = verify(work, command)
         last = summary_line(tail)
         if not passed:
@@ -278,7 +282,7 @@ def deliver(
         message = f"{title}\n\n{out.get('summary') or ''}\n\nFindings: {', '.join(pr['ids'])}"
         git.commit(work, message, forge.author)
         forge.push(work, branch)
-        checked = describe(kind, last, report.language)
+        checked = describe(kind, last, report.language, environment.image)
         footer = "\n\n---\n<sub>" + pr_footer(report, pr["ids"], model, effort, checked) + "</sub>"
         record |= {"status": "opened", "url": forge.open_pull_request(branch, title, body + footer), "check": checked}
 
@@ -288,6 +292,25 @@ def deliver(
         if not scan(body):
             report.issue_url = forge.open_issue(issue_title(report, len(decide)), body)
     return report
+
+
+def check_text(environment: Environment, command: str, with_tests: str) -> str:
+    """Step 4 of the implementer's prompt: how its change is checked."""
+    if environment.image is None:
+        return (
+            f"Run the whole check with: `{command}`. It must pass. If something already failed before your change, "
+            "do not fix it: say so in `pending`. Then lastcall checks your change again, in a clean container "
+            "where only the project's declared dependencies are installed. If you add tests, it runs them with "
+            f"`{with_tests}`: make sure they pass exactly that way, and do not rely on anything you installed by "
+            "hand."
+        )
+    return (
+        f"The project's checks run in its own environment, the image `{environment.image}` "
+        f"({environment.source}), which this container does not have: you cannot run them here. When you finish, "
+        f"lastcall prepares that environment and runs `{command}` in a clean container. Write the change and its "
+        "tests so that they pass that way: read the existing tests and follow them closely. In `tests.result`, "
+        f"write that the tests run in {environment.image} after you finish."
+    )
 
 
 def pr_footer(report: AuditReport, ids: Sequence[str], model: str, effort: str | None, checked: str) -> str:

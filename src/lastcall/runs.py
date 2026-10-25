@@ -13,9 +13,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lastcall import engines, git, pack, scanners
+from lastcall import engines, environment, git, pack, scanners
 from lastcall.accounts import Account, read_quota
 from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
+from lastcall.environment import TOOL_ENV, Environment
 from lastcall.github import GitHub, GitHubForge
 from lastcall.quota import Gate, QuotaError, Reading, SpendPolicy, gate
 from lastcall.recipes.audit import (
@@ -87,8 +88,12 @@ def agent_hooks(
     return run_step, check_quota
 
 
-def verifier(box: Sandbox, engine: str) -> Verifier:
-    """Runs the check command on a clean copy of the change, in the runner image, outside the agent."""
+FOCUS = "What matters most to the owner (.lastcall.yml)"
+
+
+def verifier(box: Sandbox, engine: str, env: Environment = environment.RUNNER) -> Verifier:
+    """Runs the check command on a clean copy of the change, outside the agent: in the project's environment image
+    after its setup, or in the runner image."""
 
     def verify(work: Path, command: str) -> tuple[bool, str]:
         copy = work.with_name(f"{work.name}-verify")
@@ -104,8 +109,9 @@ def verifier(box: Sandbox, engine: str) -> Verifier:
             tail.append(line)
             del tail[:-40]
 
+        invocation = Invocation(("sh", "-c", env.script(command)), env=TOOL_ENV if env.image else {})
         outcome = box.call(
-            engine, Invocation(("sh", "-c", command)), keep, workspace=copy, writable=True, timeout=VERIFY_TIMEOUT
+            engine, invocation, keep, workspace=copy, writable=True, timeout=VERIFY_TIMEOUT, image=env.image
         )
         output = "\n".join([*tail, outcome.stderr_tail.strip()]).strip()
         return outcome.exit_code == 0 and not outcome.timed_out, output
@@ -136,9 +142,14 @@ def audit_repo(
     inst.store.start_run(run_dir.name, repo, account.id, opts.trigger)
     try:
         git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
+        own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
+        env = environment.detect(run_dir / "clone", own)
+        log(f"Checks of {repo} run in {env.name} ({env.source})" + (f"; {env.note}" if env.note else ""))
         log(f"Scanning {repo}: gitleaks, osv-scanner, semgrep and hadolint, in the sandbox.")
         found = scanners.scan(inst.box, account.engine, run_dir / "clone")
-        context = pack.build(run_dir / "clone", run_dir, repo, extra=found)
+        if own and own.focus:
+            found[FOCUS] = own.focus
+        context = pack.build(run_dir / "clone", run_dir, repo, extra=found, exclude=own.exclude if own else ())
         log(
             f"Auditing {repo} @ {context.sha} with {account.id} ({account.engine}): {context.files} files, "
             f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}"
@@ -156,6 +167,7 @@ def audit_repo(
             earlier=inst.store.earlier(repo),
             on_step=on_step,
         )
+        report.environment = f"{env.name} ({env.source})"
         inst.store.record_findings(run_dir.name, report)
         save(run_dir, report)
         if not opts.report_only and report.status == "ok" and report.prs:
@@ -187,6 +199,8 @@ def deliver_report(
     planned = report.prs[:max_prs] if max_prs else report.prs
     log(f"Delivering {len(planned)} pull request(s) for {report.repo} as {forge.author[0]}.")
     run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+    clone = run_dir / "clone"
+    env = environment.detect(clone, environment.settings(clone)) if clone.is_dir() else environment.RUNNER
     opened = {d.get("url") for d in report.deliveries if d.get("status") == "opened"}
     issue = report.issue_url
     deliver(
@@ -196,10 +210,11 @@ def deliver_report(
         tiers=defaults(account.engine),
         run_step=run_step,
         check_quota=check_quota,
-        verify=verifier(inst.box, account.engine),
+        verify=verifier(inst.box, account.engine, env),
         forge=forge,
         max_prs=max_prs,
         on_step=on_step,
+        environment=env,
     )
     inst.store.record_deliveries(run_dir.name, report)
     save(run_dir, report)
