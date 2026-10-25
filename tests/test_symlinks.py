@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from lastcall import environment, pack, verify
+from lastcall import environment, git, pack, verify
 from lastcall.environment import RUNNER, ConfigError
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
@@ -42,6 +42,21 @@ def commit(root: Path) -> None:
     )
     for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "First version"]):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, env=env)
+
+
+def test_repo_file(repo: Path, host: Path) -> None:
+    (repo / "docs").mkdir()
+    (repo / "docs" / "a.txt").write_text("a", encoding="utf-8")
+    os.symlink("docs/a.txt", repo / "inner.txt")  # a link inside the repository is fine
+    os.symlink(host, repo / "out.txt")
+    os.symlink(host.parent, repo / "folder")
+    os.symlink("gone.txt", repo / "dangling.txt")
+    assert git.repo_file(repo, "docs/a.txt") == repo / "docs" / "a.txt"
+    assert git.repo_file(repo, "inner.txt") == repo / "inner.txt"
+    assert git.repo_file(repo, "out.txt") is None
+    assert git.repo_file(repo, "folder/github-app") is None  # a file under a folder linked out
+    assert git.repo_file(repo, "dangling.txt") is None
+    assert git.repo_file(repo, "missing.txt") is None
 
 
 def test_a_link_out_of_the_repository_neither_fails_the_pack_nor_enters_it(

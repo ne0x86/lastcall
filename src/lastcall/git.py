@@ -47,7 +47,15 @@ def snapshot(repo: Path, dest: Path) -> None:
     data = subprocess.check_output(["git", "-C", str(repo), "archive", "HEAD"])
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        archive.extractall(dest, filter="data")
+        archive.extractall(dest, filter=_inside)
+
+
+def _inside(member: tarfile.TarInfo, dest: str) -> tarfile.TarInfo | None:
+    """tarfile's data filter, except that a link out of the snapshot is left out instead of failing the run."""
+    try:
+        return tarfile.data_filter(member, dest)
+    except (tarfile.AbsoluteLinkError, tarfile.LinkOutsideDestinationError):
+        return None
 
 
 def remove(path: Path) -> None:
@@ -81,6 +89,19 @@ def files(repo: Path) -> list[str]:
         ["git", "-C", str(repo), "ls-files", "-co", "--exclude-standard", "-z"], check=True, capture_output=True
     ).stdout
     return [f for f in out.decode(errors="replace").split("\0") if f]
+
+
+def repo_file(root: Path, rel: str | Path) -> Path | None:
+    """`root/rel` when it is a file whose real place, once links are followed, is inside the repository; else None.
+    lastcall reads some of a repository's files on its own side (`.lastcall.yml`, go.mod...), and a link out of the
+    repository could point it at the host's files, such as its secrets. In the sandbox, links resolve in the
+    container."""
+    path = root / rel
+    try:
+        real = path.resolve(strict=True)
+    except (OSError, RuntimeError):  # missing, or links in a loop
+        return None
+    return path if real.is_file() and real.is_relative_to(root.resolve()) else None
 
 
 def commit(repo: Path, message: str, author: tuple[str, str]) -> str:

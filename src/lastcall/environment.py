@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from lastcall import git
+
 SETTINGS = (".lastcall.yml", ".lastcall.yaml")
 DEVCONTAINERS = (".devcontainer/devcontainer.json", ".devcontainer.json")
 CREATE_COMMANDS = ("onCreateCommand", "updateContentCommand", "postCreateCommand")
@@ -87,9 +89,11 @@ RUNNER = Environment(None, "", None, "runner")
 
 def settings(root: Path) -> Settings | None:
     """The repository's `.lastcall.yml`, or None when it has none. Raises ConfigError when it is wrong."""
-    path = next((root / name for name in SETTINGS if (root / name).is_file()), None)
+    path = next((root / name for name in SETTINGS if (root / name).is_file() or (root / name).is_symlink()), None)
     if path is None:
         return None
+    if git.repo_file(root, path.name) is None:
+        raise ConfigError(f"{path.name} is a link that does not lead to a file of the repository")
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
     except yaml.YAMLError as e:
@@ -134,9 +138,10 @@ def detect(root: Path, own: Settings | None = None) -> Environment:
 
 
 def devcontainer(root: Path) -> Environment | None:
-    path = next((root / name for name in DEVCONTAINERS if (root / name).is_file()), None)
+    path = next((p for name in DEVCONTAINERS if (p := git.repo_file(root, name))), None)
     if path is None:
-        path = next(iter(sorted(root.glob(".devcontainer/*/devcontainer.json"))), None)
+        found = sorted(root.glob(".devcontainer/*/devcontainer.json"))
+        path = next((p for p in found if git.repo_file(root, p.relative_to(root))), None)
     if path is None:
         return None
     source = path.relative_to(root).as_posix()
@@ -159,15 +164,15 @@ def devcontainer(root: Path) -> Environment | None:
 
 
 def _by_files(root: Path) -> Environment | None:
-    if (root / "go.mod").is_file():
-        version = GO_VERSION.search((root / "go.mod").read_text(errors="replace"))
+    if go := git.repo_file(root, "go.mod"):
+        version = GO_VERSION.search(go.read_text(errors="replace"))
         image = f"golang:{version.group(1)}" if version else "golang:1"
         return Environment(image, "go mod download", "go test ./...", "go.mod")
-    if (root / "Cargo.toml").is_file():
-        version = RUST_VERSION.search((root / "Cargo.toml").read_text(errors="replace"))
+    if cargo := git.repo_file(root, "Cargo.toml"):
+        version = RUST_VERSION.search(cargo.read_text(errors="replace"))
         return Environment(f"rust:{version.group(1) if version else '1'}", "cargo fetch", "cargo test", "Cargo.toml")
-    if (root / "pom.xml").is_file():
-        version = JAVA_VERSION.search((root / "pom.xml").read_text(errors="replace"))
+    if pom := git.repo_file(root, "pom.xml"):
+        version = JAVA_VERSION.search(pom.read_text(errors="replace"))
         java = version.group(1) if version and int(version.group(1)) >= 8 else "21"
         return Environment(f"maven:3-eclipse-temurin-{java}", MAVEN_PROXY, "mvn -B -q test", "pom.xml")
     return None
