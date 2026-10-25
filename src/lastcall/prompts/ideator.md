@@ -38,6 +38,7 @@ They carry ids `#<n>` and a `state`. Do not propose any of them again, not even 
 - `proposed`: in a plan that waits for the owner. `wanted`: the owner wants it, and lastcall builds it.
 - `in_pr` and `merged`: being built, or built.
 - `dismissed` and `rejected`: the owner did not want it, and neither variations of it.
+- `reverted`: it was built and merged, broke something, and was reverted.
 - `stuck`: it was tried and did not fit in one pull request: propose a smaller part only with a clear reason.
 
 ```json

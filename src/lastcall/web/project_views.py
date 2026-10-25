@@ -3,6 +3,7 @@ suggestions for the installed repositories that are not projects yet."""
 
 from __future__ import annotations
 
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +38,9 @@ class ProjectCard:
     weights: list[Option]
     languages: list[Option]
     max_prs: list[Option]
+    merge_on_approve: bool
+    watch: bool
+    health_url: str
     busy: str  # what it waits for or what runs on it, in words; "" when nothing does
 
 
@@ -115,8 +119,17 @@ def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any
         weights,
         languages,
         max_prs,
+        p.merge_on_approve,
+        p.watch,
+        p.health_url or "",
         busy,
     )
+
+
+def health_address(text: str) -> bool:
+    """Whether the owner's health address is one lastcall can check: http or https, with a host."""
+    parts = urllib.parse.urlsplit(text)
+    return parts.scheme in ("http", "https") and bool(parts.netloc) and len(text) <= 300 and text.isprintable()
 
 
 def suggestion_view(lang: str, s: Suggestion) -> SuggestionView:

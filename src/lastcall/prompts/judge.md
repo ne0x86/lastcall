@@ -37,6 +37,8 @@ that id in `duplicate_of`.
 - `in_pr`: already in an open pull request. `merged`: already fixed.
 - `rejected`: the owner closed its pull request without merging. `dismissed`: the owner decided against it. Do not
   propose them again unless there is new and clear evidence.
+- `reverted`: its pull request was merged, broke something, and was reverted. Propose it again only with a fix that
+  also covers what broke.
 - `decide`: waiting for the owner's decision. `resolved`: the owner decided it.
 
 ```json

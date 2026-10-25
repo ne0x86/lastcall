@@ -28,6 +28,9 @@ It works through each vendor's official command-line tool, with your own login: 
   take go to one issue.
 - 💡 **Improves.** When you ask, a plan of small improvements that fit your project, checked against the code: one
   issue with a checkbox per idea. lastcall builds the ones you tick, one pull request each.
+- 👀 **Merges and watches, if you want.** It merges the pull requests you approve once their checks pass, and it
+  watches each merge for a day: when the checks or your health address break, it proposes a revert and pauses the
+  project.
 - 🧠 **Remembers.** It never proposes again what you rejected or dismissed, and it finishes what did not fit last
   time.
 - ⏳ **Picks its moment.** It spends only capacity that would otherwise expire. It keeps a reserve for you and stops
@@ -67,7 +70,7 @@ flowchart LR
   domain.
 - 🔑 Agents never hold GitHub credentials and never push. lastcall does, after verifying.
 - 🙈 Your subscription login stays in the official CLI's own storage. lastcall never reads it.
-- 🧑‍⚖️ Nothing is merged without you.
+- 🧑‍⚖️ Nothing is merged without your approval, and a revert is only ever proposed.
 
 ## 🔌 Engines
 
@@ -187,6 +190,15 @@ contrast set in code, keyboard traps, focus order. Cite file and lines.
 A repository can have up to 4 reviewers of its own, of 8 KB at most each. A wrong one stops the run before it
 spends anything, and the run says why.
 
+**After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
+in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
+- **Merge after my approval.** When you, a member or a collaborator approves the latest commit of a lastcall pull
+  request on GitHub, and no check fails or is still running, lastcall merges it. If it no longer merges cleanly,
+  lastcall closes it, and the change comes back in a later run, on the current code.
+- **Watch after the merge.** For a day after a merge, lastcall looks at the checks of the merged commit and, if you
+  give one, at a health address every 10 minutes. When the checks fail where they passed before, or the address
+  fails 3 times in a row, it opens a pull request that reverts the change, pauses the project and tells you.
+
 ## ⚖️ Provider terms and responsible use
 
 Subscription plans are meant for each vendor's own tools. lastcall follows these rules:
@@ -217,7 +229,7 @@ advice.
 - 🔜 **v0.4, closer to the merge.**
   - ✅ Reviewers that your repository defines.
   - ✅ The `improve` recipe: plans of small improvements, and pull requests for the ideas you tick.
-  - Merge on approve; watch after the merge and revert.
+  - ✅ Merge on approve; watch after the merge and propose a revert.
   - ✅ The gate checks the weekly window of each model.
 - 🔭 **v0.5, wider reach.**
   - API keys and local models: opencode, OpenRouter, Ollama.

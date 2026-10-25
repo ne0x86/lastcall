@@ -6,6 +6,7 @@ Findings keep their story across runs, so the judge never proposes again what th
     in_pr      in an open lastcall pull request
     merged     its pull request was merged
     rejected   its pull request was closed without merging
+    reverted   its pull request was merged, broke something, and its revert was merged
     decide     valid, waiting for the owner's decision in the run's issue
     resolved   the owner closed that issue as done
     dismissed  the owner closed that issue as not planned
@@ -17,6 +18,7 @@ Ideas, from improvement plans, keep theirs too:
     in_pr      in an open lastcall pull request
     merged     its pull request was merged
     rejected   its pull request was closed without merging
+    reverted   its pull request was merged, broke something, and its revert was merged
     dismissed  its plan was closed without it
     stuck      a run tried to build it and could not
     discarded  the critic left it out of the plan
@@ -46,7 +48,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     language TEXT NOT NULL DEFAULT 'English', reserve_pct REAL NOT NULL DEFAULT 10, created REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS projects (
     repo TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 0, weight REAL NOT NULL DEFAULT 1, language TEXT,
-    max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL);
+    max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL, merge_on_approve INTEGER NOT NULL DEFAULT 0,
+    watch INTEGER NOT NULL DEFAULT 0, health_url TEXT);
 CREATE TABLE IF NOT EXISTS readings (
     account TEXT NOT NULL, taken_at REAL NOT NULL, windows TEXT NOT NULL, paid INTEGER NOT NULL,
     fidelity TEXT NOT NULL);
@@ -63,7 +66,8 @@ CREATE TABLE IF NOT EXISTS ideas (
     status TEXT NOT NULL, issue_url TEXT, pr_url TEXT, note TEXT, created REAL NOT NULL, UNIQUE (run, iid));
 CREATE TABLE IF NOT EXISTS prs (
     url TEXT PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, run TEXT NOT NULL, title TEXT NOT NULL,
-    state TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL);
+    state TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'change',
+    merge_sha TEXT, watch_until REAL, health_failures INTEGER NOT NULL DEFAULT 0, reverted TEXT);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY, csrf TEXT NOT NULL, created REAL NOT NULL, seen REAL NOT NULL);
@@ -72,7 +76,7 @@ CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY, kind TEXT NOT NULL, repo TEXT NOT NULL, account TEXT, created REAL NOT NULL,
     started REAL);
 """
-REMEMBERED = ("pending", "in_pr", "merged", "rejected", "decide", "resolved", "dismissed")
+REMEMBERED = ("pending", "in_pr", "merged", "rejected", "reverted", "decide", "resolved", "dismissed")
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,9 @@ class ProjectRow:
     weight: float
     language: str | None
     max_prs: int
+    merge_on_approve: bool = False  # lastcall merges its pull requests that the owner approves
+    watch: bool = False  # after a merge, lastcall watches the checks and the health address, and proposes a revert
+    health_url: str | None = None
 
 
 class Store:
@@ -101,8 +108,26 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.lock = threading.Lock()
         self.db.executescript(SCHEMA)
-        # crew came in v0.3, recipe in v0.4
+        # crew came in v0.3; recipe, the projects' merge and watch settings and the pull requests' watch in v0.4
         self._add_columns("runs", {"crew": "TEXT NOT NULL DEFAULT ''", "recipe": "TEXT NOT NULL DEFAULT 'audit'"})
+        self._add_columns(
+            "projects",
+            {
+                "merge_on_approve": "INTEGER NOT NULL DEFAULT 0",
+                "watch": "INTEGER NOT NULL DEFAULT 0",
+                "health_url": "TEXT",
+            },
+        )
+        self._add_columns(
+            "prs",
+            {
+                "kind": "TEXT NOT NULL DEFAULT 'change'",
+                "merge_sha": "TEXT",
+                "watch_until": "REAL",
+                "health_failures": "INTEGER NOT NULL DEFAULT 0",
+                "reverted": "TEXT",
+            },
+        )
 
     def _add_columns(self, table: str, columns: Mapping[str, str]) -> None:
         """Columns that later versions added, for databases made before them."""
@@ -161,16 +186,44 @@ class Store:
     def projects(self, active_only: bool = False) -> list[ProjectRow]:
         where = " WHERE active = 1 AND weight > 0" if active_only else ""
         rows = self.q("SELECT * FROM projects" + where + " ORDER BY repo")
-        return [ProjectRow(r["repo"], bool(r["active"]), r["weight"], r["language"], r["max_prs"]) for r in rows]
+        return [
+            ProjectRow(
+                r["repo"],
+                bool(r["active"]),
+                r["weight"],
+                r["language"],
+                r["max_prs"],
+                bool(r["merge_on_approve"]),
+                bool(r["watch"]),
+                r["health_url"],
+            )
+            for r in rows
+        ]
 
     def project(self, repo: str) -> ProjectRow | None:
         return next((p for p in self.projects() if p.repo.lower() == repo.lower()), None)
 
-    def update_project(self, repo: str, *, active: bool, weight: float, language: str | None, max_prs: int) -> None:
+    def update_project(
+        self,
+        repo: str,
+        *,
+        active: bool,
+        weight: float,
+        language: str | None,
+        max_prs: int,
+        merge_on_approve: bool = False,
+        watch: bool = False,
+        health_url: str | None = None,
+    ) -> None:
         self.x(
-            "UPDATE projects SET active = ?, weight = ?, language = ?, max_prs = ? WHERE repo = ?",
-            (int(active), weight, language, max_prs, repo),
+            "UPDATE projects SET active = ?, weight = ?, language = ?, max_prs = ?, merge_on_approve = ?, watch = ?, "
+            "health_url = ? WHERE repo = ?",
+            (int(active), weight, language, max_prs, int(merge_on_approve), int(watch), health_url, repo),
         )
+
+    def pause_project(self, repo: str) -> None:
+        """After a revert: no more bursts on the project until the owner activates it again."""
+        self.x("UPDATE projects SET active = 0 WHERE repo = ?", (repo,))
 
     # suggestions for the installed repositories, refreshed now and then from GitHub
 
@@ -296,13 +349,13 @@ class Store:
                 ),
             )
 
-    def _record_pr(self, url: str, repo: str, run: str, title: str) -> None:
+    def _record_pr(self, url: str, repo: str, run: str, title: str, kind: str = "change") -> None:
         number = int(url.rstrip("/").rsplit("/", 1)[1])
         now = time.time()
         self.x(
-            "INSERT INTO prs (url, repo, number, run, title, state, created, updated) "
-            "VALUES (?, ?, ?, ?, ?, 'open', ?, ?) ON CONFLICT (url) DO NOTHING",
-            (url, repo, number, run, title, now, now),
+            "INSERT INTO prs (url, repo, number, run, title, state, created, updated, kind) "
+            "VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?) ON CONFLICT (url) DO NOTHING",
+            (url, repo, number, run, title, now, now, kind),
         )
 
     def record_deliveries(self, run: str, report: AuditReport) -> None:
@@ -353,14 +406,56 @@ class Store:
             self.q("SELECT count(*) AS n FROM findings WHERE repo = ? AND status = 'pending'", (repo,))[0]["n"]
         )
 
-    def close_pr(self, url: str, merged: bool) -> None:
-        state = "merged" if merged else "closed"
-        self.x("UPDATE prs SET state = ?, updated = ? WHERE url = ?", (state, time.time(), url))
+    def close_pr(self, url: str, merged: bool, merge_sha: str | None = None, watch_hours: float = 0) -> None:
+        """A pull request closed on GitHub: its findings and ideas are merged or rejected. A merged one is watched
+        for `watch_hours` when its project asks for it. The merge of a revert marks what it reverted `reverted`."""
+        state, now = ("merged" if merged else "closed"), time.time()
+        watch_until = now + watch_hours * 3600 if merged and merge_sha and watch_hours else None
+        self.x(
+            "UPDATE prs SET state = ?, updated = ?, merge_sha = ?, watch_until = ? WHERE url = ?",
+            (state, now, merge_sha, watch_until, url),
+        )
         for table in ("findings", "ideas"):
             self.x(
                 f"UPDATE {table} SET status = ? WHERE pr_url = ? AND status = 'in_pr'",
                 ("merged" if merged else "rejected", url),
             )
+        if merged:
+            for row in self.q("SELECT url FROM prs WHERE reverted = ?", (url,)):
+                for table in ("findings", "ideas"):
+                    sql = f"UPDATE {table} SET status = 'reverted' WHERE pr_url = ? AND status = 'merged'"
+                    self.x(sql, (row["url"],))
+
+    def reopen(self, url: str) -> None:
+        """A pull request that lastcall closed because it no longer merges cleanly: its findings are pending again
+        and its ideas wanted again, so that a later run makes the change on the current code."""
+        self.x("UPDATE prs SET state = 'closed', updated = ? WHERE url = ?", (time.time(), url))
+        self.x("UPDATE findings SET status = 'pending', pr_url = NULL WHERE pr_url = ? AND status = 'in_pr'", (url,))
+        self.x("UPDATE ideas SET status = 'wanted', pr_url = NULL WHERE pr_url = ? AND status = 'in_pr'", (url,))
+
+    def watched(self, now: float) -> list[dict[str, Any]]:
+        """Merged pull requests that lastcall still watches: not reverted, and within their window."""
+        return self.q(
+            "SELECT * FROM prs WHERE state = 'merged' AND kind = 'change' AND watch_until > ? AND reverted IS NULL "
+            "ORDER BY updated",
+            (now,),
+        )
+
+    def health(self, url: str, ok: bool) -> int:
+        """Record one check of a watched pull request's health address; returns the failures in a row."""
+        if ok:
+            self.x("UPDATE prs SET health_failures = 0 WHERE url = ?", (url,))
+            return 0
+        self.x("UPDATE prs SET health_failures = health_failures + 1 WHERE url = ?", (url,))
+        return int(self.q("SELECT health_failures FROM prs WHERE url = ?", (url,))[0]["health_failures"])
+
+    def record_revert(self, url: str, revert_url: str | None) -> None:
+        """The revert lastcall proposed for a merged pull request, or "" when it could not make one. Either way the
+        watch is over. The revert is a lastcall pull request too, never watched itself."""
+        self.x("UPDATE prs SET reverted = ? WHERE url = ?", (revert_url or "", url))
+        if revert_url:
+            original = self.q("SELECT repo, run, title FROM prs WHERE url = ?", (url,))[0]
+            self._record_pr(revert_url, original["repo"], original["run"], f"Revert: {original['title']}", "revert")
 
     def open_issues(self) -> list[str]:
         return [

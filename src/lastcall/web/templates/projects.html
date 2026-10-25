@@ -44,6 +44,13 @@
             </select>
           </div>
         </div>
+        <label class="check plain"><input type="checkbox" name="merge_on_approve" value="1"{% if p.merge_on_approve %} checked{% endif %}> {{ t("web.project.merge_on_approve") }}</label>
+        <label class="check plain"><input type="checkbox" name="watch" value="1"{% if p.watch %} checked{% endif %}> {{ t("web.project.watch") }}</label>
+        <div>
+          <label for="health-{{ n }}">{{ t("web.project.health_url") }}</label>
+          <input id="health-{{ n }}" name="health_url" type="url" value="{{ p.health_url }}" placeholder="https://example.com/health" autocomplete="off" spellcheck="false" aria-describedby="health-hint-{{ n }}">
+          <p class="muted" id="health-hint-{{ n }}">{{ t("web.project.health_hint") }}</p>
+        </div>
         <button class="secondary">{{ t("web.project.save") }}</button>
       </form>
       {%- if p.busy %}

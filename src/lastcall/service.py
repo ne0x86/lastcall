@@ -90,7 +90,7 @@ class Service:
         if now - self.last_sync >= SYNC_EVERY:
             self.last_sync = now
             try:
-                sync(self.inst.store, self.inst.client, self.log)
+                sync(self.inst.store, self.inst.client, self.log, self.inst.notify)
             except (GitHubError, OSError) as e:
                 self.log(f"sync: {e}")
         if now - self.last_refresh >= projects.REFRESH_EVERY:
