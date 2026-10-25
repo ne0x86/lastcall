@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from lastcall import git
 from lastcall.engines.base import CONTEXT_DIR, Invocation, json_line, probe_source
 from lastcall.sandbox import Sandbox
 from lastcall.verify import dockerfile_packages
@@ -27,7 +28,8 @@ def scan(box: Sandbox, engine: str, clone: Path) -> dict[str, str]:
     Dockerfile's pip install lines go to osv-scanner as an extra requirements file."""
     probe = f"{CONTEXT_DIR}/scanners.py"
     files = {probe: probe_source("scanners")}
-    dockerfiles = [p for p in clone.rglob("Dockerfile*") if p.is_file() and ".git" not in p.parts]
+    found = clone.rglob("Dockerfile*")
+    dockerfiles = [p for p in found if ".git" not in p.parts and git.repo_file(clone, p.relative_to(clone))]
     pinned = sorted({p for d in dockerfiles for p in dockerfile_packages(d.read_text(errors="replace")) if "==" in p})
     if pinned:
         files[f"{CONTEXT_DIR}/deps/dockerfile-requirements.txt"] = "\n".join(pinned) + "\n"

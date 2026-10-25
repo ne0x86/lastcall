@@ -15,6 +15,7 @@ import shlex
 from pathlib import Path
 from typing import Literal
 
+from lastcall import git
 from lastcall.i18n import text
 
 Kind = Literal["tests", "build", "none"]
@@ -59,7 +60,8 @@ def python_dependencies(root: Path) -> list[str]:
     requirements = sorted([*root.glob("requirements*.txt"), *root.glob("*/requirements*.txt")])
     packages: list[str] = []
     for dockerfile in sorted([*root.glob("Dockerfile*"), *root.glob("*/Dockerfile*")]):
-        packages += dockerfile_packages(dockerfile.read_text(errors="replace"))
+        if git.repo_file(root, dockerfile.relative_to(root)):
+            packages += dockerfile_packages(dockerfile.read_text(errors="replace"))
     files = [arg for path in requirements for arg in ("-r", path.relative_to(root).as_posix())]
     return files + list(dict.fromkeys(packages))
 
@@ -69,9 +71,8 @@ def check_command(root: Path, assume_tests: bool = False) -> tuple[str, Kind]:
     adds to a project that has none yet."""
     py = any(root.rglob("*.py"))
     if py and (assume_tests or has_python_tests(root)):
-        pyproject = (
-            (root / "pyproject.toml").read_text(errors="replace") if (root / "pyproject.toml").exists() else ""
-        )
+        found = git.repo_file(root, "pyproject.toml")
+        pyproject = found.read_text(errors="replace") if found else ""
         targets: list[str] = []
         if "[project]" in pyproject:
             dev = "[project.optional-dependencies]" in pyproject and "dev" in pyproject
@@ -79,8 +80,8 @@ def check_command(root: Path, assume_tests: bool = False) -> tuple[str, Kind]:
         targets += python_dependencies(root)
         install = " ".join(shlex.quote(t) for t in [*targets, "pytest"])
         return f"pip install -q --user --no-warn-script-location {install} && {PYTEST}", "tests"
-    package = root / "package.json"
-    if package.exists():
+    package = git.repo_file(root, "package.json")
+    if package:
         try:
             scripts = json.loads(package.read_text(errors="replace")).get("scripts") or {}
         except ValueError:

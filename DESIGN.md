@@ -513,6 +513,7 @@ verify.
 | Prompt injection in code, logs or issues makes an agent act | Agents have no forge credentials, no write access outside their clone and no network beyond the allowlist. Every change goes through verification and human approval. |
 | Exfiltration of code or secrets | Egress allowlist. Logs are redacted. Scanners report secrets without their values. |
 | An agent lies about the tests | lastcall runs them again in a clean container and reads the exit code itself. |
+| A repository's links point lastcall at the host's files | lastcall reads a repository's files on its own side (`.lastcall.yml`, the devcontainer, go.mod, the README...) only when their real place is inside the repository, and the snapshot that steps get leaves out links that leave it. In the sandbox, links resolve inside the container. |
 | A bug in lastcall starts a dangerous container | Only the supervisor has the Docker socket, and it accepts a narrow spec. |
 | A project's environment image is hostile | The owner's repository chooses it, and it runs with the isolation of any step: user 1000, no capabilities, the sandbox network, the change's copy as its only writable mount, and never an account volume or the Docker socket. |
 | Subscription credentials leak | lastcall never reads them: they stay in the CLI's own storage, in a volume. |

@@ -80,7 +80,7 @@ def build(
             continue
         used += tokens
         code.append(f"### {rel}\n```\n{numbered(text)}\n```\n")
-    readme = next((p for p in sorted(src.glob("README*")) if p.is_file()), None)
+    readme = next((p for p in sorted(src.glob("README*")) if git.repo_file(src, p.name)), None)
     about = "\n".join(readme.read_text(errors="replace").splitlines()[:ABOUT_LINES]) if readme else "no README"
     sections = {
         "What the project says about itself (README)": about,
