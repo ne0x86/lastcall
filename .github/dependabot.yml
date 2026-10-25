@@ -8,3 +8,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+  - package-ecosystem: docker  # the base images of the service, the runner and the egress proxy
+    directories: [/, /runner, /egress]
+    schedule:
+      interval: monthly

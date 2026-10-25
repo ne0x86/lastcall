@@ -2,6 +2,7 @@
 
 **Last call before your AI quota resets.**
 
+[![Release](https://img.shields.io/github/v/release/ne0x86/lastcall)](https://github.com/ne0x86/lastcall/releases/latest)
 [![CI](https://github.com/ne0x86/lastcall/actions/workflows/ci.yml/badge.svg)](https://github.com/ne0x86/lastcall/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
@@ -214,7 +215,8 @@ A release sets the version in three places that a test keeps in agreement: `__ve
 ## 🤝 Contributing
 
 Issues and pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) explains how, including how to add an
-engine. Please report security problems privately, as [SECURITY.md](SECURITY.md) says.
+engine. Please report security problems privately, as [SECURITY.md](SECURITY.md) says. Everyone who takes part
+follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## 📄 License
 

@@ -1,6 +1,7 @@
 # Contributing to lastcall
 
-Thank you for helping. lastcall is young: issues and small pull requests are the best way in.
+Thank you for helping. lastcall is young: issues and small pull requests are the best way in. Everyone who takes
+part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Before you start
 
