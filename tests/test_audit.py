@@ -162,3 +162,72 @@ def test_a_pending_finding_from_an_earlier_run_joins_a_pull_request(tmp_path: Pa
     joined = next(f for f in report.findings if f["id"] == "#7")
     assert joined["reviewer"] == "earlier run"
     assert joined["title"] == "Retry without backoff"
+
+
+def test_peers_review_the_same_pack_and_one_judge_weighs_everything(tmp_path: Path) -> None:
+    from lastcall.recipes.audit import Peer
+
+    lead = dict(SCRIPT)
+    lead["judge"] = ok(
+        {
+            "summary": "One problem, found twice.",
+            "verdicts": [
+                verdict("B1", "pr"),
+                verdict("S1", "issue"),
+                {**verdict("B1@chatgpt", "discard"), "verdict": "duplicate", "duplicate_of": "B1"},
+            ],
+            "prs": [{"title": "Guard empty input", "ids": ["B1"], "risk": "low", "plan": "Check the input."}],
+        }
+    )
+    theirs = {
+        "reviewer:bugs@chatgpt": ok({"summary": "", "findings": [finding("Empty input crashes f")]}),
+        "reviewer:hygiene@chatgpt": ok({"summary": "", "findings": []}),
+        "reviewer:performance@chatgpt": ok({"summary": "", "findings": []}),
+        "reviewer:security@chatgpt": ok({"summary": "", "findings": []}),
+    }
+    judged: list[str] = []
+
+    def run_step(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
+        if step.role == "judge":
+            judged.append(step.prompt)
+        return run_local(engine, step)
+
+    report = run_audit(
+        repo="ne0x86/demo",
+        pack=pack(tmp_path),
+        engine=Scripted(lead),
+        tiers=TIERS,
+        run_step=run_step,
+        check_quota=always,
+        peers=[Peer("chatgpt", Scripted(theirs), TIERS, runner, always)],
+    )
+    assert [f["id"] for f in report.findings] == ["B1", "S1", "B1@chatgpt"]  # this account's first
+    assert sorted(s.role for s in report.steps if s.role.endswith("@chatgpt")) == [
+        "reviewer:bugs@chatgpt",
+        "reviewer:hygiene@chatgpt",
+        "reviewer:performance@chatgpt",
+        "reviewer:security@chatgpt",
+    ]
+    assert len(judged) == 1 and '"B1@chatgpt"' in judged[0]  # one judge, for every finding
+    assert report.peers == ["chatgpt"] and report.prs[0]["ids"] == ["B1"]
+    assert "Also reviewed by: chatgpt" in markdown(report)
+
+
+def test_a_peer_out_of_quota_stops_alone(tmp_path: Path) -> None:
+    from lastcall.recipes.audit import Peer
+
+    def closed() -> tuple[Gate, Reading | None]:
+        return Gate(False, "week window at 92% (reserve 10%)"), None
+
+    report = run_audit(
+        repo="ne0x86/demo",
+        pack=pack(tmp_path),
+        engine=Scripted(SCRIPT),
+        tiers=TIERS,
+        run_step=runner,
+        check_quota=always,
+        peers=[Peer("chatgpt", Scripted({}), TIERS, runner, closed)],
+    )
+    assert report.status == "ok" and report.stopped is None  # the run goes on
+    assert report.notes == ["chatgpt stopped reviewing: week window at 92% (reserve 10%)"]
+    assert not any(s.role.endswith("@chatgpt") for s in report.steps)

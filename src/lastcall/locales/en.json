@@ -337,6 +337,11 @@
   "web.dest.apprise.list": "The services and their URLs",
   "web.dest.apprise.url": "Apprise URL",
 
+  "web.project.all": "All free accounts, one judge",
+  "web.accounts.reviewing": "Reviewing {repo} with {lead}, started {when}.",
+  "web.runs.settings": "Runs",
+  "web.runs.fanout": "When several accounts burst at the same time, they review the same project together, and one judge keeps what holds. It finds more, and each account spends its reviewers' quota.",
+
   "web.time.now": "just now",
   "web.time.ago": "{span} ago",
   "web.time.in": "in {span}",

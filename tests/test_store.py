@@ -167,3 +167,20 @@ def test_performance_findings_are_not_taken_for_earlier_ones(store: Store) -> No
     report.verdicts.append(verdict("P1", "pr"))
     store.record_findings("run1", report)
     assert store.statuses(REPO)["pending"] == 3
+
+
+def test_a_database_from_before_v03_gets_the_crew_column(tmp_path: Path) -> None:
+    import sqlite3
+
+    old = sqlite3.connect(tmp_path / "old.db")
+    old.execute(
+        "CREATE TABLE runs (id TEXT PRIMARY KEY, repo TEXT NOT NULL, account TEXT NOT NULL, trigger TEXT NOT NULL, "
+        "status TEXT NOT NULL, sha TEXT, started REAL NOT NULL, ended REAL)"
+    )
+    old.execute("INSERT INTO runs VALUES ('r1', 'ne0x86/demo', 'claude', 'burst', 'ok', 'abc', 1.0, 2.0)")
+    old.commit()
+    old.close()
+    store = Store(tmp_path / "old.db")
+    assert store.runs()[0]["crew"] == ""
+    store.start_run("r2", "ne0x86/demo", "claude", "manual", ["chatgpt"])
+    assert store.running()[0]["crew"] == "chatgpt"

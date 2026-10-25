@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +21,7 @@ from lastcall.github import GitHub, GitHubForge
 from lastcall.quota import Gate, QuotaError, Reading, SpendPolicy, gate
 from lastcall.recipes.audit import (
     AuditReport,
+    Peer,
     QuotaCheck,
     StepRecord,
     StepRunner,
@@ -133,13 +134,15 @@ def audit_repo(
     opts: Options,
     on_step: Callable[[StepRecord], None] | None = None,
     log: Log = print,
+    peers: Sequence[tuple[Account, SpendPolicy]] = (),
 ) -> tuple[Path, AuditReport]:
-    """Clone, pack, find and judge; then, unless the run is report-only, implement, verify and deliver."""
+    """Clone, pack, find and judge; then, unless the run is report-only, implement, verify and deliver. `peers`
+    are other accounts whose reviewers take part, each behind its own quota gate (fan-out)."""
     token = inst.client.repository_token(repo)
     meta = inst.client.repository(token, repo)
     run_dir = inst.box.data_root / "runs" / f"{meta['name']}-{account.engine}-{time.strftime('%Y%m%d-%H%M%S')}"
     run_dir.mkdir(parents=True)
-    inst.store.start_run(run_dir.name, repo, account.id, opts.trigger)
+    inst.store.start_run(run_dir.name, repo, account.id, opts.trigger, [p.id for p, _ in peers])
     try:
         git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
         own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
@@ -155,6 +158,12 @@ def audit_repo(
             f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}"
         )
         run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+        crew = [
+            Peer(p.id, engines.get(p.engine), defaults(p.engine), *agent_hooks(inst.box, p, policy, opts.wait, log))
+            for p, policy in peers
+        ]
+        if crew:
+            log(f"Reviewed also by {', '.join(p.name for p in crew)}; {account.id} judges and implements.")
         report = run_audit(
             repo=repo,
             pack=context,
@@ -166,6 +175,7 @@ def audit_repo(
             max_prs=opts.max_prs,
             earlier=inst.store.earlier(repo),
             on_step=on_step,
+            peers=crew,
         )
         report.environment = f"{env.name} ({env.source})"
         inst.store.record_findings(run_dir.name, report)

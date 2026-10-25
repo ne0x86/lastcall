@@ -6,7 +6,7 @@ lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive]
 lastcall quota <account>                        # read an account's quota through the supervisor
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
 lastcall github repos                           # installed repositories, with lastcall's suggestions
-lastcall audit <owner/name> --account <account> # find, judge, fix, verify, open pull requests
+lastcall audit <owner/name> --account <account> # audit, then pull requests; --account again: fan-out
 lastcall deliver <run> --account <account>      # the pull requests of a report-only audit
 lastcall sync                                   # what the owner did with lastcall's pull requests and issues
 lastcall status                                 # accounts, projects and what happened to their findings
@@ -26,6 +26,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -96,8 +97,14 @@ def main(argv: list[str] | None = None) -> int:
     deliver_cmd = commands.add_parser("deliver", help="implement, verify and open the pull requests of a report")
     deliver_cmd.add_argument("run", help="the run folder name that `audit --report-only` printed")
     deliver_cmd.add_argument("--max-prs", type=int, default=None, help="open only the first N planned pull requests")
-    for cmd in (audit_cmd, deliver_cmd):
-        cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
+    audit_cmd.add_argument(
+        "--account",
+        required=True,
+        action="append",
+        help="the account whose quota the steps spend; repeat it to add the reviewers of other accounts (fan-out): "
+        "the first one judges and implements",
+    )
+    deliver_cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
 
     commands.add_parser("sync", help="what the owner did with lastcall's pull requests and issues")
     commands.add_parser("status", help="accounts, projects and what happened to their findings")
@@ -161,7 +168,8 @@ def dispatch(args: argparse.Namespace) -> int:
         case "github", _:
             return github_repos()
         case "audit", _:
-            return audit(args.repo, account(args.account), args.max_prs, args.report_only)
+            lead, *others = [account(a) for a in dict.fromkeys(args.account)]
+            return audit(args.repo, lead, args.max_prs, args.report_only, others)
         case "deliver", _:
             return deliver_run(args.run, account(args.account), args.max_prs)
         case "sync", _:
@@ -245,14 +253,16 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def audit(repo: str, acc: Account, max_prs: int, report_only: bool) -> int:
+def audit(repo: str, acc: Account, max_prs: int, report_only: bool, peers: Sequence[Account] = ()) -> int:
     client = github_client()
     if client is None:
         return 1
     inst = instance(client)
+    reserves = {a.id: a.reserve_pct for a in inst.store.accounts()}
+    crew = [(p, SpendPolicy(reserve_pct=reserves[p.id])) for p in peers]
     try:
         run_dir, report = audit_repo(
-            inst, repo, acc, options(acc, repo, max_prs=max_prs, report_only=report_only), progress, log
+            inst, repo, acc, options(acc, repo, max_prs=max_prs, report_only=report_only), progress, log, crew
         )
     except GitHubError as e:
         print(e, file=sys.stderr)

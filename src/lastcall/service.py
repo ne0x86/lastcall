@@ -6,7 +6,9 @@ Every minute it ticks:
   account's readings and plans whether to burst;
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
 - every 6 hours it refreshes the suggestions for the installed repositories;
-- the owner's orders ("audit this project now", from the web UI) start on a free account;
+- the owner's orders ("audit this project now", from the web UI) start on a free account, or on all of them
+  together (fan-out);
+- with fan-out on, accounts that burst at the same time review one project together, with one judge;
 - each bursting account that is free starts a full audit of the project the ranking puts first. One run per account
   at a time, and never the same project by two accounts at once. Inside a run, a full 5-hour window makes the run
   wait for its reset; the reserve or any paid usage stops it.
@@ -20,7 +22,7 @@ from __future__ import annotations
 import threading
 import time
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from lastcall import i18n, projects
@@ -47,7 +49,7 @@ class Service:
         inst: Instance,
         *,
         read: Callable[[Account, float], Reading] | None = None,
-        audit: Callable[[str, AccountRow, str], Any] | None = None,
+        audit: Callable[[str, AccountRow, str, list[AccountRow]], Any] | None = None,
         start: Callable[[Callable[[], None]], None] | None = None,
         clock: Callable[[], float] = time.time,
         log: Log = print,
@@ -96,6 +98,8 @@ class Service:
         self.take_orders(now)
         if self.inst.store.setting("paused") == "yes":
             return
+        if self.inst.store.setting("fanout") == "yes":
+            self.fan_out(now)
         for account in self.inst.store.accounts(enabled_only=True):
             p = self.plans.get(account.id)
             if p is None or not p.burst or account.id in self.running:
@@ -160,14 +164,35 @@ class Service:
                 busy, free = set(self.running.values()), [a for a in accounts if a.id not in self.running]
             if order["repo"] in busy:
                 continue
-            if order["account"]:
+            if order["account"] and order["account"] != "*":
                 free = [a for a in free if a.id == order["account"]]
             if not free:
                 continue
-            account = max(free, key=lambda a: self.plans[a.id].leftover_pct if a.id in self.plans else -1.0)
+            account = max(free, key=self.leftover)
+            crew = [a for a in free if a is not account] if order["account"] == "*" else []
             store.start_order(order["id"], now)
             self.log(f"{account.id}: audit of {order['repo']} ordered by the owner")
-            self.launch(account, order["repo"], "manual")
+            self.launch(account, order["repo"], "manual", crew)
+
+    def leftover(self, account: AccountRow) -> float:
+        """The quota an account has left before its reset; -1 when it has no plan yet."""
+        return self.plans[account.id].leftover_pct if account.id in self.plans else -1.0
+
+    def fan_out(self, now: float) -> None:
+        """Accounts that burst at the same time review one project together: the one with the most left judges
+        and implements."""
+        with self.lock:
+            bursting = [
+                a
+                for a in self.inst.store.accounts(enabled_only=True)
+                if a.id not in self.running and a.id in self.plans and self.plans[a.id].burst
+            ]
+        if len(bursting) < 2:
+            return
+        lead = max(bursting, key=self.leftover)
+        repo = self.pick(lead, now)
+        if repo:
+            self.launch(lead, repo, "burst", [a for a in bursting if a is not lead])
 
     # projects
 
@@ -199,22 +224,26 @@ class Service:
         except (GitHubError, OSError, ValueError):
             return None
 
-    def launch(self, account: AccountRow, repo: str, trigger: str = "burst") -> None:
+    def launch(self, account: AccountRow, repo: str, trigger: str = "burst", crew: Sequence[AccountRow] = ()) -> None:
+        """Start a run on `account`, with `crew` reviewing too. They all stay busy until it ends."""
+        members = [account, *crew]
         with self.lock:
-            self.running[account.id] = repo
+            for a in members:
+                self.running[a.id] = repo
 
         def work() -> None:
             try:
-                self.audit(repo, account, trigger)
+                self.audit(repo, account, trigger, list(crew))
             except Exception:
                 self.log(f"{account.id} on {repo}: {traceback.format_exc()}")
             finally:
                 with self.lock:
-                    self.running.pop(account.id, None)
+                    for a in members:
+                        self.running.pop(a.id, None)
 
         self.start(work)
 
-    def _audit(self, repo: str, account: AccountRow, trigger: str) -> Any:
+    def _audit(self, repo: str, account: AccountRow, trigger: str, crew: list[AccountRow]) -> Any:
         project = self.inst.store.project(repo)
         opts = Options(
             language=(project.language if project and project.language else None) or account.language,
@@ -231,4 +260,5 @@ class Service:
             opts,
             on_step=lambda s: self.log(f"{prefix} {s.role}: {'ok' if s.ok else 'failed'} in {s.seconds:g} s"),
             log=lambda message: self.log(f"{prefix} {message}"),
+            peers=[(Account(c.id, c.engine), SpendPolicy(reserve_pct=c.reserve_pct)) for c in crew],
         )

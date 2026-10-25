@@ -18,7 +18,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS readings (
 CREATE INDEX IF NOT EXISTS readings_by_account ON readings (account, taken_at);
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY, repo TEXT NOT NULL, account TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL,
-    sha TEXT, started REAL NOT NULL, ended REAL);
+    sha TEXT, started REAL NOT NULL, ended REAL, crew TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS findings (
     id INTEGER PRIMARY KEY, repo TEXT NOT NULL, run TEXT NOT NULL, fid TEXT NOT NULL, data TEXT NOT NULL,
     verdict TEXT, decision TEXT, severity TEXT, reason TEXT, status TEXT NOT NULL, pr_url TEXT, issue_url TEXT,
@@ -85,8 +85,16 @@ class Store:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript(SCHEMA)
         self.lock = threading.Lock()
+        self.db.executescript(SCHEMA)
+        self._add_columns("runs", {"crew": "TEXT NOT NULL DEFAULT ''"})  # added in v0.3
+
+    def _add_columns(self, table: str, columns: Mapping[str, str]) -> None:
+        """Columns that later versions added, for databases made before them."""
+        have = {r["name"] for r in self.q(f"PRAGMA table_info({table})")}
+        for name, declaration in columns.items():
+            if name not in have:
+                self.x(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
     def x(self, sql: str, args: Sequence[Any] = ()) -> sqlite3.Cursor:
         with self.lock:
@@ -204,10 +212,12 @@ class Store:
 
     # runs
 
-    def start_run(self, run: str, repo: str, account: str, trigger: str) -> None:
+    def start_run(self, run: str, repo: str, account: str, trigger: str, crew: Sequence[str] = ()) -> None:
+        """`crew`: the other accounts whose reviewers take part (fan-out)."""
         self.x(
-            "INSERT INTO runs (id, repo, account, trigger, status, started) VALUES (?, ?, ?, ?, 'running', ?)",
-            (run, repo, account, trigger, time.time()),
+            "INSERT INTO runs (id, repo, account, trigger, status, started, crew) "
+            "VALUES (?, ?, ?, ?, 'running', ?, ?)",
+            (run, repo, account, trigger, time.time(), ",".join(crew)),
         )
 
     def finish_run(self, run: str, status: str, sha: str | None) -> None:

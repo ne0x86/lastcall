@@ -71,8 +71,9 @@ def service(
             raise value
         return value
 
-    def audit(repo: str, account: AccountRow, trigger: str) -> Any:
-        audits.append((account.id, repo) if trigger == "burst" else (account.id, f"{repo} ({trigger})"))
+    def audit(repo: str, account: AccountRow, trigger: str, crew: list[AccountRow]) -> Any:
+        who = "+".join([account.id, *(c.id for c in crew)])
+        audits.append((who, repo) if trigger == "burst" else (who, f"{repo} ({trigger})"))
 
     inst = Instance(cast(Sandbox, None), cast(GitHub, NoGitHub()), store)
     return Service(inst, read=read, audit=audit, start=started.append, clock=clock, log=lambda m: None)
@@ -187,3 +188,35 @@ def test_problems_and_bursts_are_told_once(store: Store, tmp_path: Path) -> None
     svc.read_quotas(NOW + 3 * READ_EVERY)
     assert told[-1] == "lastcall: cannot read the quota of claude"  # a new problem is told again
     assert len(told) == 4
+
+
+def test_an_order_for_all_accounts_fans_out(store: Store) -> None:
+    audits: list[tuple[str, str]] = []
+    started: list[Callable[[], None]] = []
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 30, 150),
+        "chatgpt": reading("chatgpt", 70, 150),
+    }
+    store.add_order("audit", "ne0x86/a", "*", NOW)
+    svc = service(store, readings, audits, Clock(), started)
+    svc.tick()
+    assert svc.running == {"claude": "ne0x86/a", "chatgpt": "ne0x86/a"}  # both busy until the run ends
+    started.pop()()
+    assert audits == [("claude+chatgpt", "ne0x86/a (manual)")]  # the one with the most left leads
+    assert svc.running == {}
+
+
+def test_accounts_that_burst_together_review_together_when_the_owner_wants(store: Store) -> None:
+    audits: list[tuple[str, str]] = []
+    started: list[Callable[[], None]] = []
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 30, 20),
+        "chatgpt": reading("chatgpt", 50, 20),
+    }
+    store.set_setting("fanout", "yes")
+    svc = service(store, readings, audits, Clock(), started)
+    svc.tick()
+    assert len(started) == 1 and set(svc.running) == {"claude", "chatgpt"}
+    started.pop()()
+    (who, repo) = audits[0]
+    assert who == "claude+chatgpt" and repo in ("ne0x86/a", "ne0x86/b")

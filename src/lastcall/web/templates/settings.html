@@ -10,6 +10,15 @@
   <p>{% if github %}{{ t("web.github.ready", name=github.name, owner=github.owner) }} <a href="{{ github.install_url }}">{{ t("web.github.install") }}</a>{% else %}{{ t("web.start.github") }} <a href="{{ url_for('github_page') }}">{{ t("web.github.title") }}</a>{% endif %}</p>
 </section>
 
+<section class="card" aria-labelledby="runs-title">
+  <h2 id="runs-title">{{ t("web.runs.settings") }}</h2>
+  <form method="post" action="{{ url_for('run_settings') }}" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="check plain"><input type="checkbox" name="fanout" value="1"{% if v.fanout %} checked{% endif %}> {{ t("web.runs.fanout") }}</label>
+    <button class="secondary">{{ t("web.project.save") }}</button>
+  </form>
+</section>
+
 <section class="card" aria-labelledby="notify-title">
   <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
   <p>{{ t("web.notify.intro") }}</p>

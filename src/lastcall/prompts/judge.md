@@ -45,6 +45,9 @@ ${previous}
 
 ## Findings of the reviewers
 
+An id that ends in `@<account>` comes from the reviewers of another account, often on another engine. Two ids may
+describe the same problem in different words: keep the better described one and mark the others `duplicate`.
+
 ```json
 ${findings}
 ```

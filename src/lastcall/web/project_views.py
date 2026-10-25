@@ -71,9 +71,11 @@ def build(store: Store, lang: str, now: float, install_url: str, reading: bool) 
         card(store, p, lang, now, latest.get(p.repo), p.repo.lower() in queued, p.repo.lower() in running)
         for p in projects
     ]
-    page.accounts = [Option("", text(lang, "web.project.any"), True)] + [
-        Option(a.id, a.id) for a in store.accounts(enabled_only=True)
-    ]
+    enabled = store.accounts(enabled_only=True)
+    page.accounts = [Option("", text(lang, "web.project.any"), True)]
+    if len(enabled) > 1:
+        page.accounts.append(Option("*", text(lang, "web.project.all")))
+    page.accounts += [Option(a.id, a.id) for a in enabled]
     names = {p.repo.lower() for p in projects}
     found = store.suggestions()
     left = [s for s in found if s.repo.lower() not in names]

@@ -16,6 +16,7 @@ import re
 import time
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -98,6 +99,8 @@ class AuditReport:
     deliveries: list[dict[str, Any]] = field(default_factory=list)  # one per planned pull request, once tried
     issue_url: str | None = None
     environment: str = ""  # where the checks run: an image, or the runner, and what decided it
+    peers: list[str] = field(default_factory=list)  # other accounts whose reviewers took part (fan-out)
+    notes: list[str] = field(default_factory=list)  # what happened to them, such as a peer stopped by its quota
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=1)
@@ -107,6 +110,18 @@ class AuditReport:
         data = json.loads(text)
         data["steps"] = [StepRecord(**s) for s in data.get("steps") or []]
         return cls(**data)
+
+
+@dataclass(frozen=True)
+class Peer:
+    """Another account whose reviewers take part in a run (fan-out): its own engine, tiers and quota gate. Its
+    findings and steps carry `@<name>`. Only the run's own account judges and implements."""
+
+    name: str
+    engine: Engine
+    tiers: Mapping[str, tuple[str, str | None]]
+    run_step: StepRunner
+    check_quota: QuotaCheck
 
 
 @dataclass
@@ -120,13 +135,17 @@ class _Steps:
     check_quota: QuotaCheck
     shared: Path
     on_step: Callable[[StepRecord], None] | None = None
+    peer: str = ""  # a peer's closed gate stops that peer, not the run
 
     def run(
         self, role: str, tier: str, text: str, schema_name: str, workspace: Path, writable: bool = False
     ) -> StepResult | None:
         gate, reading = self.check_quota()
         if not gate.ok:
-            self.report.status, self.report.stopped = "partial", gate.reason
+            if self.peer:
+                self.report.notes.append(f"{self.peer} stopped reviewing: {gate.reason}")
+            else:
+                self.report.status, self.report.stopped = "partial", gate.reason
             return None
         model, effort = self.tiers[tier]
         spec = StepSpec(role, model, text, effort, self.shared, schema(schema_name), writable)
@@ -155,20 +174,41 @@ def run_audit(
     earlier: Sequence[Mapping[str, Any]] = (),
     team: Sequence[Reviewer] | None = None,
     on_step: Callable[[StepRecord], None] | None = None,
+    peers: Sequence[Peer] = (),
 ) -> AuditReport:
-    """First half: find and judge."""
-    report = AuditReport(repo, pack.sha, engine.name, language)
+    """First half: find and judge. With peers, every account's reviewers work at the same time, one after another
+    within each account, on the same pack; one judge, this account's, weighs all their findings."""
+    report = AuditReport(repo, pack.sha, engine.name, language, peers=[p.name for p in peers])
     steps = _Steps(report, engine, tiers, run_step, check_quota, pack.path, on_step)
     project = repo.split("/")[-1]
+    crew = list(team if team is not None else reviewers())
 
-    for rv in team if team is not None else reviewers():
-        text = render(prompt("reviewer.md"), role=rv.name, project=project, focus=rv.focus, language=language)
-        res = steps.run(f"reviewer:{rv.name}", rv.tier, text, "findings", pack.src)
-        if res is None:
-            return report
-        if res.ok:  # a reviewer that fails costs its findings, not the run
-            for i, finding in enumerate((res.output or {}).get("findings") or [], 1):
-                report.findings.append({"id": f"{rv.prefix}{i}", "reviewer": rv.name, **finding})
+    def review(steps: _Steps, mark: str) -> list[dict[str, Any]] | None:
+        """The findings of one account's reviewers; None when this run's own gate closes."""
+        found: list[dict[str, Any]] = []
+        for rv in crew:
+            text = render(prompt("reviewer.md"), role=rv.name, project=project, focus=rv.focus, language=language)
+            res = steps.run(f"reviewer:{rv.name}{mark}", rv.tier, text, "findings", pack.src)
+            if res is None:
+                return found if mark else None
+            if res.ok:  # a reviewer that fails costs its findings, not the run
+                for i, finding in enumerate((res.output or {}).get("findings") or [], 1):
+                    found.append({"id": f"{rv.prefix}{i}{mark}", "reviewer": rv.name, **finding})
+        return found
+
+    if peers:
+        others = [
+            _Steps(report, p.engine, p.tiers, p.run_step, p.check_quota, pack.path, on_step, p.name) for p in peers
+        ]
+        with ThreadPoolExecutor(max_workers=1 + len(peers)) as pool:
+            own = pool.submit(review, steps, "")
+            theirs = [pool.submit(review, s, f"@{s.peer}") for s in others]
+            mine, extra = own.result(), [f for t in theirs for f in t.result() or []]
+    else:
+        mine, extra = review(steps, ""), []
+    if mine is None:
+        return report
+    report.findings = mine + extra
     if not report.findings:
         report.summary = "The reviewers found nothing worth a finding."
         report.status = "ok" if any(s.ok for s in report.steps) else "failed"
@@ -380,6 +420,9 @@ def markdown(report: AuditReport) -> str:
 
     out = [f"# Audit of {report.repo} @ {report.sha} ({report.engine})", ""]
     out.append(f"Status: **{report.status}**" + (f" ({report.stopped})" if report.stopped else ""))
+    if report.peers:
+        out.append(f"Also reviewed by: {', '.join(report.peers)}. One judge weighed every finding.")
+    out += [f"- {note}" for note in report.notes]
     if report.summary:
         out += ["", report.summary]
     if report.deliveries or report.issue_url:

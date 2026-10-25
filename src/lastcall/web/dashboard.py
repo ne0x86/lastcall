@@ -106,7 +106,7 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
         view.start.append(Step(text(lang, "web.start.accounts"), "accounts_page", text(lang, "web.nav.accounts")))
     if not any(p.active for p in projects):
         view.start.append(Step(text(lang, "web.start.projects"), "projects_page", text(lang, "web.nav.projects")))
-    working = {r["account"]: r for r in store.running()}
+    working = working_on(store.running())
     view.accounts = [account_view(store, a, lang, now, working.get(a.id)) for a in accounts]
     view.prs = [
         Link(safe_url(pr["url"]), pr["title"], f"{pr['repo']}#{pr['number']} · " + opened(lang, pr["created"], now))
@@ -154,8 +154,22 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
         paid = reading.paid_usage
     working = ""
     if run is not None:
-        working = text(lang, "web.accounts.working", repo=run["repo"], when=ago(lang, run["started"], now))
+        when = ago(lang, run["started"], now)
+        if run["account"] == row.id:
+            working = text(lang, "web.accounts.working", repo=run["repo"], when=when)
+        else:  # a peer of someone else's run
+            working = text(lang, "web.accounts.reviewing", repo=run["repo"], lead=run["account"], when=when)
     return AccountView(row.id, ENGINES.get(row.engine, row.engine), line, windows, read, plan_text, paid, working)
+
+
+def working_on(running: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The run each busy account is in: its own, or another account's run that it reviews for."""
+    busy: dict[str, dict[str, Any]] = {}
+    for run in running:
+        for peer in filter(None, str(run.get("crew") or "").split(",")):
+            busy.setdefault(peer, run)
+        busy[run["account"]] = run
+    return busy
 
 
 def describe_plan(lang: str, p: Plan, now: float) -> str:

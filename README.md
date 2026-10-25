@@ -14,7 +14,8 @@ for you to decide. Nothing reaches your default branch without your approval. �
 ## ✨ What it does
 
 - 🔎 **Audits.** Four reviewers (bugs, security, hygiene, performance) read your code. A judge checks every finding
-  against the code and throws out the noise.
+  against the code and throws out the noise. With several accounts, Claude and Codex can review the same project
+  together, and one judge keeps what holds: each finds things the other misses.
 - 🛠️ **Fixes.** One implementer per pull request writes the smallest fix, with a regression test.
 - ✅ **Verifies.** lastcall, not the agent, runs your tests again in a clean container and scans the change for
   secrets.
@@ -168,7 +169,7 @@ advice.
   - Notifications: Telegram, ntfy, Discord, email and more.
 - 🔜 **v0.3.**
   - ✅ `.lastcall.yml` in your repositories, devcontainer images, and Go, Rust and Java out of the box.
-  - Fan-out: Claude and Codex audit the same project, and one judge keeps what holds.
+  - ✅ Fan-out: Claude and Codex audit the same project, and one judge keeps what holds.
   - The `improve` recipe; merge on approve; watch after the merge and revert.
 - 🔭 **v0.4.**
   - API keys and local models: opencode, OpenRouter, Ollama.
