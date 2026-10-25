@@ -337,6 +337,11 @@
   "web.dest.apprise.list": "Los servicios y sus URL",
   "web.dest.apprise.url": "URL de Apprise",
 
+  "web.project.all": "Todas las cuentas libres, un juez",
+  "web.accounts.reviewing": "Revisando {repo} con {lead}, empezó {when}.",
+  "web.runs.settings": "Ejecuciones",
+  "web.runs.fanout": "Cuando varias cuentas tienen ráfaga a la vez, revisan juntas el mismo proyecto y un juez se queda con lo que se sostiene. Encuentra más, y cada cuenta gasta la cuota de sus revisores.",
+
   "web.time.now": "ahora mismo",
   "web.time.ago": "hace {span}",
   "web.time.in": "en {span}",

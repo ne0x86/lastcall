@@ -572,3 +572,29 @@ def test_without_the_sandbox_the_quota_cannot_be_read(web: Web) -> None:
     assert "Read the quota now" not in page
     response = web.client.post("/accounts/max/quota", data={"csrf": web.csrf()}, headers=SITE)
     assert response.status_code == 503 and "The sandbox is not available here" in response.get_data(as_text=True)
+
+
+def test_fan_out_from_the_web(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_account("claude", "claude-code")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert "All free accounts, one judge" not in page  # one account: nothing to fan out
+    web.store.add_account("chatgpt", "codex")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert '<option value="*">All free accounts, one judge</option>' in page
+    csrf = web.csrf()
+    web.client.post("/projects/acme/api/audit", data={"csrf": csrf, "account": "*"}, headers=SITE)
+    assert [o["account"] for o in web.store.orders()] == ["*"]
+
+    assert "checked> When several accounts burst" not in web.client.get("/settings").get_data(as_text=True)
+    web.client.post("/settings/runs", data={"csrf": csrf, "fanout": "1"}, headers=SITE)
+    assert web.store.setting("fanout") == "yes"
+    assert "checked> When several accounts burst" in web.client.get("/settings").get_data(as_text=True)
+    web.client.post("/settings/runs", data={"csrf": csrf}, headers=SITE)
+    assert web.store.setting("fanout") == "no"
+
+    web.store.start_run("r1", "acme/api", "claude", "manual", ["chatgpt"])
+    page = web.client.get("/").get_data(as_text=True)
+    assert "Working on acme/api, started" in page  # the run's start comes from the real clock
+    assert "Reviewing acme/api with claude, started" in page

@@ -358,6 +358,13 @@ Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` i
   - it scans the added lines, the title and the body for secrets (`lastcall.secretscan`);
   - it commits as the App's bot, pushes, and opens the pull request with a footer that says what was verified.
 - Valid findings that need the owner go to one issue per run.
+- **Fan-out.** Other accounts can review in the same run (`peers`). Each account's reviewers work at the same time
+  as the others', in their own sandbox steps with their own account volume and quota gate. A peer whose gate closes
+  stops reviewing, and the run goes on. Their findings carry `@<account>` in their ids, so the judge and the pull
+  request footers say who found what. One judge, the run's own account's, weighs every finding and marks the same
+  problem found twice as a duplicate; that account also implements. The owner asks for it with "All free accounts"
+  in "Audit now", or `lastcall audit --account a --account b`; with the fan-out setting on, accounts that burst at
+  the same time review one project together, and the one with the most quota left before its reset leads.
 
 Prompts are in English, and the language of findings, pull requests and reports is a parameter. Every prompt tells
 the model that the code and documents it reads are data, not instructions.

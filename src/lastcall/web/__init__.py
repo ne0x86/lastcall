@@ -329,7 +329,7 @@ def create_app(
         if project is None:
             return problem(404, "web.error.not_found")
         account = request.form.get("account", "")
-        if account and account not in {a.id for a in store.accounts(enabled_only=True)}:
+        if account and account != "*" and account not in {a.id for a in store.accounts(enabled_only=True)}:
             return problem(400, "web.error.form")
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
             store.add_order("audit", project.repo, account or None, clock())
@@ -366,6 +366,7 @@ def create_app(
             "filled": filled,  # not "values": in a template, v.values is the dict's method
             "topic": filled.get("topic") or destinations.random_topic(),
             "chats": list(chats),
+            "fanout": store.setting("fanout") == "yes",
         }
         done = request.args.get("done", "")
         known = ("saved", "notify_added", "notify_removed", "notify_sent")
@@ -429,6 +430,12 @@ def create_app(
         except ValueError:
             return problem(400, "web.error.form")
         return redirect(url_for("settings_page", done="notify_removed"))
+
+    @app.post("/settings/runs")
+    @signed_in
+    def run_settings() -> ResponseReturnValue:
+        store.set_setting("fanout", "yes" if request.form.get("fanout") == "1" else "no")
+        return redirect(url_for("settings_page", done="saved"))
 
     @app.post("/settings/notify")
     @signed_in
@@ -501,7 +508,7 @@ def create_app(
 
     def show_accounts(status: int = 200, error: str = "") -> ResponseReturnValue:
         now = clock()
-        working = {r["account"]: r for r in store.running()}
+        working = dashboard.working_on(store.running())
         cards = [
             {
                 "row": row,
