@@ -331,9 +331,11 @@ Rules for engines:
 
 ### Settings
 
-Each project has: active or not, weight, recipes and their limits, test command, environment, focus, delivery mode
-and merge-on-approve. Settings live in the database and the owner edits them in the web UI. An optional
-`.lastcall.yml` in the repository overrides them and is versioned with the code:
+Each project has: active or not, weight, recipes and their limits, test command, environment, focus, delivery
+mode, merge on approve, and the watch after the merge with its health address. Settings live in the database and the
+owner edits them in the web UI. An optional `.lastcall.yml` in the repository overrides them and is versioned with
+the code, except for merge on approve and the watch: anyone who can open a pull request could otherwise turn them
+on.
 
 ```yaml
 # .lastcall.yml (illustrative)
@@ -524,12 +526,23 @@ runs, and different network rights for setup and verify.
   "Do it" queues a pull request for the next run; "Dismiss" closes the finding for good.
 - **Improvement plans.** One issue per plan, with a checkbox per idea: the owner ticks what to build, and closes the
   plan when done with it (section 9).
-- **Approval** is an approval on the latest commit of the pull request. With merge-on-approve, lastcall merges it;
-  otherwise the owner merges. If the pull request no longer merges cleanly, lastcall closes it and its findings go
-  back to pending.
-- **Deployment** belongs to the owner's CI/CD. After the merge, lastcall can **watch**: if a health signal (an HTTP
-  check, container state, an error tracker) degrades within a time window, it opens a revert pull request and pauses
-  the project. A deploy adapter for Docker Compose over SSH, taken from the prototype, can come later as a plugin.
+- **Approval** is an approval on the latest commit of the pull request. Otherwise the owner merges; with **merge on
+  approve**, a project setting that is off by default, lastcall merges it (`lastcall.approval`, at each sync) when:
+  - someone who may write to the repository (its owner, a member or a collaborator) approved the latest commit, and
+    nobody who may write asks for changes: on a public repository anyone may leave a review;
+  - GitHub says that it merges, and no check run or commit status fails or is still running;
+  - the merge names that commit, so a push after the checks stops it. lastcall squashes when the repository allows
+    it.
+
+  If the pull request no longer merges cleanly, lastcall closes it with a comment, and its findings go back to
+  pending (its ideas, to wanted): a later run makes the change on the current code.
+- **Deployment** belongs to the owner's CI/CD. After the merge, lastcall can **watch** (`lastcall.watch`, a project
+  setting that is off by default). For 24 hours it looks, at each sync, at the checks of the merged commit and, when
+  the project gives one, at a health address. When the checks fail where they passed on the commit before the
+  merge, or the address fails 3 times in a row, it opens a pull request that reverts the change (against the first
+  parent for a merge commit), pauses the project and tells the owner. It never merges the revert. Once the revert is
+  merged, the change's findings are `reverted`, and the judge knows. Container state and error trackers come with
+  signals (v0.5). A deploy adapter for Docker Compose over SSH, taken from the prototype, can come later as a plugin.
 
 ## 12. Security model
 
@@ -538,6 +551,7 @@ runs, and different network rights for setup and verify.
 | Prompt injection in code, logs or issues makes an agent act | Agents have no forge credentials, no write access outside their clone and no network beyond the allowlist. Every change goes through verification and human approval. |
 | Exfiltration of code or secrets | Egress allowlist. Logs are redacted. Scanners report secrets without their values. |
 | An agent lies about the tests | lastcall runs them again in a clean container and reads the exit code itself. |
+| Someone approves a lastcall pull request to get it merged | Merge on approve counts only approvals from people who may write to the repository, on the latest commit; it merges only when nobody who may write asks for changes and no check fails or runs, and it names that commit. The setting lives in lastcall, never in the repository. |
 | A repository's links point lastcall at the host's files | lastcall reads a repository's files on its own side (`.lastcall.yml`, the devcontainer, go.mod, the README...) only when their real place is inside the repository, and the snapshot that steps get leaves out links that leave it. In the sandbox, links resolve inside the container. |
 | A bug in lastcall starts a dangerous container | Only the supervisor has the Docker socket, and it accepts a narrow spec. |
 | A project's environment image is hostile | The owner's repository chooses it, and it runs with the isolation of any step: user 1000, no capabilities, the sandbox network, the change's copy as its only writable mount, and never an account volume or the Docker socket. |
@@ -561,13 +575,14 @@ It is a Flask application served by waitress, inside the service's process (`las
 is the browser's, until the owner picks one. So far it has the sign-in, the GitHub App page (the manifest flow, whose
 page alone may post a form to github.com), the accounts page (add an account, the exact login command for it, and a
 quota reading on demand to check the login), the dashboard (with pause and resume, and a notice when the service stops
-writing its heartbeat) and the projects page: each project's settings, an audit or an improvement on demand, adding a
-repository by its address, and the suggestions, which the service reads from GitHub every 6 hours and the owner can
-read again at any time. Pause holds the bursts only: an audit or an improvement that the owner orders still starts, on
-the free account with the most quota left before its reset. The settings page holds the notifications: the
-destinations, chosen by service with only the fields that service needs (Telegram finds the owner's chat from the
-bot's recent messages) or as any Apprise URL, saved only when their test notification gets through, kept in the secret
-store and shown with their secrets hidden; the events (a pull request opens, decisions or ideas wait, a run fails or
+writing its heartbeat) and the projects page: each project's settings (merge on approve and the watch after the merge
+among them), an audit or an improvement on demand, adding a repository by its address, and the suggestions, which the
+service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
+audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
+reset. The settings page holds the notifications: the destinations, chosen by service with only the fields that
+service needs (Telegram finds the owner's chat from the bot's recent messages) or as any Apprise URL, saved only when
+their test notification gets through, kept in the secret store and shown with their secrets hidden; the events (a pull
+request opens, decisions or ideas wait, lastcall merges an approved pull request or proposes a revert, a run fails or
 stops early, an account has paid usage on or its quota cannot be read, and, if the owner wants, a burst starts) and
 their language. A problem is told once when it starts, and a notification that fails is logged and never stops
 lastcall. Behind a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address and scheme from
@@ -642,7 +657,7 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Project reviewers in the repository (`.lastcall/reviewers/`). Done.
 - Recipe `improve`: improvement plans, and pull requests for the ideas the owner ticks. Done.
 - The gate checks the weekly window of the step's model (question 7). Done.
-- Merge on approve; watch after the merge and open a revert pull request.
+- Merge on approve; watch after the merge and open a revert pull request. Done.
 
 **v0.5: wider reach**
 

@@ -315,10 +315,20 @@ def create_app(
         except ValueError:
             return problem(400, "web.error.form")
         allowed = {"", *project_views.LANGUAGES, project.language or ""}
+        health = form.get("health_url", "").strip()
         if not 0 < weight <= 10 or not 1 <= max_prs <= 10 or language not in allowed:
             return problem(400, "web.error.form")
+        if health and (" " in health or not project_views.health_address(health)):
+            return problem(400, "web.error.form")
         store.update_project(
-            project.repo, active=form.get("active") == "1", weight=weight, language=language or None, max_prs=max_prs
+            project.repo,
+            active=form.get("active") == "1",
+            weight=weight,
+            language=language or None,
+            max_prs=max_prs,
+            merge_on_approve=form.get("merge_on_approve") == "1",
+            watch=form.get("watch") == "1",
+            health_url=health or None,
         )
         return redirect(url_for("projects_page", done="saved"))
 

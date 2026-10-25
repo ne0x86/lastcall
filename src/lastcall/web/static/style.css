@@ -186,7 +186,8 @@ fieldset { display: grid; gap: .5rem; margin: 0; padding: 0; border: 0; }
   .picker-wrap:has(option[value="apprise"]:checked) .dest-apprise { display: block; }
 }
 legend { margin-bottom: .5rem; font-weight: 600; }
-.check.plain { font-weight: 400; }
+.check.plain { align-items: flex-start; font-weight: 400; }  /* long labels: the box stays by their first line */
+.check.plain input { margin-top: .2rem; }
 summary { padding: .5rem 0; color: var(--accent); cursor: pointer; }
 
 button {

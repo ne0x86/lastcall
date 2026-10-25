@@ -649,3 +649,26 @@ def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:
     assert "Ideas para elegir" in page
     assert '<a href="https://github.com/ne0x86/demo/issues/3">2 ideas para ne0x86/demo</a>' in page
     assert "manual · mejora" in page
+
+
+def test_merge_on_approve_and_watch_settings(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    form = {"csrf": web.csrf(), "weight": "1", "language": "", "max_prs": "3", "active": "1"}
+    settings = {**form, "merge_on_approve": "1", "watch": "1", "health_url": " https://api.acme.example/health "}
+    assert web.client.post("/projects/acme/api", data=settings, headers=SITE).status_code == 302
+    project = web.store.projects()[0]
+    assert (project.merge_on_approve, project.watch, project.health_url) == (
+        True,
+        True,
+        "https://api.acme.example/health",
+    )
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'name="merge_on_approve" value="1" checked> Merge after my approval' in page
+    assert 'value="https://api.acme.example/health"' in page
+    for wrong in ("ftp://acme.example/health", "javascript:alert(1)", "https://", "https://a b.example/"):
+        response = web.client.post("/projects/acme/api", data={**form, "health_url": wrong}, headers=SITE)
+        assert response.status_code == 400
+    assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
+    project = web.store.projects()[0]
+    assert (project.merge_on_approve, project.watch, project.health_url) == (False, False, None)

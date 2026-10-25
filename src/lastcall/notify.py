@@ -20,8 +20,8 @@ from lastcall.secretstore import SecretStore
 from lastcall.store import Store
 
 SECRET = "notify"
-EVENTS = ("pr", "decisions", "failed", "paid", "quota", "burst")
-DEFAULT_EVENTS = ("pr", "decisions", "failed", "paid", "quota")
+EVENTS = ("pr", "decisions", "merged", "reverted", "failed", "paid", "quota", "burst")
+DEFAULT_EVENTS = ("pr", "decisions", "merged", "reverted", "failed", "paid", "quota")
 Send = Callable[[Sequence[str], str, str], tuple[bool, str]]  # (delivered everywhere, what Apprise said)
 
 

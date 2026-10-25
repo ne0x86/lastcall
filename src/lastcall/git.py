@@ -115,6 +115,21 @@ def commit(repo: Path, message: str, author: tuple[str, str]) -> str:
     return head(repo)
 
 
+def revert(repo: Path, sha: str, branch: str, author: tuple[str, str]) -> bool:
+    """A new branch with one commit that reverts `sha`; for a merge commit, against its first parent. False, and the
+    clone back where it was, when the revert does not apply cleanly."""
+    parents = subprocess.check_output(["git", "-C", str(repo), "rev-list", "--parents", "-n", "1", sha], text=True)
+    subprocess.run(["git", "-C", str(repo), "switch", "-q", "-c", branch], check=True, capture_output=True)
+    name, email = author
+    who = ["-c", f"user.name={name}", "-c", f"user.email={email}"]
+    mainline = ["-m", "1"] if len(parents.split()) > 2 else []
+    done = subprocess.run(["git", "-C", str(repo), *who, "revert", "--no-edit", *mainline, sha], capture_output=True)
+    if done.returncode != 0:
+        subprocess.run(["git", "-C", str(repo), "revert", "--abort"], capture_output=True)
+        return False
+    return True
+
+
 def push(repo_dir: Path, repo: str, branch: str, token: str) -> None:
     """Push HEAD to a new branch on GitHub. Only lastcall's side does this; agents never hold a token."""
     url = f"https://github.com/{repo}.git"
