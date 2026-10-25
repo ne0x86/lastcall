@@ -26,6 +26,8 @@ It works through each vendor's official command-line tool, with your own login: 
   secrets.
 - 📬 **Delivers.** Small pull requests from your own GitHub App, so you can approve them. Decisions it should not
   take go to one issue.
+- 💡 **Improves.** When you ask, a plan of small improvements that fit your project, checked against the code: one
+  issue with a checkbox per idea. lastcall builds the ones you tick, one pull request each.
 - 🧠 **Remembers.** It never proposes again what you rejected or dismissed, and it finishes what did not fit last
   time.
 - ⏳ **Picks its moment.** It spends only capacity that would otherwise expire. It keeps a reserve for you and stops
@@ -117,7 +119,8 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
   destination only once its test notification gets through.
 
 That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
-does. Pause it from the dashboard at any time, or start an audit yourself from the Projects page.
+does. Pause it from the dashboard at any time, or start an audit or an improvement plan yourself from the Projects
+page.
 
 The web UI listens only on this machine. To open it from elsewhere, put a reverse proxy with HTTPS in front of it
 and set `LASTCALL_TRUST_PROXY=1`.
@@ -140,6 +143,7 @@ docker compose run --rm cli github repos
 docker compose run --rm cli project add <owner/name>
 docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
 docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
+docker compose run --rm cli improve <owner/name> --account claude-max                # a plan; then the ideas you tick
 docker compose run --rm cli status                                                   # accounts, bursts, findings
 docker compose run --rm cli pause                                                    # or resume
 ```
@@ -212,7 +216,7 @@ advice.
   - Engines are plug-ins: one module each, and one login command for all of them.
 - 🔜 **v0.4, closer to the merge.**
   - ✅ Reviewers that your repository defines.
-  - The `improve` recipe.
+  - ✅ The `improve` recipe: plans of small improvements, and pull requests for the ideas you tick.
   - Merge on approve; watch after the merge and revert.
   - ✅ The gate checks the weekly window of each model.
 - 🔭 **v0.5, wider reach.**

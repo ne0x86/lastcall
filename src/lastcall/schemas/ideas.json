@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "ideas"],
+  "properties": {
+    "summary": {"type": "string"},
+    "ideas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "kind", "why", "evidence", "change", "files", "effort", "risk", "verification"],
+        "properties": {
+          "title": {"type": "string"},
+          "kind": {"type": "string", "enum": ["feature", "usability", "docs", "performance", "reliability",
+                                              "maintainability", "tests"]},
+          "why": {"type": "string"},
+          "evidence": {"type": "string"},
+          "change": {"type": "string"},
+          "files": {"type": "array", "items": {"type": "string"}},
+          "effort": {"type": "string", "enum": ["S", "M", "L"]},
+          "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+          "verification": {"type": "string"}
+        }
+      }
+    }
+  }
+}

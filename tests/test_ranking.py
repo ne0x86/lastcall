@@ -57,3 +57,19 @@ def test_commits_pending_findings_and_weight() -> None:
 
 def test_weight_zero_is_never() -> None:
     assert ranked([project("o/a", weight=0)]) == []
+
+
+def test_ideas_the_owner_chose_go_first() -> None:
+    runs = {"o/chosen": {"started": NOW - 2 * DAY, "sha": "a"}, "o/other": {"started": NOW - 30 * DAY, "sha": "b"}}
+    found = rank(
+        [project("o/chosen"), project("o/other")],
+        last_run=lambda r: runs.get(r),
+        open_prs=lambda r: 0,
+        pending=lambda r: 0,
+        new_commits=lambda r, sha: None,
+        busy=set(),
+        now=NOW,
+        wanted=lambda r: 2 if r == "o/chosen" else 0,
+    )
+    assert [c.repo for c in found] == ["o/chosen", "o/other"]  # audited 2 days ago, and it still goes first
+    assert "2 ideas the owner chose" in found[0].reasons

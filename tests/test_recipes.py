@@ -52,7 +52,7 @@ def strict(node: dict[str, Any], where: str) -> None:
         strict(node["items"], f"{where}[]")
 
 
-@pytest.mark.parametrize("name", ["findings", "verdicts"])
+@pytest.mark.parametrize("name", ["findings", "verdicts", "ideas", "idea_verdicts"])
 def test_schemas_are_strict(name: str) -> None:
     strict(schema(name), name)
 

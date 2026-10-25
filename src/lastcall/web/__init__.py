@@ -256,7 +256,7 @@ def create_app(
         found = App.load(secrets)
         view = project_views.build(store, g.lang, clock(), found.install_url if found else "", reading.is_set())
         done = request.args.get("done", "")
-        known = ("added", "saved", "queued", "refreshing")
+        known = ("added", "saved", "queued", "improve", "refreshing")
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page("projects.html", status, v=view, done=message, error=error, install=install)
 
@@ -335,6 +335,20 @@ def create_app(
             store.add_order("audit", project.repo, account or None, clock())
             log(f"Web UI: audit of {project.repo} ordered")
         return redirect(url_for("projects_page", done="queued"))
+
+    @app.post("/projects/<owner>/<name>/improve")
+    @signed_in
+    def improve_now(owner: str, name: str) -> ResponseReturnValue:
+        project = store.project(f"{owner}/{name}")
+        if project is None:
+            return problem(404, "web.error.not_found")
+        account = request.form.get("account", "")
+        if account and account != "*" and account not in {a.id for a in store.accounts(enabled_only=True)}:
+            return problem(400, "web.error.form")
+        if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
+            store.add_order("improve", project.repo, None if account in ("", "*") else account, clock())
+            log(f"Web UI: improvement of {project.repo} ordered")
+        return redirect(url_for("projects_page", done="improve"))
 
     @app.get("/settings")
     @signed_in

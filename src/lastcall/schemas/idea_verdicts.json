@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "verdicts"],
+  "properties": {
+    "summary": {"type": "string"},
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "verdict", "duplicate_of", "value", "effort", "risk", "reason"],
+        "properties": {
+          "id": {"type": "string"},
+          "verdict": {"type": "string", "enum": ["keep", "exists", "duplicate", "against", "vague", "too_large"]},
+          "duplicate_of": {"type": "string"},
+          "value": {"type": "string", "enum": ["high", "medium", "low"]},
+          "effort": {"type": "string", "enum": ["S", "M", "L"]},
+          "risk": {"type": "string", "enum": ["low", "medium", "high"]},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

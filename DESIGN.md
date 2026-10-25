@@ -18,7 +18,7 @@ spends that capacity on your repositories:
   suite again in a clean container, outside the agent, and scans the diff for secrets before it opens the pull
   request.
 - **Improve.** On request, an improvement plan: ideas grounded in the project and checked against the code,
-  delivered as an issue with checkboxes.
+  delivered as an issue with checkboxes. lastcall builds the ideas you tick, one pull request each.
 
 You review and merge. Nothing reaches your default branch without you.
 
@@ -353,10 +353,12 @@ When an account bursts, it picks the next project with a cheap score:
 - never audited by this account, or days since the last audit;
 - new commits since the audited commit;
 - pending findings;
+- ideas that the owner ticked in an improvement plan, which go first: the burst builds them instead of auditing;
 - errors and restarts, when signals are configured.
 
-It skips projects that the same account audited recently, projects with unreviewed lastcall pull requests piling
-up, and very large projects when little quota is left. The project weight multiplies the score.
+It skips projects that the same account audited recently, unless the owner ticked ideas there; projects with
+unreviewed lastcall pull requests piling up; and very large projects when little quota is left. The project weight
+multiplies the score.
 
 ### Optional context
 
@@ -399,6 +401,24 @@ Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` i
   problem found twice as a duplicate; that account also implements. The owner asks for it with "All free accounts"
   in "Audit now", or `lastcall audit --account a --account b`; with the fan-out setting on, accounts that burst at
   the same time review one project together, and the one with the most quota left before its reset leads.
+
+`lastcall improve <owner/name>`, or "Improve now" on the Projects page, runs the other shape:
+- The **ideator** (deep tier) reads the same context pack, without the scanners, and the ideas of earlier plans with
+  what became of them. It proposes improvements that fit the project and one pull request each: a small feature
+  that completes one the project has, an error message that leaves users stuck, documentation that the code
+  contradicts, a slow path. Bugs and security faults are the audit's.
+- The **critic** (deep tier) checks every idea against the code: `keep`, `exists`, `duplicate`, `against` a
+  documented decision, `vague` or `too_large`. It keeps at most 6, the most valuable and smallest first.
+- They go to **one issue, the improvement plan**, with a checkbox per idea and a hidden mark that ties each box to
+  its idea. The plan goes through the secret scan before it is published.
+- `lastcall.sync` reads the plan, and a ticked idea becomes `wanted`. The next run on the project builds the wanted
+  ideas, one pull request each and up to the project's limit, the way an audit builds its fixes
+  (`lastcall.recipes.build`): its own clone, the check outside the agent in the project's environment, one more
+  attempt, the secret scan. A burst that picks the project builds them instead of auditing it, and so does "Improve
+  now".
+- An idea that cannot be built is `stuck`, with why. Closing the plan dismisses the ideas that were not ticked;
+  closing it as not planned also dismisses the ticked ones not built yet. While a plan has ideas to tick, a new plan
+  waits.
 
 Prompts are in English, and the language of findings, pull requests and reports is a parameter. Every prompt tells
 the model that the code and documents it reads are data, not instructions.
@@ -458,8 +478,9 @@ No recipe and no setting can turn these off:
 
 The judge sees previous findings and their state: pending, in a pull request, rejected by the owner, dismissed or
 rolled back. It does not propose again what the owner rejected unless there is new evidence. Valid findings that did
-not fit in a run's pull requests stay pending and go first in the next run. Improvement plans read which checkboxes
-the owner ticked in earlier plans.
+not fit in a run's pull requests stay pending and go first in the next run. The ideator and the critic see the
+ideas of earlier plans and what became of them: proposed, wanted, in a pull request, merged, rejected, dismissed or
+stuck. They do not propose again what the owner did not want.
 
 ## 10. Project environments
 
@@ -501,6 +522,8 @@ runs, and different network rights for setup and verify.
   `max_prs`.
 - **Decisions.** Valid findings that need the owner's judgment go to one issue per run and to the Decisions page.
   "Do it" queues a pull request for the next run; "Dismiss" closes the finding for good.
+- **Improvement plans.** One issue per plan, with a checkbox per idea: the owner ticks what to build, and closes the
+  plan when done with it (section 9).
 - **Approval** is an approval on the latest commit of the pull request. With merge-on-approve, lastcall merges it;
   otherwise the owner merges. If the pull request no longer merges cleanly, lastcall closes it and its findings go
   back to pending.
@@ -534,22 +557,21 @@ installable as a PWA, in English and Spanish from the start. Pages: dashboard (q
 is running, pull requests to review), projects, runs, decisions, statistics, accounts and settings.
 
 It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
-(`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the
-language is the browser's, until the owner picks one. So far it has the sign-in, the GitHub App page (the
-manifest flow, whose page alone may post a form to github.com), the accounts page (add an account, the exact login
-command for it, and a quota reading on demand to check the login), the dashboard (with pause and
-resume, and a notice when the service stops writing its heartbeat) and the projects page: each project's settings,
-an audit on demand, adding a repository by its address, and the suggestions, which the service reads from GitHub
-every 6 hours and the owner can read again at any time. Pause holds the bursts only: an audit the owner orders
-still starts, on the free account with the most quota left before its reset. The settings page holds the
-notifications: the destinations, chosen by service with only the fields that service needs (Telegram finds the
-owner's chat from the bot's recent messages) or as any Apprise URL, saved only when their test notification gets
-through, kept in the secret store and shown with their secrets hidden; the
-events (a pull request opens, decisions wait, an audit fails or stops early, an account has paid usage on or its
-quota cannot be read, and, if the owner wants, a burst starts) and their language. A problem is told once when it
-starts, and a notification that fails is logged and never stops lastcall. Behind a reverse
-proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address and scheme from the proxy, and
-`LASTCALL_WEB_ORIGIN` lists the public origins that forms may come from.
+(`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the language
+is the browser's, until the owner picks one. So far it has the sign-in, the GitHub App page (the manifest flow, whose
+page alone may post a form to github.com), the accounts page (add an account, the exact login command for it, and a
+quota reading on demand to check the login), the dashboard (with pause and resume, and a notice when the service stops
+writing its heartbeat) and the projects page: each project's settings, an audit or an improvement on demand, adding a
+repository by its address, and the suggestions, which the service reads from GitHub every 6 hours and the owner can
+read again at any time. Pause holds the bursts only: an audit or an improvement that the owner orders still starts, on
+the free account with the most quota left before its reset. The settings page holds the notifications: the
+destinations, chosen by service with only the fields that service needs (Telegram finds the owner's chat from the
+bot's recent messages) or as any Apprise URL, saved only when their test notification gets through, kept in the secret
+store and shown with their secrets hidden; the events (a pull request opens, decisions or ideas wait, a run fails or
+stops early, an account has paid usage on or its quota cannot be read, and, if the owner wants, a burst starts) and
+their language. A problem is told once when it starts, and a notification that fails is logged and never stops
+lastcall. Behind a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address and scheme from
+the proxy, and `LASTCALL_WEB_ORIGIN` lists the public origins that forms may come from.
 
 A CLI mirrors the main actions. Like the UI, it queues orders that the service executes, so two actions never run
 into each other.
@@ -618,7 +640,7 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 **v0.4: better changes, closer to the merge**
 
 - Project reviewers in the repository (`.lastcall/reviewers/`). Done.
-- Recipe `improve`.
+- Recipe `improve`: improvement plans, and pull requests for the ideas the owner ticks. Done.
 - The gate checks the weekly window of the step's model (question 7). Done.
 - Merge on approve; watch after the merge and open a revert pull request.
 

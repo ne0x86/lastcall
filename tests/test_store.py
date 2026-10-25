@@ -6,6 +6,7 @@ import pytest
 from lastcall.github import GitHub, GitHubError
 from lastcall.quota import Reading, Window
 from lastcall.recipes.audit import AuditReport
+from lastcall.recipes.improve import ImproveReport
 from lastcall.store import Store, import_runs
 from lastcall.sync import ref, sync
 
@@ -182,6 +183,7 @@ def test_a_database_from_before_v03_gets_the_crew_column(tmp_path: Path) -> None
     old.close()
     store = Store(tmp_path / "old.db")
     assert store.runs()[0]["crew"] == ""
+    assert store.runs()[0]["recipe"] == "audit"  # added in v0.4
     store.start_run("r2", "ne0x86/demo", "claude", "manual", ["chatgpt"])
     assert store.running()[0]["crew"] == "chatgpt"
 
@@ -193,3 +195,88 @@ def test_readings_keep_the_model_of_a_window(store: Store) -> None:
     old = '[{"name": "week", "used_pct": 5.0, "resets_at": null, "role": "expiring", "duration_hours": 168.0}]'
     store.db.execute("INSERT INTO readings VALUES ('codex', 50.0, ?, 0, 'exact')", (old,))  # saved by v0.3
     assert store.readings("codex", 0)[0].windows == (Window("week", 5.0, None, "expiring", 168.0),)
+
+
+# ideas
+
+PLAN = "https://github.com/ne0x86/demo/issues/7"
+
+
+def improved(issue_url: str | None = PLAN) -> ImproveReport:
+    r = ImproveReport(REPO, "abc1234", "claude-code", "English")
+    r.ideas = [{"id": f"I{n}", "title": t, "kind": "feature", "change": "c"} for n, t in enumerate("ABC", 1)]
+    r.verdicts = [{"id": "I1", "verdict": "keep"}, {"id": "I2", "verdict": "keep"}, {"id": "I3", "verdict": "vague"}]
+    r.plan = ["I1", "I2"]
+    r.issue_url = issue_url
+    return r
+
+
+def idea_states(store: Store) -> dict[str, str]:
+    return {r["iid"]: r["status"] for r in store.q("SELECT iid, status FROM ideas ORDER BY id")}
+
+
+def built(*deliveries: dict[str, Any]) -> ImproveReport:
+    r = ImproveReport(REPO, "abc1234", "claude-code", "English")
+    r.deliveries = list(deliveries)
+    return r
+
+
+def test_ideas_keep_their_story(store: Store) -> None:
+    store.record_ideas("run1", improved())
+    assert idea_states(store) == {"I1": "proposed", "I2": "proposed", "I3": "discarded"}
+    assert store.plans() == [{"repo": REPO, "issue_url": PLAN, "n": 2}]
+    assert [e["title"] for e in store.earlier_ideas(REPO)] == ["A", "B"]  # not what the critic left out
+    assert store.tick_ideas(PLAN, {"I1": True, "I2": False}) == 1
+    assert idea_states(store)["I1"] == "wanted" and store.wanted_count(REPO) == 1
+    [wanted] = store.wanted_ideas(REPO)
+    assert (wanted["id"], wanted["title"], wanted["plan"]) == ("I1", "A", PLAN)
+    assert store.tick_ideas(PLAN, {"I1": False}) == 1  # unticked before it was built
+    assert store.tick_ideas(PLAN, {"I1": True}) == 1
+    url = "https://github.com/ne0x86/demo/pull/8"
+    store.record_idea_deliveries("run2", built({"title": "A", "row": wanted["row"], "status": "opened", "url": url}))
+    assert idea_states(store)["I1"] == "in_pr" and store.open_prs(REPO)[0]["number"] == 8
+    store.close_pr(url, merged=True)
+    assert idea_states(store)["I1"] == "merged"
+    assert store.close_plan(PLAN, completed=True) == 1  # I2 was never ticked
+    assert idea_states(store) == {"I1": "merged", "I2": "dismissed", "I3": "discarded"}
+    assert store.plans() == [] and store.open_plans() == []
+
+
+def test_an_idea_that_cannot_be_built_is_stuck(store: Store) -> None:
+    store.record_ideas("run1", improved())
+    store.tick_ideas(PLAN, {"I1": True, "I2": True})
+    rows = {w["id"]: w["row"] for w in store.wanted_ideas(REPO)}
+    store.record_idea_deliveries(
+        "run2",
+        built(
+            {"title": "A", "row": rows["I1"], "status": "red", "note": "1 failed"},
+            {"title": "B", "row": rows["I2"], "status": "stopped", "note": "5h window at 95%"},
+        ),
+    )
+    assert idea_states(store) == {"I1": "stuck", "I2": "wanted", "I3": "discarded"}  # a gate only delays it
+    assert store.close_plan(PLAN, completed=False) == 1  # closed as not planned: I2 is dropped too
+    assert idea_states(store)["I2"] == "dismissed"
+
+
+def test_an_unpublished_plan_leaves_nothing_to_tick(store: Store) -> None:
+    store.record_ideas("run1", improved(issue_url=None))
+    assert set(idea_states(store).values()) == {"discarded"}
+
+
+def test_improvement_runs_are_not_audits(store: Store) -> None:
+    store.start_run("r1", REPO, "claude", "manual", recipe="improve")
+    store.finish_run("r1", "ok", "abc")
+    assert store.last_run(REPO, "claude") is None  # the ranking counts audits
+    assert store.runs()[0]["recipe"] == "improve"
+
+
+def test_sync_reads_the_owners_ticks(store: Store) -> None:
+    store.record_ideas("run1", improved())
+    body = "- [x] **I1** A (x) <!-- lastcall:idea I1 -->\n- [ ] **I2** B (x) <!-- lastcall:idea I2 -->\n"
+    fake = FakeGitHub({"/repos/ne0x86/demo/issues/7": {"state": "open", "body": body}})
+    messages: list[str] = []
+    assert sync(store, cast(GitHub, fake), messages.append) == 1
+    assert idea_states(store)["I1"] == "wanted"
+    fake.answers["/repos/ne0x86/demo/issues/7"] = {"state": "closed", "state_reason": "completed", "body": body}
+    assert sync(store, cast(GitHub, fake), messages.append) == 1
+    assert idea_states(store) == {"I1": "wanted", "I2": "dismissed", "I3": "discarded"}  # what was ticked stays

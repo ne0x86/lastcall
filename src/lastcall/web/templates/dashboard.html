@@ -58,7 +58,7 @@
 
 <section class="card" aria-labelledby="review-title">
   <h2 id="review-title">{{ t("web.review.title") }}</h2>
-  {%- if not v.prs and not v.decisions %}
+  {%- if not v.prs and not v.decisions and not v.plans %}
   <p class="muted">{{ t("web.review.none") }}</p>
   {%- endif %}
   {%- if v.prs %}
@@ -74,6 +74,14 @@
   <ul class="plain">
     {%- for d in v.decisions %}
     <li><a href="{{ d.url }}">{{ d.text }}</a></li>
+    {%- endfor %}
+  </ul>
+  {%- endif %}
+  {%- if v.plans %}
+  <h3>{{ t("web.review.plans") }}</h3>
+  <ul class="plain">
+    {%- for p in v.plans %}
+    <li><a href="{{ p.url }}">{{ p.text }}</a></li>
     {%- endfor %}
   </ul>
   {%- endif %}

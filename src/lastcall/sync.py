@@ -1,8 +1,9 @@
-"""GitHub to lastcall: what the owner did with lastcall's pull requests and decisions issues.
+"""GitHub to lastcall: what the owner did with lastcall's pull requests, decisions issues and improvement plans.
 
-A merged pull request marks its findings `merged`; one closed without merging marks them `rejected`, and the judge
-will not propose them again. A decisions issue closed as completed marks what was left `resolved`; closed as not
-planned, deleted or out of the App's reach, `dismissed`.
+A merged pull request marks its findings and ideas `merged`; one closed without merging marks them `rejected`, and
+they are not proposed again. A decisions issue closed as completed marks what was left `resolved`; closed as not
+planned, deleted or out of the App's reach, `dismissed`. In an open improvement plan, a ticked idea becomes `wanted`,
+and a run builds it; a closed plan dismisses the ideas that were not ticked.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from lastcall.github import GitHub, GitHubError
+from lastcall.recipes.improve import ticked
 from lastcall.store import Store
 
 REF = re.compile(r"https://github\.com/([^/\s]+/[^/\s]+)/(?:issues|pull)/(\d+)")
@@ -25,7 +27,8 @@ def ref(url: str) -> tuple[str, int]:
 
 
 def sync(store: Store, client: GitHub, log: Callable[[str], None] = print) -> int:
-    """Read the state of every open lastcall pull request and decisions issue. Returns how many changed."""
+    """Read the state of every open lastcall pull request, decisions issue and improvement plan. Returns how many
+    changed."""
     tokens: dict[str, str] = {}
     changed = 0
 
@@ -54,4 +57,16 @@ def sync(store: Store, client: GitHub, log: Callable[[str], None] = print) -> in
             completed = data.get("state_reason") == "completed"
             changed += store.close_issue(url, completed)
             log(f"{url}: closed as {'completed' if completed else 'not planned'}")
+    for url in store.open_plans():
+        data = fetch(url, "issues")
+        if data is None:
+            continue
+        if data.get("state") == "closed":
+            changed += store.close_plan(url, data.get("state_reason") == "completed")
+            log(f"{url}: plan closed")
+        else:
+            ticks = store.tick_ideas(url, ticked(str(data.get("body") or "")))
+            if ticks:
+                log(f"{url}: {ticks} idea(s) ticked or unticked")
+            changed += ticks
     return changed
