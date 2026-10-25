@@ -1,0 +1,39 @@
+name: Bug report
+description: Something in lastcall does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thank you for the report. Before you paste anything, remove tokens, keys and the names of private
+        repositories. A security problem goes in a private report instead: see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release you run (the web UI shows it in its footer), or `main`.
+      placeholder: "0.2.2"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The part of `docker compose logs lastcall supervisor` around the problem.
+      render: text
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options:
+        - Linux
+        - macOS (Docker Desktop)
+        - Windows (Docker Desktop)
+        - Other
