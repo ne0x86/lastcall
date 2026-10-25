@@ -36,7 +36,8 @@ from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
 from lastcall.notify import Notifier
 from lastcall.quota import QuotaError, Reading, SpendPolicy, account_rate, plan
-from lastcall.recipes.audit import AuditReport, StepRecord
+from lastcall.recipes.audit import AuditReport
+from lastcall.recipes.steps import StepRecord
 from lastcall.runs import Instance, Options, audit_models, audit_repo, deliver_report, save
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
