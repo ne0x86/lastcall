@@ -220,3 +220,18 @@ def test_accounts_that_burst_together_review_together_when_the_owner_wants(store
     started.pop()()
     (who, repo) = audits[0]
     assert who == "claude+chatgpt" and repo in ("ne0x86/a", "ne0x86/b")
+
+
+def test_no_burst_while_the_judges_model_is_out_of_room(store: Store) -> None:
+    """Claude's own window for Opus, the model of the deep tier, is at the reserve: a burst could not judge."""
+    base = reading("claude", 30, 20)
+    opus = Window("week", 95, NOW + 40 * HOUR, "expiring", 168.0, "Opus")
+    readings: dict[str, Reading | Exception] = {
+        "claude": Reading("claude", (*base.windows, opus), False, "exact", NOW),
+        "chatgpt": QuotaError("x"),
+    }
+    started: list[Callable[[], None]] = []
+    svc = service(store, readings, [], Clock(), started)
+    svc.tick()
+    assert started == []
+    assert svc.plans["claude"].code == "model"

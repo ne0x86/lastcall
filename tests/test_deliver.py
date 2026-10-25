@@ -1,5 +1,5 @@
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -83,7 +83,7 @@ def implementer(text: str | None, out: dict[str, Any]) -> Callable[[Engine, Step
     return run
 
 
-def always() -> tuple[Gate, Reading | None]:
+def always(models: Sequence[str] = ()) -> tuple[Gate, Reading | None]:
     return Gate(True), None
 
 
@@ -199,7 +199,7 @@ def test_delivering_twice_opens_nothing_new(run_dir: Path) -> None:
 
 
 def test_a_closed_gate_stops_delivery(run_dir: Path) -> None:
-    def closed() -> tuple[Gate, Reading | None]:
+    def closed(models: Sequence[str]) -> tuple[Gate, Reading | None]:
         return Gate(False, "week window at 91%"), None
 
     rep = deliver(

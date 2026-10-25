@@ -114,6 +114,7 @@
   "web.window.day": "Daily window",
   "web.window.month": "Monthly window",
   "web.window.other": "{name} window",
+  "web.window.model": "{window} for {model}",
   "web.window.used": "{pct} used",
   "web.window.resets": "resets {when}",
 
@@ -123,6 +124,7 @@
   "web.plan.paid": "No burst: paid usage is on.",
   "web.plan.no-window": "No burst: no window of this account expires.",
   "web.plan.no-reset": "No burst: the provider does not say when the window resets.",
+  "web.plan.model": "No burst: the audit needs {model}, and its own window is at {used}. The rest is your reserve.",
   "web.plan.manual": "Manual: only the runs you start.",
 
   "web.review.title": "Waiting for you",

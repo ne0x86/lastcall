@@ -146,7 +146,8 @@ flowchart LR
 5. For each pull request that the judge planned, an implementer works in its own clone. lastcall verifies the
    change, scans it, commits, pushes and opens the pull request.
 6. The gates run before every step. If a throttle window is full, the run waits for its reset. If the reserve is
-   reached, the run stops and continues in the next burst.
+   reached, in the account's window or in the window of the step's model, the run stops and continues in the next
+   burst.
 7. The owner reviews and merges. Findings, decisions and outcomes feed the next run.
 
 ## 6. Accounts, quota and spending
@@ -167,7 +168,13 @@ class Window:
     used_pct: float
     resets_at: float | None  # epoch seconds
     role: Literal["expiring", "throttle"]
+    model: str = ""  # the model it limits, such as "Opus"; "" for the whole account
 ```
+
+A window can also limit **one model**. Claude reports a weekly window for some models (Opus, Sonnet, and others that
+the server names). Such a window does not decide whether to spend: only the account's windows do. It limits the steps
+whose model name holds the window's model, word by word: `Opus` limits `opus`, `opus[1m]` and `claude-opus-5-5`,
+and not `haiku`.
 
 Each quota reader declares its **fidelity**:
 
@@ -183,11 +190,15 @@ in the sandbox with the account volume mounted:
 
 - Claude Code: a stream-json session with the `initialize` and `get_usage` control requests. The answer carries
   `rate_limits.five_hour` and `rate_limits.seven_day` (`utilization` 0–100, `resets_at`) and `extra_usage.is_enabled`.
+  The weekly windows of one model come as `seven_day_opus`, `seven_day_sonnet` and the `model_scoped` list, where the
+  server names each model (`display_name`).
   For the CLI, fetching the plan usage is "nonessential traffic": with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`,
   the runner default, `rate_limits` comes back null. The probe unsets it and keeps telemetry and error reporting
   off.
 - Codex: `codex app-server`, `initialize` and then `account/rateLimits/read`. The answer carries `primary` and
-  `secondary` windows (`usedPercent`, `windowDurationMins`, `resetsAt`), `credits` and `spendControlReached`.
+  `secondary` windows (`usedPercent`, `windowDurationMins`, `resetsAt`), `credits` and `spendControlReached`. It
+  also has `rateLimitsByLimitId`, one snapshot per metered bucket, where `codex` is the general one. lastcall reads
+  only the general one so far: the accounts tested have no other.
 
 ### Spend policies
 
@@ -205,10 +216,14 @@ in the sandbox with the account volume mounted:
 
 The gates run before every step:
 
-- the account is not above its reserve;
+- the account is not above its reserve, and neither is the window of the step's model;
 - no throttle window is above its threshold (default 90%); otherwise the step waits for that window's reset;
 - **no paid usage is active.** If extra usage, credits or overage billing are enabled on the account, lastcall
   stops and tells the owner.
+
+The first step of a run also checks the models of the steps after it, such as the judge's. A run whose judge could
+not start therefore stops before its reviewers spend anything. For the same reason, an account does not burst while
+the window of a model that the audit needs is at the reserve.
 
 ### Tiers and models
 
@@ -600,7 +615,7 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 **v0.4: better changes, closer to the merge**
 
 - Recipe `improve`; project reviewers in the repository.
-- The gate checks the weekly window of the step's model (question 7).
+- The gate checks the weekly window of the step's model (question 7). Done.
 - Merge on approve; watch after the merge and open a revert pull request.
 
 **v0.5: wider reach**
@@ -630,8 +645,8 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 5. Tier names and the default model table: who maintains them, and how often?
 6. ~~Packaging: Python version and dependency policy.~~ Decided in October 2026: Python 3.12 or later. A runtime
    dependency comes in only when a feature needs it, and its pull request says why. Few and well known: PyYAML for
-   recipes, Apprise for notifications, cryptography for secrets, and Flask with waitress for the web UI. Development uses uv; CI runs ruff,
-   mypy (strict) and pytest on the oldest and the newest supported Python.
-7. Claude also reports per-model weekly windows (`seven_day_opus`, `seven_day_sonnet`, `model_scoped`). lastcall
-   reads only the 5-hour and weekly windows for now. A step on a model whose own window is full would fail; the gate
-   should check the window of the step's model.
+   recipes, Apprise for notifications, cryptography for secrets, and Flask with waitress for the web UI. Development
+   uses uv; CI runs ruff, mypy (strict) and pytest on the oldest and the newest supported Python.
+7. ~~Per-model weekly windows.~~ Decided in October 2026: the Claude reader keeps them as windows of one model
+   (section 6). The gate of each step checks the window of its model, the first step of a run also checks the models
+   of the later steps, and no burst starts while a model that the audit needs is at the reserve.

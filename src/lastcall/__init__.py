@@ -1,3 +1,3 @@
 """lastcall: spend the AI quota you already pay for on small, verified pull requests before it resets."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0.dev0"

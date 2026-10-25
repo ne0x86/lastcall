@@ -77,3 +77,19 @@ def test_the_login_script_knows_every_engine() -> None:
         branch = script[script.index(f"  {name})") :].split(";;")[0]
         assert f'export {engine.home_env}="$account"' in branch, name
         assert f"exec {' '.join(engine.login)}" in branch, name
+
+
+def test_describe_a_reading_with_the_window_of_a_model() -> None:
+    reading = Reading(
+        "claude-max",
+        (
+            Window("week", 36, NOW + 100 * HOUR, "expiring", 168.0),
+            Window("week", 95, NOW + 100 * HOUR, "expiring", 168.0, "Opus"),
+        ),
+        False,
+        "exact",
+        NOW,
+    )
+    text = describe(reading, NOW, ["sonnet", "opus"])
+    assert "week       36.0% used" in text and "week Opus  95.0% used" in text  # the labels line up
+    assert "burst: no (week Opus window at 95% (reserve 10%))" in text

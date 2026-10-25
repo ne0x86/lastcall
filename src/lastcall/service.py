@@ -11,7 +11,8 @@ Every minute it ticks:
 - with fan-out on, accounts that burst at the same time review one project together, with one judge;
 - each bursting account that is free starts a full audit of the project the ranking puts first. One run per account
   at a time, and never the same project by two accounts at once. Inside a run, a full 5-hour window makes the run
-  wait for its reset; the reserve or any paid usage stops it.
+  wait for its reset; the reserve or any paid usage stops it. An account does not burst while the window of a model
+  that the audit needs, such as Claude's weekly window for Opus, is at the reserve.
 
 `lastcall pause` stops new bursts (a running one finishes, and the owner's orders still start); `lastcall resume`
 lets them start again.
@@ -30,7 +31,7 @@ from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.ranking import rank
-from lastcall.runs import Instance, Options, audit_repo
+from lastcall.runs import Instance, Options, audit_models, audit_repo
 from lastcall.sandbox import SandboxError
 from lastcall.store import AccountRow
 from lastcall.sync import sync
@@ -126,7 +127,7 @@ class Service:
             history = self.inst.store.readings(account.id, now - RATE_WINDOW)
             rate = account_rate(history, reading, policy, DEFAULT_RATE)
             before = self.plans.get(account.id)
-            self.plans[account.id] = current = plan(reading, policy, rate, now)
+            self.plans[account.id] = current = plan(reading, policy, rate, now, audit_models(account.engine))
             if current.burst and not (before and before.burst):
                 self.log(f"{account.id}: burst starts ({current.reason}; {rate:.1f}%/h)")
                 if self.inst.notify:

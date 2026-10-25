@@ -1,10 +1,11 @@
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from lastcall.engines.base import Engine, StepResult, StepSpec
 from lastcall.engines.scripted import Scripted
 from lastcall.pack import Pack
-from lastcall.quota import Gate, Reading, Window
+from lastcall.quota import Gate, Reading, SpendPolicy, Window, gate
 from lastcall.recipes.audit import markdown, run_audit
 from lastcall.runner import run_local
 
@@ -69,7 +70,7 @@ def runner(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
     return run_local(engine, step)
 
 
-def always() -> tuple[Gate, Reading | None]:
+def always(models: Sequence[str] = ()) -> tuple[Gate, Reading | None]:
     return Gate(True), READING
 
 
@@ -106,7 +107,7 @@ def test_reviewers_then_judge(tmp_path: Path) -> None:
 def test_a_closed_gate_stops_the_run(tmp_path: Path) -> None:
     calls: list[int] = []
 
-    def two_steps() -> tuple[Gate, Reading | None]:
+    def two_steps(models: Sequence[str]) -> tuple[Gate, Reading | None]:
         calls.append(1)
         return (Gate(True), READING) if len(calls) <= 2 else (Gate(False, "5h window at 95%", 600.0), READING)
 
@@ -216,7 +217,7 @@ def test_peers_review_the_same_pack_and_one_judge_weighs_everything(tmp_path: Pa
 def test_a_peer_out_of_quota_stops_alone(tmp_path: Path) -> None:
     from lastcall.recipes.audit import Peer
 
-    def closed() -> tuple[Gate, Reading | None]:
+    def closed(models: Sequence[str]) -> tuple[Gate, Reading | None]:
         return Gate(False, "week window at 92% (reserve 10%)"), None
 
     report = run_audit(
@@ -231,3 +232,73 @@ def test_a_peer_out_of_quota_stops_alone(tmp_path: Path) -> None:
     assert report.status == "ok" and report.stopped is None  # the run goes on
     assert report.notes == ["chatgpt stopped reviewing: week window at 92% (reserve 10%)"]
     assert not any(s.role.endswith("@chatgpt") for s in report.steps)
+
+
+def test_the_first_step_checks_every_model_of_the_run(tmp_path: Path) -> None:
+    asked: list[list[str]] = []
+
+    def check(models: Sequence[str]) -> tuple[Gate, Reading | None]:
+        asked.append(list(models))
+        return Gate(True), READING
+
+    run_audit(
+        repo="ne0x86/demo",
+        pack=pack(tmp_path),
+        engine=Scripted(SCRIPT),
+        tiers=TIERS,
+        run_step=runner,
+        check_quota=check,
+    )
+    # the first reviewer checks the reviewers' model and the judge's; then each step checks its own
+    assert asked == [["mid", "big"], ["mid"], ["mid"], ["mid"], ["big"]]
+
+
+def test_a_model_out_of_room_stops_the_run_before_it_spends(tmp_path: Path) -> None:
+    """The judge's model has its own window, at the reserve: no reviewer runs, since the judge could not."""
+    full = Reading(
+        "acct",
+        (Window("week", 10.0, None, "expiring"), Window("week", 95.0, None, "expiring", model="big")),
+        False,
+        "exact",
+        0.0,
+    )
+
+    def check(models: Sequence[str]) -> tuple[Gate, Reading | None]:
+        return gate(full, SpendPolicy(), 0.0, models), full
+
+    report = run_audit(
+        repo="ne0x86/demo",
+        pack=pack(tmp_path),
+        engine=Scripted(SCRIPT),
+        tiers=TIERS,
+        run_step=runner,
+        check_quota=check,
+    )
+    assert report.status == "partial"
+    assert report.stopped == "week big window at 95% (reserve 10%)"
+    assert report.steps == []
+
+
+def test_a_peer_checks_only_its_reviewers_models(tmp_path: Path) -> None:
+    from lastcall.recipes.audit import Peer
+
+    asked: list[list[str]] = []
+
+    def peer_check(models: Sequence[str]) -> tuple[Gate, Reading | None]:
+        asked.append(list(models))
+        return Gate(True), READING
+
+    quiet = {
+        f"reviewer:{r}@chatgpt": ok({"summary": "", "findings": []})
+        for r in ("bugs", "hygiene", "performance", "security")
+    }
+    run_audit(
+        repo="ne0x86/demo",
+        pack=pack(tmp_path),
+        engine=Scripted(SCRIPT),
+        tiers=TIERS,
+        run_step=runner,
+        check_quota=always,
+        peers=[Peer("chatgpt", Scripted(quiet), TIERS, runner, peer_check)],
+    )
+    assert asked[0] == ["mid"]  # a peer does not judge

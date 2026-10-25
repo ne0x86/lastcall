@@ -59,7 +59,8 @@ engine is one module and a few small changes:
    - how a step becomes a command line (`invocation`), and how the output becomes events and a result (`parse` and
      `result`).
 2. **If the CLI can read the account's quota without calling the model,** add `quota_invocation` and
-   `quota_reading` (`QuotaProbe`). Without them, lastcall cannot plan bursts for that engine's accounts.
+   `quota_reading` (`QuotaProbe`). Without them, lastcall cannot plan bursts for that engine's accounts. A window
+   that limits only some models names the model in `Window.model`.
 3. **Register it** in `src/lastcall/engines/__init__.py`.
 4. **Pick its models** for each tier (fast, balanced, deep) in `src/lastcall/data/tiers.json`.
 5. **Install its CLI**, at a pinned version, in `runner/Dockerfile`, and add its login to `runner/login.sh`. A test

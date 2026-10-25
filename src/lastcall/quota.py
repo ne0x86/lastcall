@@ -2,13 +2,15 @@
 
 A reading is a list of windows. Expiring windows decide whether to spend: their leftover is lost at the reset (the
 weekly window of a subscription). Throttle windows decide when to wait: when one is nearly full, the next step waits
-for its reset (the 5-hour window). See DESIGN.md, section 6.
+for its reset (the 5-hour window). A window can also limit one model only (Claude's weekly window for Opus): it does
+not decide whether to spend, but the steps on that model stop when it reaches the reserve. See DESIGN.md, section 6.
 """
 
 from __future__ import annotations
 
 import itertools
-from collections.abc import Sequence
+import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -41,6 +43,22 @@ class Window:
     resets_at: float | None  # epoch seconds; None when the provider does not say
     role: Role
     duration_hours: float | None = None
+    model: str = ""  # the model it limits, as the provider names it ("Opus"); "" when it limits the whole account
+
+    @property
+    def label(self) -> str:
+        """The name, with the model when the window limits only one: "week", "week Opus"."""
+        return f"{self.name} {self.model}" if self.model else self.name
+
+    def limits(self, model: str) -> bool:
+        """Whether the window limits a step on `model`. An account's window limits every step. A model's window
+        limits the steps whose model name holds the window's, word by word: "Opus" limits "opus", "opus[1m]" and
+        "claude-opus-5-5", and not "haiku"."""
+        return not self.model or _words(self.model) in _words(model)
+
+
+def _words(name: str) -> str:
+    return "-" + "-".join(re.findall(r"[a-z0-9]+", name.lower())) + "-"
 
 
 @dataclass(frozen=True)
@@ -52,15 +70,22 @@ class Reading:
     taken_at: float
 
     def window(self, name: str) -> Window | None:
-        return next((w for w in self.windows if w.name == name), None)
+        """The account's window of that name; never a model's."""
+        return next((w for w in self.windows if w.name == name and not w.model), None)
 
     @property
     def expiring(self) -> tuple[Window, ...]:
-        return tuple(w for w in self.windows if w.role == "expiring")
+        """The account's expiring windows, which decide whether to spend."""
+        return tuple(w for w in self.windows if w.role == "expiring" and not w.model)
 
     @property
     def throttles(self) -> tuple[Window, ...]:
-        return tuple(w for w in self.windows if w.role == "throttle")
+        """The account's throttle windows."""
+        return tuple(w for w in self.windows if w.role == "throttle" and not w.model)
+
+    def limiting(self, models: Sequence[str]) -> tuple[Window, ...]:
+        """The windows that limit steps on these models: the account's, and those of each model."""
+        return tuple(w for w in self.windows if not w.model or any(w.limits(m) for m in models))
 
 
 @dataclass(frozen=True)
@@ -80,15 +105,20 @@ class Plan:
     hours_to_reset: float | None = None
     hours_needed: float = 0.0
     starts_in_hours: float | None = None
-    code: str = ""  # the reason as a key for the web UI: manual, paid, no-window, no-reset, small, now or later
+    code: str = ""  # the reason, for the web UI: manual, paid, no-window, model, no-reset, small, now or later
+    full: Window | None = None  # code "model": the window of a model that the burst needs, at the reserve
 
 
-def plan(reading: Reading, policy: SpendPolicy, rate_pct_per_hour: float, now: float) -> Plan:
+def plan(
+    reading: Reading, policy: SpendPolicy, rate_pct_per_hour: float, now: float, models: Sequence[str] = ()
+) -> Plan:
     """Whether the account should burst now.
 
     The burst starts when the time left until the reset is just enough to spend the leftover at the rate a burst
     can sustain (with a 10% margin and one extra hour), and never more than `max_lead_hours` before the reset. With
     several expiring windows, the one that resets first sets the deadline and the smallest leftover sets the amount.
+    `models` are those the burst's steps use: while the window of one of them is at the reserve, those steps could
+    not run, so there is no burst.
     """
     if policy.kind != "before-reset":
         return Plan(False, f"policy {policy.kind}: only runs started by the owner", code="manual")
@@ -97,6 +127,14 @@ def plan(reading: Reading, policy: SpendPolicy, rate_pct_per_hour: float, now: f
     windows = reading.expiring
     if not windows:
         return Plan(False, "no expiring window to spend", code="no-window")
+    full = at_reserve((w for w in reading.limiting(models) if w.model), policy)
+    if full:
+        return Plan(
+            False,
+            f"{full.label} window at {full.used_pct:g}% (reserve {policy.reserve_pct:g}%)",
+            code="model",
+            full=full,
+        )
     leftover = min(100.0 - policy.reserve_pct - w.used_pct for w in windows)
     resets = [w.resets_at for w in windows if w.resets_at is not None]
     if not resets:
@@ -120,20 +158,27 @@ class Gate:
     wait_seconds: float = 0.0  # > 0: wait this long for a throttle window to reset, then check again
 
 
-def gate(reading: Reading | None, policy: SpendPolicy, now: float) -> Gate:
-    """The checks before every step. Without a reading nothing is spent."""
+def gate(reading: Reading | None, policy: SpendPolicy, now: float, models: Sequence[str] = ()) -> Gate:
+    """The checks before every step, against the account's windows and those of the step's models. Without a
+    reading nothing is spent."""
     if reading is None:
         return Gate(False, "no quota reading")
     if reading.paid_usage:
         return Gate(False, "paid usage is active on this account")
-    for w in reading.expiring:
-        if w.used_pct >= 100.0 - policy.reserve_pct:
-            return Gate(False, f"{w.name} window at {w.used_pct:g}% (reserve {policy.reserve_pct:g}%)")
-    for w in reading.throttles:
-        if w.used_pct >= policy.throttle_max_pct:
+    windows = reading.limiting(models)
+    full = at_reserve(windows, policy)
+    if full:
+        return Gate(False, f"{full.label} window at {full.used_pct:g}% (reserve {policy.reserve_pct:g}%)")
+    for w in windows:
+        if w.role == "throttle" and w.used_pct >= policy.throttle_max_pct:
             reset = w.resets_at if w.resets_at is not None else now + 600.0
-            return Gate(False, f"{w.name} window at {w.used_pct:g}%", max(60.0, reset - now + 60.0))
+            return Gate(False, f"{w.label} window at {w.used_pct:g}%", max(60.0, reset - now + 60.0))
     return Gate(True)
+
+
+def at_reserve(windows: Iterable[Window], policy: SpendPolicy) -> Window | None:
+    """The first expiring window whose use has reached the owner's reserve."""
+    return next((w for w in windows if w.role == "expiring" and w.used_pct >= 100.0 - policy.reserve_pct), None)
 
 
 def learn_ratio(

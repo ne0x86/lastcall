@@ -69,7 +69,7 @@ lastcall drives each vendor's official command-line tool, with your own login:
 
 | Engine | Plans | Quota it reads |
 |---|---|---|
-| Claude Code (`claude-code`) | Claude Pro, Max and Team | the 5-hour and weekly windows, exactly |
+| Claude Code (`claude-code`) | Claude Pro, Max and Team | the 5-hour and weekly windows, and each model's own weekly window, exactly |
 | Codex (`codex`) | ChatGPT Plus, Pro and Business | the 5-hour and weekly windows, exactly |
 
 The rest of lastcall only knows the engine contract. Adding another tool is one module and a few small changes:
@@ -189,7 +189,7 @@ advice.
 - 🔜 **v0.4, closer to the merge.**
   - The `improve` recipe, and reviewers that your repository defines.
   - Merge on approve; watch after the merge and revert.
-  - The gate checks the weekly window of each model.
+  - ✅ The gate checks the weekly window of each model.
 - 🔭 **v0.5, wider reach.**
   - API keys and local models: opencode, OpenRouter, Ollama.
   - More recipes: issues, tests, dependencies.

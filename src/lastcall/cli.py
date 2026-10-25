@@ -37,7 +37,7 @@ from lastcall.github_setup import SetupServer, run_setup
 from lastcall.notify import Notifier
 from lastcall.quota import QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.recipes.audit import AuditReport, StepRecord
-from lastcall.runs import Instance, Options, audit_repo, deliver_report, save
+from lastcall.runs import Instance, Options, audit_models, audit_repo, deliver_report, save
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.service import DEFAULT_RATE as SERVICE_RATE
@@ -337,7 +337,7 @@ def status(st: Store) -> str:
         readings = st.readings(a.id, now - 7 * 86_400)
         last = readings[-1] if readings else None
         quota_text = (
-            ", ".join(f"{w.name} {w.used_pct:g}%" for w in last.windows)
+            ", ".join(f"{w.label} {w.used_pct:g}%" for w in last.windows)
             + f" ({(now - last.taken_at) / 60:.0f} min ago)"
             if last
             else "no reading yet"
@@ -346,7 +346,7 @@ def status(st: Store) -> str:
         if last:
             policy = SpendPolicy(reserve_pct=a.reserve_pct)
             rate = account_rate(st.readings(a.id, now - RATE_WINDOW), last, policy, SERVICE_RATE)
-            next_burst = plan(last, policy, rate, now)
+            next_burst = plan(last, policy, rate, now, audit_models(a.engine))
             when = "now" if next_burst.burst else "no"
             lines.append(f"    burst: {when} ({next_burst.reason}; {rate:.1f}% of the week per hour)")
     lines.append("Projects")
@@ -433,16 +433,17 @@ def quota(acc: Account) -> int:
         print(f"{acc.id}: {e}", file=sys.stderr)
         return 1
     store().record_reading(reading)
-    print(describe(reading, now))
+    print(describe(reading, now, audit_models(acc.engine)))
     return 0
 
 
-def describe(reading: Reading, now: float) -> str:
+def describe(reading: Reading, now: float, models: Sequence[str] = ()) -> str:
     lines = [f"{reading.account} ({reading.fidelity})"]
+    width = max([5, *(len(w.label) for w in reading.windows)])
     for w in reading.windows:
         reset = datetime.fromtimestamp(w.resets_at, UTC).strftime("%a %d %H:%M UTC") if w.resets_at else "unknown"
-        lines.append(f"  {w.name:<5} {w.used_pct:5.1f}% used, resets {reset} ({w.role})")
+        lines.append(f"  {w.label:<{width}} {w.used_pct:5.1f}% used, resets {reset} ({w.role})")
     lines.append(f"  paid usage: {'ACTIVE, nothing will be spent' if reading.paid_usage else 'off'}")
-    p = plan(reading, SpendPolicy(), DEFAULT_RATE, now)
+    p = plan(reading, SpendPolicy(), DEFAULT_RATE, now, models)
     lines.append(f"  burst: {'yes' if p.burst else 'no'} ({p.reason})")
     return "\n".join(lines)
