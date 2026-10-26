@@ -15,6 +15,7 @@ import hmac
 import json
 import math
 import mimetypes
+import re
 import secrets as tokens
 import threading
 import time
@@ -29,7 +30,7 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, cron, destinations, engines, i18n, projects
+from lastcall import __version__, cron, destinations, engines, i18n, projects, signals
 from lastcall.accounts import ACCOUNT_ID, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
@@ -47,6 +48,9 @@ LANGUAGES = (("en", "English"), ("es", "Español"))
 DOCS = "https://github.com/ne0x86/lastcall#readme"
 TERMS = "https://github.com/ne0x86/lastcall/blob/main/DESIGN.md#3-provider-terms-and-responsible-use"
 CRON_HELP = "https://crontab.guru/"  # reads a cron expression back in words
+SENTRY_TOKENS = "https://sentry.io/settings/account/api/auth-tokens/"  # where a Sentry user creates a token
+ORG_SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+TRACKER_PROJECT = re.compile(r"[A-Za-z0-9._-]{0,100}")
 SERVICES = "https://github.com/caronc/apprise#supported-notifications"  # every service Apprise reaches, with its URL
 STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
@@ -83,6 +87,7 @@ def create_app(
     read_quota: Callable[[Account], Reading] | None = None,
     exchange: Exchange = exchange_code,
     fetch: Fetch = urlopen,
+    signals_fetch: signals.Fetch = signals.fetch_json,
 ) -> Flask:
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
@@ -258,6 +263,7 @@ def create_app(
     def show_projects(status: int = 200, error: str = "", install: str = "") -> ResponseReturnValue:
         found = App.load(secrets)
         view = project_views.build(store, g.lang, clock(), found.install_url if found else "", reading.is_set())
+        view.tracker = signals.Tracker.load(secrets) is not None
         done = request.args.get("done", "")
         known = ("added", "saved", "queued", "improve", "tests", "deps", "refreshing")
         message = t(f"web.done.{done}") if done in known and not error else ""
@@ -323,6 +329,9 @@ def create_app(
             return problem(400, "web.error.form")
         if health and (" " in health or not project_views.health_address(health)):
             return problem(400, "web.error.form")
+        tracked = form.get("signals", project.signals).strip()  # the field shows only with a tracker connected
+        if not TRACKER_PROJECT.fullmatch(tracked):
+            return problem(400, "web.error.form")
         store.update_project(
             project.repo,
             active=form.get("active") == "1",
@@ -334,6 +343,7 @@ def create_app(
             health_url=health or None,
             tests=form.get("tests") == "1",
             deps=form.get("deps") == "1",
+            signals=tracked,
         )
         return redirect(url_for("projects_page", done="saved"))
 
@@ -400,8 +410,11 @@ def create_app(
         service: str = "",
         values: Mapping[str, str] | None = None,
         chats: Sequence[tuple[str, str]] = (),
+        signals_error: str = "",
+        tried: Mapping[str, str] | None = None,
     ) -> ResponseReturnValue:
         chosen, language, filled = notifications.events(), notifications.language(), dict(values or {})
+        tracker = signals.Tracker.load(secrets)
         view = {
             "destinations": [(n, describe(url) or "?") for n, url in enumerate(notifications.urls())],
             "events": [(e, t(f"web.notify.event.{e}"), e in chosen) for e in EVENTS],
@@ -419,9 +432,12 @@ def create_app(
             "topic": filled.get("topic") or destinations.random_topic(),
             "chats": list(chats),
             "fanout": store.setting("fanout") == "yes",
+            "tracker": tracker,
+            "signals_url": (tried or {}).get("url") or (tracker.url if tracker else "https://sentry.io"),
+            "signals_org": (tried or {}).get("org") or (tracker.org if tracker else ""),
         }
         done = request.args.get("done", "")
-        known = ("saved", "notify_added", "notify_removed", "notify_sent")
+        known = ("saved", "notify_added", "notify_removed", "notify_sent", "signals", "signals_removed")
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page(
             "settings.html",
@@ -432,7 +448,36 @@ def create_app(
             details=details,
             github=App.load(secrets),
             services=SERVICES,
+            signals_error=signals_error,
+            sentry_tokens=SENTRY_TOKENS,
         )
+
+    @app.post("/settings/signals")
+    @signed_in
+    def connect_signals() -> ResponseReturnValue:
+        """Connect the owner's error tracker, once a request with the token gets through."""
+        form = request.form
+        url, org, token = form.get("url", "").strip().rstrip("/"), form.get("org", "").strip(), form.get("token", "")
+        current = signals.Tracker.load(secrets)
+        token = token.strip() or (current.token if current else "")
+        tried = {"url": url, "org": org}
+        if not signals.address(url) or not ORG_SLUG.fullmatch(org) or not token:
+            return show_settings(400, signals_error=t("web.signals.bad"), tried=tried)
+        tracker = signals.Tracker(url, org, token)
+        try:
+            signals.check(tracker, signals_fetch)
+        except signals.SignalsError as e:
+            return show_settings(400, signals_error=t("web.signals.failed", error=str(e)), tried=tried)
+        tracker.save(secrets)
+        log(f"Web UI: errors in production read from {url}, organization {org}")
+        return redirect(url_for("settings_page", done="signals") + "#signals")
+
+    @app.post("/settings/signals/remove")
+    @signed_in
+    def disconnect_signals() -> ResponseReturnValue:
+        secrets.delete(signals.SECRET)
+        log("Web UI: error tracker disconnected")
+        return redirect(url_for("settings_page", done="signals_removed") + "#signals")
 
     @app.post("/settings/notify/add")
     @signed_in

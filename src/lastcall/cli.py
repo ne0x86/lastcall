@@ -3,7 +3,9 @@
 lastcall login <account> --engine <engine>      # on the host: the CLI's own login, inside the sandbox
 lastcall account add <account> --engine <engine> [--language Spanish] [--reserve 10]
 lastcall account add <account> --engine opencode --provider openrouter --model <model> --budget 20  # an API key
-lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive]
+lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive] [--signals <tracker project>]
+lastcall signals connect --url https://sentry.io --org <slug>   # the error tracker, Sentry or GlitchTip
+lastcall signals show <owner/name>                # the errors in production that the audits read
 lastcall quota <account>                        # read an account's quota through the supervisor
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
 lastcall github repos                           # installed repositories, with lastcall's suggestions
@@ -36,7 +38,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines, projects, web
+from lastcall import engines, projects, signals, web
 from lastcall.accounts import (
     Account,
     check_spending,
@@ -128,8 +130,20 @@ def main(argv: list[str] | None = None) -> int:
     proj_add.add_argument("--weight", type=float, default=1.0, help="0 never, 2 twice the priority (default 1)")
     proj_add.add_argument("--language", default=None, help="language for this project, over the account's")
     proj_add.add_argument("--inactive", action="store_true", help="keep it, but do not audit it")
+    proj_add.add_argument("--signals", help="its project in the error tracker (Sentry or GlitchTip), by slug")
     proj.add_parser("list", help="the projects")
 
+    sig = commands.add_parser("signals", help="errors in production, from Sentry or GlitchTip").add_subparsers(
+        dest="action", required=True
+    )
+    sig_connect = sig.add_parser("connect", help="connect the error tracker, with a token that can only read")
+    sig_connect.add_argument("--url", required=True, help="https://sentry.io, or the address of your GlitchTip")
+    sig_connect.add_argument("--org", required=True, help="the organization's slug, as in the tracker's URLs")
+    sig_connect.add_argument(
+        "--token-file", help="the token: a file that holds it, or - to read it from standard input (default: asked)"
+    )
+    sig_show = sig.add_parser("show", help="the errors in production of a project, as the audits read them")
+    sig_show.add_argument("repo", help="owner/name of a project with its project in the tracker")
     quota_cmd = commands.add_parser("quota", help="read an account's quota through the supervisor")
     quota_cmd.add_argument("account")
 
@@ -225,9 +239,16 @@ def dispatch(args: argparse.Namespace) -> int:
                 )
             return 0
         case "project", "add":
-            store().add_project(args.repo, not args.inactive, args.weight, args.language)
+            st = store()
+            st.add_project(args.repo, not args.inactive, args.weight, args.language)
+            if args.signals is not None:
+                st.set_signals(args.repo, args.signals.strip())
             print(f"Project {args.repo}: {'inactive' if args.inactive else 'active'}, weight {args.weight:g}.")
             return 0
+        case "signals", "connect":
+            return connect_signals(args.url, args.org, args.token_file)
+        case "signals", "show":
+            return show_signals(args.repo)
         case "project", "list":
             for p in store().projects():
                 state = "active" if p.active and p.weight > 0 else "inactive"
@@ -322,6 +343,40 @@ def add_account(args: argparse.Namespace) -> int:
     return 0
 
 
+def connect_signals(url: str, org: str, token_file: str | None) -> int:
+    url = url.strip().rstrip("/")
+    if not signals.address(url):
+        raise ValueError(f"not an address lastcall can read: {url!r}")
+    current = signals.Tracker.load(secret_store())
+    token = read_key(token_file, ask=True) or (current.token if current else "")
+    if not token:
+        raise ValueError("give the token with --token-file: a file that holds it, or - for standard input")
+    tracker = signals.Tracker(url, org.strip(), token)
+    try:
+        signals.check(tracker)
+    except signals.SignalsError as e:
+        print(f"Not connected: {e}", file=sys.stderr)
+        return 1
+    tracker.save(secret_store())
+    print(f"Connected to {url}, organization {tracker.org}. Give each project its project there with `project add`.")
+    return 0
+
+
+def show_signals(repo: str) -> int:
+    tracker = signals.Tracker.load(secret_store())
+    project = store().project(repo)
+    if tracker is None or project is None or not project.signals:
+        print("Connect the tracker with `signals connect`, and give the project its project there.", file=sys.stderr)
+        return 1
+    try:
+        found = signals.errors(tracker, project.signals, (), time.time())
+    except signals.SignalsError as e:
+        print(e, file=sys.stderr)
+        return 1
+    print(signals.section(found))
+    return 0
+
+
 def read_key(path: str | None, ask: bool) -> str | None:
     """An API key from a file, from standard input (`-`), or typed at a prompt that does not show it; None when
     there is none to read."""
@@ -330,7 +385,7 @@ def read_key(path: str | None, ask: bool) -> str | None:
     elif path:
         key = Path(path).read_text(encoding="utf-8")
     elif ask and sys.stdin.isatty():
-        key = getpass.getpass("API key (it is not shown): ")
+        key = getpass.getpass("Key or token (it is not shown): ")
     else:
         return None
     if not key.strip():

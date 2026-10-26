@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lastcall import environment, git, i18n, pack, scanners
+from lastcall import environment, git, i18n, pack, scanners, signals
 from lastcall.accounts import Account, engine_for, read_quota
 from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
 from lastcall.environment import TOOL_ENV, Environment
@@ -61,7 +61,8 @@ class Instance:
     client: GitHub
     store: Store
     notify: Notifier | None = None
-    secrets: SecretStore | None = None  # where the API keys of accounts on keys are
+    secrets: SecretStore | None = None  # where the API keys of accounts on keys are, and the error tracker's token
+    fetch: signals.Fetch = signals.fetch_json  # how lastcall reads the error tracker
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,8 @@ def audit_repo(
         elif recipe is DEPS:
             log(f"Reading the dependencies of {repo}: osv-scanner and deps.dev, in the sandbox.")
             found = scanners.dependencies(inst.box, account.engine, run_dir / "clone")
+        if recipe is not DEPS:  # what fails in production, for the audits and the tests
+            found |= production_errors(inst, repo, run_dir / "clone", log)
         if own and own.focus:
             found[FOCUS] = own.focus
         context = pack.build(run_dir / "clone", run_dir, repo, extra=found, exclude=own.exclude if own else ())
@@ -260,6 +263,22 @@ def audit_repo(
     inst.store.finish_run(run_dir.name, report.status, report.sha)
     tell(inst, run_dir.name, report, "" if recipe is AUDIT else f"{recipe.name}-")
     return run_dir, report
+
+
+def production_errors(inst: Instance, repo: str, clone: Path, log: Log = print) -> dict[str, str]:
+    """The pack's section on errors in production, when the owner connected an error tracker and gave the project
+    its project there. A tracker that cannot be read leaves a note, never a failed run."""
+    project = inst.store.project(repo)
+    tracker = signals.Tracker.load(inst.secrets) if inst.secrets is not None else None
+    if tracker is None or project is None or not project.signals:
+        return {}
+    log(f"Reading the errors of {repo} in production, from {tracker.url}.")
+    try:
+        found = signals.errors(tracker, project.signals, git.files(clone), time.time(), inst.fetch)
+    except signals.SignalsError as e:
+        log(f"{repo}: the errors in production were not read: {e}")
+        return {signals.TITLE: f"Not read: {e}"}
+    return {signals.TITLE: signals.section(found)}
 
 
 def tests_repo(

@@ -5,9 +5,10 @@ ticked in a plan, issues labelled `lastcall`); projects with 2 or more lastcall 
 reviewed yet; and projects another account is working on right now.
 
 Points: never audited by this account (100), or days since its last audit (2 a day, up to 30) and new commits since
-the audited commit (3 each, up to 30); pending findings (5 each, up to 25); what the owner asked for (100, and 5 for
-each ticked idea or labelled issue, up to 25: they go first); one unreviewed lastcall pull request (minus 20). The
-project's weight multiplies the total.
+the audited commit (3 each, up to 30); pending findings (5 each, up to 25); errors in production in the last day, from
+the owner's error tracker (5 each, up to 25); what the owner asked for (100, and 5 for each ticked idea or labelled
+issue, up to 25: they go first); one unreviewed lastcall pull request (minus 20). The project's weight multiplies the
+total.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ def rank(
     busy: set[str],
     now: float,
     wanted: Callable[[str], int] = lambda repo: 0,
+    errors: Callable[[str], int] = lambda repo: 0,
 ) -> list[Candidate]:
     found = []
     for p in projects:
@@ -67,6 +69,10 @@ def rank(
         if waiting:
             score += min(25, 5 * waiting)
             reasons.append(f"{waiting} pending findings")
+        failing = errors(p.repo)
+        if failing:
+            score += min(25, 5 * failing)
+            reasons.append(f"{failing} errors in production in the last day")
         if chosen:
             score += 100 + min(25, 5 * chosen)
             reasons.append(f"{chosen} asked for by the owner")

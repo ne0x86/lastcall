@@ -116,6 +116,7 @@ flowchart LR
   C1 -.-> R1
   S --> G["GitHub App<br/>clone · push · PR · issues"]
   S --> N["notifications (Apprise)"]
+  S -.-> X["error tracker, optional<br/>Sentry · GlitchTip"]
 ```
 
 - **Service.** One Python process: quota polling, scheduler, recipe engine, forge client, notifier and web UI. State
@@ -396,7 +397,8 @@ When an account bursts, it picks the next project with a cheap score:
 - pending findings;
 - what the owner asked for, which goes first and instead of an audit: the ideas ticked in an improvement plan, then
   the issues labelled `lastcall`;
-- errors and restarts, when signals are configured.
+- errors in production in the last day, when the owner connected an error tracker (5 points each, up to 25); the
+  service counts them every 30 minutes. Restarts come later, with container logs.
 
 It skips projects that the same account audited recently, unless the owner asked for something there; projects with
 unreviewed lastcall pull requests piling up; and very large projects when little quota is left. The project weight
@@ -406,8 +408,21 @@ multiplies the score.
 
 - **Knowledge.** By default, the repository's own `AGENTS.md`, `CLAUDE.md`, `README` and `docs/`. Optionally, an MCP
   server.
-- **Signals.** Production logs and health; later, error trackers such as Sentry or GlitchTip. They enrich audits and
-  the ranking, and they are never required.
+- **Signals.** Errors in production, from Sentry or GlitchTip (`lastcall.signals`). They enrich the audits, the
+  tests and the ranking, and they are never required:
+  - The owner keeps one connection, in the secret store: the tracker's address, the organization and a token that
+    can only read (`project:read` and `event:read`). lastcall saves it only after one request with it gets through.
+    Each project names its project in the tracker.
+  - Both trackers serve the same API: the project's id from `/api/0/projects/{org}/{project}/`, its unresolved
+    issues from `/api/0/organizations/{org}/issues/?project={id}&query=is:unresolved`, and the latest event of each
+    from `.../issues/{id}/events/latest/`. GlitchTip does not sort by frequency (`sort=freq`), so lastcall reads the
+    100 seen last and sorts them by count itself. Checked against GlitchTip 6.2.6 with the Sentry SDK.
+  - The pack gets the 8 most frequent unresolved errors of the last 14 days, each with up to 6 frames of the project's
+    own code (`inApp`): file, line, function and code line, with the tracker's paths turned into the repository's.
+  - What reaches a model is masked: emails, IP addresses, credentials in URLs, tokens (the secret scanner's rules,
+    and any long opaque string) and long numbers. Variables, request data, user data, tags and breadcrumbs are never
+    read.
+  - Container logs and health, read on the host as the prototype did, may come later.
 
 ### Other forges
 
@@ -428,8 +443,8 @@ engine runs all of them with the same guarantees.
 Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` it stops after the judge, and
 `lastcall deliver <run>` later opens the pull requests of that report, so the owner can read the findings first.
 - The context pack (`lastcall.pack`) holds the README, the recent history, the scanners' results, a map and the
-  code with line numbers, up to 150k tokens. The judge also gets the memory of earlier findings. Signals come
-  later.
+  code with line numbers, up to 150k tokens. The judge also gets the memory of earlier findings, and the
+  reviewers the errors in production when the owner connected an error tracker (section 8).
 - Each implementer works in its own clone, on a branch `lastcall/<date>-<n>-<topic>`.
 - lastcall then takes over:
   - it runs the project's check (`lastcall.verify`) on a clean copy, in the runner image;
@@ -630,8 +645,8 @@ runs, and different network rights for setup and verify.
   the project gives one, at a health address. When the checks fail where they passed on the commit before the
   merge, or the address fails 3 times in a row, it opens a pull request that reverts the change (against the first
   parent for a merge commit), pauses the project and tells the owner. It never merges the revert. Once the revert is
-  merged, the change's findings are `reverted`, and the judge knows. Container state and error trackers come with
-  signals (v0.5). A deploy adapter for Docker Compose over SSH, taken from the prototype, can come later as a plugin.
+  merged, the change's findings are `reverted`, and the judge knows. Errors in production feed the audits since
+  v0.5 (section 8); container state may come later. A deploy adapter for Docker Compose over SSH, taken from the prototype, can come later as a plugin.
 
 ## 12. Security model
 
@@ -648,6 +663,7 @@ runs, and different network rights for setup and verify.
 | An agent copies its CLI credentials into its output | Every text lastcall publishes (pull request, issue, comment) goes through the secret scanner first, and a hit blocks it. |
 | Unexpected bills | Hard stop when paid usage is active, and a reserve per account. An API key has a monthly budget that the gate checks before every step, and a step whose tokens have no price stops the run. |
 | An API key leaks | It lives in the secret store, and only the steps of its account get it, as a read-only file in `/ctx` that the supervisor deletes after the step; never on a command line, in the environment or in a log. An agent can read it, as it can read its CLI's login: the secret scanner blocks it in what lastcall publishes, and the egress allowlist limits where it can go. The owner gives the key a spending limit at the provider. |
+| Data from production reaches a model | Only an error's type, its message masked (emails, addresses, credentials, tokens, long numbers), its counts, and the file, line, function and code line of the project's own frames. Never variables, request data, user data, tags or breadcrumbs. The tracker's token can only read, and lives in the secret store. |
 | A step abuses the local model server | The server runs on the sandbox network with no way out, so no step can make it download anything. Models come in only through `ollama-pull`, which the owner runs. |
 | Takeover of the web UI | It listens only on the host by default. The password is chosen with a one-time code that only the service's log shows, and kept as an scrypt hash. Sign-in locks after repeated failures. Sessions live in the store; the `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) holds only a random token. Every POST needs this site's `Origin` and, when signed in, the session's CSRF token. A strict CSP, and no JavaScript. |
 
@@ -672,7 +688,9 @@ writing its heartbeat) and the projects page: each project's settings (merge on 
 and tests and dependencies too among them), an audit, tests, upgrades or an improvement on demand, adding a repository by its address, and the suggestions, which the
 service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
 audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
-reset. The settings page holds the notifications: the destinations, chosen by service with only the fields that
+reset. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
+organization and a read-only token, saved only when one request with them gets through), and the notifications: the
+destinations, chosen by service with only the fields that
 service needs (Telegram finds the owner's chat from the bot's recent messages) or as any Apprise URL, saved only when
 their test notification gets through, kept in the secret store and shown with their secrets hidden; the events (a pull
 request opens, decisions or ideas wait, lastcall merges an approved pull request or proposes a revert, a run fails or
@@ -760,7 +778,9 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Recipe `issues`. Done.
 - Recipe `tests`. Done.
 - Recipe `deps`. Done.
-- Signals (container logs, Sentry or GlitchTip); GitLab or Forgejo.
+- Signals: errors in production from Sentry or GlitchTip, in the audits, the tests and the ranking. Done. Container
+  logs may come later.
+- GitLab or Forgejo.
 
 ## 18. Prior art
 

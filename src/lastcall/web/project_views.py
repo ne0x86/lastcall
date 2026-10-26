@@ -56,6 +56,7 @@ class ProjectCard:
     health_url: str
     tests: bool
     deps: bool
+    signals: str
     busy: str  # what it waits for or what runs on it, in words; "" when nothing does
 
 
@@ -79,6 +80,7 @@ class ProjectsPage:
     suggested: list[SuggestionView] = field(default_factory=list)
     others: list[SuggestionView] = field(default_factory=list)
     all_added: bool = False
+    tracker: bool = False  # the owner connected an error tracker: each project may name its project there
 
 
 def build(store: Store, lang: str, now: float, install_url: str, reading: bool) -> ProjectsPage:
@@ -142,6 +144,7 @@ def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any
         p.health_url or "",
         p.tests,
         p.deps,
+        p.signals,
         busy,
     )
 
