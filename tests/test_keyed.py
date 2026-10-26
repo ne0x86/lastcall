@@ -69,6 +69,41 @@ def test_models_come_per_tier_and_keep_the_default_effort() -> None:
     assert claude.tiers()["fast"] == ("haiku", "medium")
 
 
+def test_an_account_chooses_the_model_and_effort_of_each_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    claude = Account("max", "claude-code", models={"balanced": "claude-sonnet-5-5"}, efforts={"deep": "max"})
+    assert claude.tiers() == {
+        "fast": ("haiku", "medium"),
+        "balanced": ("claude-sonnet-5-5", "high"),
+        "deep": ("opus", "max"),
+    }
+    with pytest.raises(ValueError, match="claude-code takes the efforts low, medium, high, xhigh, max, not 'ultra'"):
+        Account("max", "claude-code", efforts={"deep": "ultra"})
+    with pytest.raises(ValueError, match="per tier"):
+        Account("max", "claude-code", efforts={"judge": "max"})
+    assert Account("chatgpt", "codex", efforts={"fast": "minimal"}).tiers()["fast"] == ("gpt-6-luna", "minimal")
+    tuned = Account("local", "opencode", "ollama", models=tier_models("qwen3-coder"), efforts={"deep": "high"})
+    assert (tuned.tiers()["deep"], tuned.tiers()["fast"]) == (("qwen3-coder", "high"), ("qwen3-coder", None))
+
+    monkeypatch.setenv("LASTCALL_STATE", str(tmp_path / "state"))
+    store = Store(tmp_path / "state" / "lastcall.db")
+    store.add_account("max", "claude-code")
+    store.set_tiers("max", {"balanced": "claude-sonnet-5-5"}, {"deep": "max"})
+    row = store.account("max")
+    assert row is not None and row.account().tiers() == claude.tiers()
+    assert cli.main(["account", "tier", "max", "deep", "--effort", "-"]) == 0  # back to the default
+    assert "deep      opus, effort high\n" in capsys.readouterr().out
+    assert cli.main(["account", "tier", "max", "balanced", "--model", "-"]) == 0
+    assert cli.main(["account", "tier", "max", "fast", "--effort", "low"]) == 0
+    assert "fast      haiku, effort low (its own)" in capsys.readouterr().out
+    for bad in (["--effort", "ultra"], ["--model", "opus; rm -rf /"]):
+        with pytest.raises(SystemExit):
+            cli.main(["account", "tier", "max", "deep", *bad])
+    row = store.account("max")
+    assert row is not None and (row.models, row.efforts) == ({}, {"fast": "low"})
+
+
 def test_policies_fit_each_kind_of_account() -> None:
     assert policies(Account("claude", "claude-code")) == ("before-reset", "manual")
     assert policies(openrouter()) == ("budget", "schedule", "manual")

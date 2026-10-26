@@ -284,6 +284,12 @@ An account can name its own models. An engine with no defaults in the data file 
 gives one model, and maybe a cheaper one for the reviewers (the `balanced` and `fast` tiers). A model of the
 account's own keeps the default effort of its tier.
 
+The owner can change the model and the effort of each tier for one account, subscriptions included, on the accounts
+page (*Models and effort*) or with `lastcall account tier <account> <tier> --model <model> --effort <level>`; `-`
+goes back to the default. The data file also lists the effort levels that each engine's CLI takes: Claude Code's
+`--effort` (low to max), Codex's `model_reasoning_effort` (minimal to max) and OpenCode's `--variant`, whose levels
+depend on the model. More effort finds more, and spends more of the quota or the budget.
+
 **Several accounts on one project.** Different providers find different problems (section 16). A review step can
 therefore fan out across accounts, and one judge merges the results.
 

@@ -12,7 +12,7 @@
   {%- set n = loop.index %}
   {%- set a = c.view %}
   {%- set row = c.row %}
-  <article class="card">
+  <article class="card" id="account-{{ a.id }}">
     <h2>{{ a.id }} <span class="badge">{{ a.engine }}</span></h2>
     {%- if row.keyed %}<p class="muted">{{ a.details }}</p>{% endif %}
     {%- for w in a.windows %}
@@ -81,16 +81,6 @@
           <p id="schedule-{{ n }}-hint" class="hint muted">{{ t("web.accounts.schedule_short") }}</p>
         </div>
       </div>
-      <div class="fields wide">
-        <div>
-          <label for="model-{{ n }}">{{ t("web.accounts.model_label") }}</label>
-          <input id="model-{{ n }}" name="model" type="text" value="{{ c.model }}" autocomplete="off" spellcheck="false" required>
-        </div>
-        <div>
-          <label for="review-{{ n }}">{{ t("web.accounts.review_label") }}</label>
-          <input id="review-{{ n }}" name="review_model" type="text" value="{{ c.review }}" autocomplete="off" spellcheck="false">
-        </div>
-      </div>
       {%- if c.needs_key %}
       <div>
         <label for="key-{{ n }}">{{ t("web.accounts.new_key") }}</label>
@@ -101,6 +91,34 @@
       {%- endif %}
       <button class="secondary">{{ t("web.accounts.save") }}</button>
     </form>
+    <details>
+      <summary>{{ t("web.tiers.title") }}</summary>
+      <p class="small">{{ t("web.tiers.intro") }}</p>
+      <form method="post" action="{{ url_for('account_tiers', account_id=a.id) }}" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        {%- for tr in c.tiers %}
+        <fieldset>
+          <legend>{{ t("web.tiers." ~ tr.tier) }}</legend>
+          <p class="hint muted">{{ t("web.tiers." ~ tr.tier ~ "_hint") }}</p>
+          <div class="fields">
+            <div>
+              <label for="model-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.model") }}</label>
+              <input id="model-{{ n }}-{{ tr.tier }}" name="model-{{ tr.tier }}" type="text" value="{{ tr.model }}" placeholder="{{ tr.default_model }}" maxlength="100" autocomplete="off" spellcheck="false"{% if not tr.default_model %} required{% endif %}>
+            </div>
+            <div>
+              <label for="effort-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.effort") }}</label>
+              <select id="effort-{{ n }}-{{ tr.tier }}" name="effort-{{ tr.tier }}">
+                <option value="">{{ t("web.tiers.default", effort=tr.default_effort or t("web.tiers.model_own")) }}</option>
+                {%- for level in c.levels %}<option value="{{ level }}"{% if level == tr.effort %} selected{% endif %}>{{ level }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+        </fieldset>
+        {%- endfor %}
+        <p class="hint muted">{{ t("web.tiers.keyed_hint") if row.keyed else t("web.tiers.default_hint") }}</p>
+        <button class="secondary">{{ t("web.tiers.save") }}</button>
+      </form>
+    </details>
   </article>
   {%- endfor %}
 </div>

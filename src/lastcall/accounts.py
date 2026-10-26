@@ -24,12 +24,15 @@ from lastcall.quota import Kind, QuotaError, Reading, ledger_reading, month
 from lastcall.sandbox import Sandbox
 from lastcall.secretstore import SecretStore
 from lastcall.supervisor import RUNNER_UID, Config
-from lastcall.tiers import TIERS, defaults
+from lastcall.tiers import TIERS, defaults, efforts
 
 if TYPE_CHECKING:
     from lastcall.store import Store
 
 ACCOUNT_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+MODEL = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,99}"
+)  # as engines and providers name them: opus, qwen/qwen3-coder
 PROBE_TIMEOUT = 90.0
 PROBE_WORKSPACE = "runs/probes"  # an empty workspace: quota probes do not look at any project
 ENGINE_LABEL = "lastcall.engine"
@@ -43,6 +46,7 @@ class Account:
     base_url: str = ""  # another address for the provider's API, such as a model server on the sandbox network
     models: Mapping[str, str] = field(default_factory=dict)  # tier -> model, over the engine's defaults
     budget_usd: float | None = None  # what its steps may cost per calendar month (UTC)
+    efforts: Mapping[str, str] = field(default_factory=dict)  # tier -> effort, over the engine's defaults
 
     def __post_init__(self) -> None:
         if not ACCOUNT_ID.fullmatch(self.id):
@@ -58,8 +62,12 @@ class Account:
                 raise ValueError(f"unknown provider {self.provider!r} for {self.engine}; available: {names}")
         elif not engine.login:
             raise ValueError(f"{self.engine} runs on an API key or a local model: give the account a provider")
-        if set(self.models) - set(TIERS):
-            raise ValueError(f"models are given per tier: {', '.join(TIERS)}")
+        if set(self.models) - set(TIERS) or set(self.efforts) - set(TIERS):
+            raise ValueError(f"models and efforts are given per tier: {', '.join(TIERS)}")
+        levels = efforts(self.engine)
+        for effort in self.efforts.values():
+            if effort not in levels:
+                raise ValueError(f"{self.engine} takes the efforts {', '.join(levels) or '(none)'}, not {effort!r}")
         if self.budget_usd is not None and self.budget_usd <= 0:
             raise ValueError("a monthly budget is more than 0 USD")
         self.tiers()  # every tier has a model
@@ -90,14 +98,17 @@ class Account:
         return next(p for p in engine.providers if p.name == self.provider)
 
     def tiers(self) -> dict[str, tuple[str, str | None]]:
-        """tier -> (model, effort): the engine's defaults, and the account's own models over them. A model of its
-        own keeps the effort of the default for that tier."""
+        """tier -> (model, effort): the engine's defaults, and the account's own models and efforts over them. A
+        model of its own keeps the effort of the default for that tier, unless the account gives one too."""
         try:
             found = defaults(self.engine)
         except ValueError:  # an engine with no default models, such as opencode: the account names them
             found = {}
         for tier, model in self.models.items():
             found[tier] = (model, found[tier][1] if tier in found else None)
+        for tier, effort in self.efforts.items():
+            if tier in found:
+                found[tier] = (found[tier][0], effort)
         missing = [t for t in TIERS if t not in found]
         if missing:
             raise ValueError(f"account {self.id} needs a model for: {', '.join(missing)}")

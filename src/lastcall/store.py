@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     id TEXT PRIMARY KEY, engine TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
     language TEXT NOT NULL DEFAULT 'English', reserve_pct REAL NOT NULL DEFAULT 10, created REAL NOT NULL,
     provider TEXT NOT NULL DEFAULT '', base_url TEXT NOT NULL DEFAULT '', models TEXT NOT NULL DEFAULT '{}',
-    policy TEXT NOT NULL DEFAULT 'before-reset', budget_usd REAL, schedule TEXT NOT NULL DEFAULT '');
+    policy TEXT NOT NULL DEFAULT 'before-reset', budget_usd REAL, schedule TEXT NOT NULL DEFAULT '',
+    efforts TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS projects (
     repo TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 0, weight REAL NOT NULL DEFAULT 1, language TEXT,
     max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL, merge_on_approve INTEGER NOT NULL DEFAULT 0,
@@ -115,13 +116,14 @@ class AccountRow:
     policy: Kind = "before-reset"
     budget_usd: float | None = None  # per calendar month (UTC), for an account on an API key
     schedule: str = ""  # policy schedule: when it bursts, as a cron expression in UTC
+    efforts: Mapping[str, str] = field(default_factory=dict)  # tier -> effort, over the engine's defaults
 
     @property
     def keyed(self) -> bool:
         return bool(self.provider)
 
     def account(self) -> Account:
-        return Account(self.id, self.engine, self.provider, self.base_url, self.models, self.budget_usd)
+        return Account(self.id, self.engine, self.provider, self.base_url, self.models, self.budget_usd, self.efforts)
 
     def spend_policy(self) -> SpendPolicy:
         """How it spends. An account on an API key keeps no reserve: its monthly budget is the owner's limit."""
@@ -163,6 +165,7 @@ class Store:
                 "policy": "TEXT NOT NULL DEFAULT 'before-reset'",
                 "budget_usd": "REAL",
                 "schedule": "TEXT NOT NULL DEFAULT ''",
+                "efforts": "TEXT NOT NULL DEFAULT '{}'",  # v0.6.2
             },
         )
         self._add_columns("runs", {"crew": "TEXT NOT NULL DEFAULT ''", "recipe": "TEXT NOT NULL DEFAULT 'audit'"})
@@ -277,6 +280,13 @@ class Store:
         if models is not None:
             self.x("UPDATE accounts SET models = ? WHERE id = ?", (json.dumps(dict(models)), account_id))
 
+    def set_tiers(self, account_id: str, models: Mapping[str, str], efforts: Mapping[str, str]) -> None:
+        """The account's own model and effort of each tier, over the engine's defaults."""
+        self.x(
+            "UPDATE accounts SET models = ?, efforts = ? WHERE id = ?",
+            (json.dumps(dict(models)), json.dumps(dict(efforts)), account_id),
+        )
+
     def accounts(self, enabled_only: bool = False) -> list[AccountRow]:
         rows = self.q("SELECT * FROM accounts" + (" WHERE enabled = 1" if enabled_only else "") + " ORDER BY id")
         return [
@@ -292,6 +302,7 @@ class Store:
                 r["policy"],
                 r["budget_usd"],
                 r["schedule"],
+                json.loads(r["efforts"] or "{}"),
             )
             for r in rows
         ]

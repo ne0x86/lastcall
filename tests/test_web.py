@@ -16,6 +16,7 @@ from lastcall.quota import HOUR, QuotaError, Reading, Window
 from lastcall.recipes.audit import AuditReport
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
+from lastcall.tiers import TIERS
 from lastcall.web import CSP, create_app
 from lastcall.web.auth import (
     IDLE_DAYS,
@@ -632,14 +633,13 @@ def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
         "policy": "schedule",
         "schedule": "* 0-5 * * 1-5",
         "budget": "30",
-        "model": "qwen/qwen3-coder",
-        "review_model": "qwen/qwen3-small",
         "key": "sk-or-new",
     }
+    models = web.store.account("openrouter")
     assert web.client.post("/accounts/openrouter", data=form, headers=SITE).status_code == 302
     row = web.store.account("openrouter")
     assert row is not None and (row.policy, row.schedule, row.budget_usd) == ("schedule", "* 0-5 * * 1-5", 30)
-    assert (row.models["deep"], row.models["balanced"]) == ("qwen/qwen3-coder", "qwen/qwen3-small")
+    assert models is not None and row.models == models.models  # they change under Models and effort
     assert web.secrets.get("key-openrouter") == "sk-or-new"
     assert web.client.post("/accounts/openrouter", data={**form, "key": ""}, headers=SITE).status_code == 302
     assert web.secrets.get("key-openrouter") == "sk-or-new"  # an empty field keeps the key
@@ -648,6 +648,39 @@ def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
     web.client.get("/language/es")
     page = web.client.get("/accounts").get_data(as_text=True)
     assert "Una clave de API, con un presupuesto mensual" in page and "5,00 USD de 30,00 USD" in page
+
+
+def test_models_and_effort_from_the_web(web: Web) -> None:
+    from lastcall.accounts import tier_models
+
+    web.set_up()
+    web.store.add_account("max", "claude-code")
+    web.store.add_account("local", "opencode", provider="ollama", models=tier_models("qwen3-coder"), policy="manual")
+    csrf = web.csrf()
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert "Models and effort" in page and 'placeholder="opus"' in page and "Default (medium)" in page
+    form = {"csrf": csrf, **{f"{field}-{tier}": "" for field in ("model", "effort") for tier in TIERS}}
+    response = web.client.post("/accounts/max/tiers", data={**form, "effort-deep": "max"}, headers=SITE)
+    assert response.headers["Location"] == "/accounts?done=tiers#account-max"
+    row = web.store.account("max")
+    assert row is not None and row.account().tiers()["deep"] == ("opus", "max")
+    assert '<option value="max" selected>max</option>' in web.client.get("/accounts").get_data(as_text=True)
+    web.client.post("/accounts/max/tiers", data={**form, "model-balanced": "claude-sonnet-5-5"}, headers=SITE)
+    row = web.store.account("max")  # the effort of deep went back to the default: its field was empty
+    assert row is not None and row.account().tiers() == {
+        "fast": ("haiku", "medium"),
+        "balanced": ("claude-sonnet-5-5", "high"),
+        "deep": ("opus", "high"),
+    }
+    for bad in ({"effort-deep": "ultra"}, {"model-deep": "opus; rm -rf /"}):
+        assert web.client.post("/accounts/max/tiers", data={**form, **bad}, headers=SITE).status_code == 400
+    assert web.client.post("/accounts/nobody/tiers", data=form, headers=SITE).status_code == 404
+    local = {**form, "model-fast": "qwen3-coder", "model-balanced": "qwen3-coder", "effort-deep": "high"}
+    response = web.client.post("/accounts/local/tiers", data=local, headers=SITE)  # no model for deep
+    assert response.status_code == 400 and "Give a model for each level" in response.get_data(as_text=True)
+    web.client.post("/accounts/local/tiers", data={**local, "model-deep": "qwen3-coder:30b"}, headers=SITE)
+    row = web.store.account("local")
+    assert row is not None and row.account().tiers()["deep"] == ("qwen3-coder:30b", "high")
 
 
 def test_without_the_sandbox_the_quota_cannot_be_read(web: Web) -> None:
