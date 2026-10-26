@@ -1,12 +1,15 @@
 import html
+import http.client
 import json
 import re
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
+import waitress.server
 from flask.testing import FlaskClient
 
 from lastcall.accounts import Account
@@ -17,7 +20,7 @@ from lastcall.recipes.audit import AuditReport
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
 from lastcall.tiers import TIERS
-from lastcall.web import CSP, create_app
+from lastcall.web import CSP, create_app, serve
 from lastcall.web.auth import (
     IDLE_DAYS,
     LOCK_ALL,
@@ -160,6 +163,44 @@ def test_posts_need_this_sites_origin(tmp_path: Path) -> None:
     assert other.post("/login", data={"password": "wrong"}, headers=referer).status_code == 401
     proxied = {"Origin": "https://lastcall.example.com"}
     assert other.post("/login", data={"password": PASSWORD}, headers=proxied).status_code == 302
+
+
+def test_only_a_trusted_proxy_says_the_scheme_and_the_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Through the real server, whose X-Forwarded-* headers test_client never drops: without LASTCALL_TRUST_PROXY a
+    client cannot pass for HTTPS, and behind a trusted proxy the owner signs up over HTTPS with a Secure cookie, and
+    GitHub brings the owner back to the public address."""
+    servers: list[tuple[Any, threading.Thread]] = []
+
+    def start(app: Any, **options: Any) -> None:  # waitress.serve, on a free port and in the background
+        server = waitress.server.create_server(app, **{**options, "port": 0})
+        servers.append((server, threading.Thread(target=server.run, daemon=True)))
+        servers[-1][1].start()
+
+    monkeypatch.setattr(waitress, "serve", start)
+    proxy = {"Host": "lastcall.example.com", "X-Forwarded-Proto": "https", "X-Forwarded-For": "203.0.113.9"}
+    for trusted in (False, True):
+        web = Web(tmp_path / f"trusted-{trusted}", trust_proxy=trusted)
+        serve(web.app, "127.0.0.1", 8080, log=web.logs.append, trust_proxy=trusted)
+        server, thread = servers[-1]
+        connection = http.client.HTTPConnection("127.0.0.1", server.effective_port, timeout=10)
+        form = urlencode({"code": web.code(), "password": PASSWORD, "repeat": PASSWORD})
+        headers = {**proxy, "Origin": "https://lastcall.example.com"}
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        connection.request("POST", "/setup", body=form, headers=headers)
+        response = connection.getresponse()
+        response.read()
+        if not trusted:
+            assert response.status == 403
+        else:
+            cookie = response.getheader("Set-Cookie") or ""
+            assert response.status == 302 and "Secure" in cookie
+            connection.request("GET", "/github/new?owner=acme", headers={**proxy, "Cookie": cookie.split(";")[0]})
+            page = connection.getresponse().read().decode()
+            assert "https://lastcall.example.com/github/callback" in page
+        connection.close()
+        server.trigger.pull_trigger(server.close)  # closed from its own thread, never in the middle of a select()
+        thread.join(10)
+        assert not thread.is_alive()
 
 
 def test_pause_and_resume_need_the_csrf_token(web: Web) -> None:

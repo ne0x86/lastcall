@@ -17,6 +17,7 @@ htmlcov/
 /secrets/
 .env
 *.env
+/compose.override.yaml
 
 # Editors and operating systems
 .vscode/
