@@ -723,7 +723,7 @@ def test_tests_from_the_web(github_web: Web) -> None:
     web.store.add_account("claude", "claude-code")
     page = web.client.get("/projects").get_data(as_text=True)
     assert 'formaction="/projects/acme/api/tests">Write tests now</button>' in page
-    assert 'name="tests" value="1"> Tests too: every other burst on this project writes tests' in page
+    assert 'name="tests" value="1"> Tests too: in turn with the audits, bursts on this project write tests' in page
     csrf = web.csrf()
     form = {"csrf": csrf, "weight": "1", "language": "", "max_prs": "3", "active": "1", "tests": "1"}
     assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
@@ -737,6 +737,24 @@ def test_tests_from_the_web(github_web: Web) -> None:
     web.store.start_run("r1", "acme/api", "claude", "manual", recipe="tests")
     assert "lastcall is writing tests for this project." in web.client.get("/projects").get_data(as_text=True)
     assert "manual · tests" in web.client.get("/").get_data(as_text=True)
+
+
+def test_dependency_upgrades_from_the_web(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_account("claude", "claude-code")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'formaction="/projects/acme/api/deps">Upgrade dependencies now</button>' in page
+    csrf = web.csrf()
+    form = {"csrf": csrf, "weight": "1", "language": "", "max_prs": "3", "active": "1", "deps": "1"}
+    assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
+    project = web.store.projects()[0]
+    assert project.deps and not project.tests
+    assert 'name="deps" value="1" checked> Dependencies too' in web.client.get("/projects").get_data(as_text=True)
+    response = web.client.post("/projects/acme/api/deps", data={"csrf": csrf}, headers=SITE)
+    assert response.headers["Location"] == "/projects?done=deps"
+    assert [(o["kind"], o["account"]) for o in web.store.orders()] == [("deps", None)]
+    assert "Upgrades queued: they start" in web.client.get("/projects?done=deps").get_data(as_text=True)
 
 
 def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:

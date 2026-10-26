@@ -1,5 +1,5 @@
-"""One run from start to end, an audit, tests, an improvement or the labelled issues, as the command line and the
-service both run it.
+"""One run from start to end, an audit, tests, dependency upgrades, an improvement or the labelled issues, as the
+command line and the service both run it.
 
 The run's folder lives in the data volume (`runs/<repo>-<engine>-<time>`, or `<repo>-<recipe>-<engine>-<time>`) and
 holds the clone, the context pack, a working copy per pull request and the report. The store keeps the run, its
@@ -33,6 +33,7 @@ from lastcall.recipes.audit import (
     team,
 )
 from lastcall.recipes.build import Verifier
+from lastcall.recipes.deps import DEPS, UPGRADES
 from lastcall.recipes.improve import ImproveReport, build_ideas, publish, run_improve
 from lastcall.recipes.improve import markdown as improve_markdown
 from lastcall.recipes.issues import LABEL, IssuesReport, build_issues, comments, why
@@ -47,7 +48,8 @@ if TYPE_CHECKING:
     from lastcall.notify import Notifier
 
 VERIFY_TIMEOUT = 25 * 60.0
-RECIPES = {AUDIT.name: AUDIT, TESTS.name: TESTS}  # the recipes of the audit's shape, by the name a report keeps
+RECIPES = {r.name: r for r in (AUDIT, TESTS, DEPS)}  # the recipes of the audit's shape, by the name in reports
+DOING = {AUDIT.name: "Auditing", TESTS.name: "Looking for untested behavior in", DEPS.name: "Choosing upgrades for"}
 Log = Callable[[str], None]
 
 
@@ -195,8 +197,10 @@ def audit_repo(
     try:
         git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
         own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
-        # and so does a wrong reviewer of its own; the tests have their one reviewer
-        panel = team(run_dir / "clone", own.reviewers if own else ()) if recipe is AUDIT else [TESTER]
+        # and so does a wrong reviewer of its own; the tests and the upgrades have their one reviewer each
+        panel = {TESTS.name: [TESTER], DEPS.name: [UPGRADES]}.get(recipe.name) or team(
+            run_dir / "clone", own.reviewers if own else ()
+        )
         env = environment.detect(run_dir / "clone", own)
         log(f"Checks of {repo} run in {env.name} ({env.source})" + (f"; {env.note}" if env.note else ""))
         log(f"Reviewers: {', '.join(rv.name for rv in panel)}")
@@ -204,11 +208,14 @@ def audit_repo(
         if recipe is AUDIT:  # what the scanners report is for the audit; the tests do not need it
             log(f"Scanning {repo}: gitleaks, osv-scanner, semgrep and hadolint, in the sandbox.")
             found = scanners.scan(inst.box, account.engine, run_dir / "clone")
+        elif recipe is DEPS:
+            log(f"Reading the dependencies of {repo}: osv-scanner and deps.dev, in the sandbox.")
+            found = scanners.dependencies(inst.box, account.engine, run_dir / "clone")
         if own and own.focus:
             found[FOCUS] = own.focus
         context = pack.build(run_dir / "clone", run_dir, repo, extra=found, exclude=own.exclude if own else ())
         log(
-            f"{'Auditing' if recipe is AUDIT else 'Looking for untested behavior in'} {repo} @ {context.sha} with "
+            f"{DOING[recipe.name]} {repo} @ {context.sha} with "
             f"{account.id} ({account.engine}): {context.files} files, ~{context.tokens / 1000:.0f}k tokens of code. "
             f"Run: {run_dir.name}"
         )
@@ -266,6 +273,19 @@ def tests_repo(
     """Tests for the behavior of the project that no test checks, one pull request each: the audit's shape with the
     tests' recipe."""
     return audit_repo(inst, repo, account, opts, on_step, log, recipe=TESTS)
+
+
+def deps_repo(
+    inst: Instance,
+    repo: str,
+    account: Account,
+    opts: Options,
+    on_step: Callable[[StepRecord], None] | None = None,
+    log: Log = print,
+) -> tuple[Path, AuditReport]:
+    """Dependency upgrades that need more than a new version number, one pull request each: the audit's shape with
+    the deps recipe."""
+    return audit_repo(inst, repo, account, opts, on_step, log, recipe=DEPS)
 
 
 def improve_repo(

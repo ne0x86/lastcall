@@ -21,7 +21,7 @@ REGISTRIES = {
     "rubygems": ("rubygems.org", "index.rubygems.org"),
     "nuget": ("api.nuget.org",),
 }
-SCANNERS = ("api.deps.dev", "api.osv.dev", "semgrep.dev")  # vulnerability data and semgrep's rules
+SCANNERS = ("api.deps.dev", "api.osv.dev", "semgrep.dev")  # vulnerabilities, latest versions, semgrep's rules
 DOMAIN = re.compile(r"(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+")
 
 

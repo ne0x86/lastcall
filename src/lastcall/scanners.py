@@ -1,10 +1,14 @@
 """Scanners for the context pack: gitleaks on the code and its history, osv-scanner on the dependency files,
 semgrep's default rules, and hadolint on Dockerfiles. They run in the runner, read-only on the clone, through the
 sandbox. Their output goes into the pack as leads that the reviewers confirm or dismiss against the code.
+
+The deps recipe gets its own sections instead (`dependencies`): the known vulnerabilities, and the direct
+dependencies behind their latest versions, from deps.dev.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -21,22 +25,72 @@ TITLES = {
     "semgrep": "Static analysis (semgrep, default rules)",
     "hadolint": "Dockerfiles (hadolint)",
 }
+VERSIONS = "Direct dependencies behind their latest version (deps.dev)"
 
 
 def scan(box: Sandbox, engine: str, clone: Path) -> dict[str, str]:
     """Pack sections from the scanners, run on the clone in the runner image of `engine`. Versions pinned only in a
     Dockerfile's pip install lines go to osv-scanner as an extra requirements file."""
     probe = f"{CONTEXT_DIR}/scanners.py"
-    files = {probe: probe_source("scanners")}
-    found = clone.rglob("Dockerfile*")
-    dockerfiles = [p for p in found if ".git" not in p.parts and git.repo_file(clone, p.relative_to(clone))]
-    pinned = sorted({p for d in dockerfiles for p in dockerfile_packages(d.read_text(errors="replace")) if "==" in p})
-    if pinned:
-        files[f"{CONTEXT_DIR}/deps/dockerfile-requirements.txt"] = "\n".join(pinned) + "\n"
+    files = {probe: probe_source("scanners"), **dockerfile_requirements(clone)}
     lines: list[str] = []
     invocation = Invocation(("python3", probe, "/work", f"{CONTEXT_DIR}/deps"), files=files)
     box.call(engine, invocation, lines.append, workspace=clone, timeout=SCAN_TIMEOUT)
     return sections({r["tool"]: r for line in lines if (r := json_line(line)) and "tool" in r})
+
+
+def dependencies(box: Sandbox, engine: str, clone: Path) -> dict[str, str]:
+    """Pack sections for the deps recipe: the known vulnerabilities, and the direct dependencies with their latest
+    versions. Versions pinned only in a Dockerfile count too."""
+    files = {f"{CONTEXT_DIR}/deps.py": probe_source("deps"), **dockerfile_requirements(clone)}
+    lines: list[str] = []
+    invocation = Invocation(("python3", f"{CONTEXT_DIR}/deps.py", "/work", f"{CONTEXT_DIR}/deps"), files=files)
+    box.call(engine, invocation, lines.append, workspace=clone, timeout=SCAN_TIMEOUT)
+    results = {r["tool"]: r for line in lines if (r := json_line(line)) and "tool" in r}
+    out = {TITLES["osv-scanner"]: sections(results)[TITLES["osv-scanner"]]}
+    versions = results.get("versions")
+    if versions is None:
+        out[VERSIONS] = "The dependencies were not read."
+    elif not versions.get("ok"):
+        out[VERSIONS] = f"The dependencies were not read: {versions.get('error')}"
+    else:
+        out[VERSIONS] = behind(versions.get("data") or [])
+    return out
+
+
+def dockerfile_requirements(clone: Path) -> dict[str, str]:
+    """Versions pinned only in a Dockerfile's pip install lines, as a requirements file for osv-scanner."""
+    found = clone.rglob("Dockerfile*")
+    dockerfiles = [p for p in found if ".git" not in p.parts and git.repo_file(clone, p.relative_to(clone))]
+    pinned = sorted({p for d in dockerfiles for p in dockerfile_packages(d.read_text(errors="replace")) if "==" in p})
+    return {f"{CONTEXT_DIR}/deps/dockerfile-requirements.txt": "\n".join(pinned) + "\n"} if pinned else {}
+
+
+def behind(packages: list[dict[str, Any]]) -> str:
+    """The direct dependencies that have a newer version: the deprecated ones first, then the most behind."""
+    late = [p for p in packages if p.get("deprecated") or (p.get("latest") and p.get("latest") != p.get("version"))]
+    if not packages:
+        return "No direct dependencies found in the dependency files."
+    if not late:
+        return f"All {len(packages)} direct dependencies are at their latest version."
+
+    def gap(p: dict[str, Any]) -> tuple[bool, int, str]:
+        return (not p.get("deprecated"), -(_major(p.get("latest")) - _major(p.get("version"))), str(p.get("name")))
+
+    lines = [f"{len(late)} of {len(packages)} direct dependencies have a newer version:"]
+    for p in sorted(late, key=gap)[:60]:
+        note = f"; DEPRECATED: {p.get('reason') or 'by its authors'}" if p.get("deprecated") else ""
+        major = " (major)" if _major(p.get("latest")) > _major(p.get("version")) else ""
+        lines.append(
+            f"- {p.get('name')} {p.get('version')} → {p.get('latest') or '?'}{major} ({p.get('system')}, "
+            f"{p.get('source')}){note}"
+        )
+    return "\n".join(lines)
+
+
+def _major(version: object) -> int:
+    found = re.match(r"\D*(\d+)", str(version or ""))
+    return int(found.group(1)) if found else 0
 
 
 def sections(results: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
