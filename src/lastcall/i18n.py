@@ -36,6 +36,12 @@ def percent(language: str, value: float) -> str:
     return text(language, "web.percent", n=number(language, value))
 
 
+def money(language: str, usd: float) -> str:
+    """An amount in US dollars, with cents: $3.20, or 3,20 USD in Spanish."""
+    amount = f"{usd:.2f}"
+    return text(language, "web.money", n=amount.replace(".", ",") if code(language) == "es" else amount)
+
+
 def span(language: str, seconds: float) -> str:
     """A length of time, rounded: 25 min, 19 h, 3 days."""
     s = abs(seconds)

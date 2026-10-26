@@ -75,6 +75,9 @@ def test_the_login_script_knows_every_engine() -> None:
     for name in engines.BUILTIN:
         engine = engines.get(name)
         branch = script[script.index(f"  {name})") :].split(";;")[0]
+        if not engine.login:  # it runs on an API key: there is nothing to sign in, and the script says so
+            assert "API key" in branch and "exit 2" in branch, name
+            continue
         assert f'export {engine.home_env}="$account"' in branch, name
         assert f"exec {' '.join(engine.login)}" in branch, name
 

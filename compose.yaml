@@ -4,6 +4,8 @@
 #   docker compose logs lastcall                             # the web UI's setup code, the first time
 #   ACCOUNT=<id> ENGINE=<engine> docker compose run --rm login   # an account's own login, such as claude-code
 #   docker compose run --rm cli <command>                    # the command line: status, audit, pause...
+#   docker compose --profile local up -d ollama              # a local model server, for accounts on local models
+#   docker compose --profile local run --rm ollama-pull <model>  # download a model into it, such as qwen3-coder
 #
 # The images are those of this file's release, so that the file and the images always match. LASTCALL_VERSION picks
 # others: `edge` follows main. Development builds every image from the checkout: add `-f compose.yaml -f compose.dev.yaml`.
@@ -84,6 +86,28 @@ services:
       retries: 3
     restart: unless-stopped
 
+  ollama:  # local models for opencode accounts: steps reach it on the sandbox network, and it has no way out
+    image: ollama/ollama:0.40.3
+    profiles: [local]
+    networks: [sandbox]
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+    # With an NVIDIA card and its container toolkit, give it the card in a compose.override.yaml:
+    #   services: {ollama: {gpus: all}}
+
+  ollama-pull:  # docker compose --profile local run --rm ollama-pull <model>: the only way models come in
+    image: ollama/ollama:0.40.3
+    profiles: [local]
+    networks: [outside]
+    volumes:
+      - ollama:/root/.ollama
+    entrypoint:
+      - sh
+      - -c
+      - 'ollama serve >/dev/null 2>&1 & until ollama list >/dev/null 2>&1; do sleep 1; done; exec ollama pull "$$@"'
+      - ollama-pull
+
   login:  # ACCOUNT=<id> ENGINE=<engine> docker compose run --rm login
     <<: *login
     environment:
@@ -111,6 +135,8 @@ volumes:
     name: lastcall-secrets
   state:
     name: lastcall-state
+  ollama:  # the local models
+    name: lastcall-ollama
   account:  # one volume per account; the label stops one id from mixing two engines
     name: lastcall-account-${ACCOUNT:-unset}
     labels:

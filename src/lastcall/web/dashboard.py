@@ -8,8 +8,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from lastcall import engines
-from lastcall.i18n import LANGUAGES, MESSAGES, number, percent, plural, span, text
-from lastcall.quota import Plan, SpendPolicy, account_rate, plan
+from lastcall.engines.base import Keyed
+from lastcall.i18n import LANGUAGES, MESSAGES, money, number, percent, plural, span, text
+from lastcall.quota import BUDGET, Plan, Reading, Window, account_rate, ledger_reading, month, plan
 from lastcall.runs import audit_models
 from lastcall.service import DEFAULT_RATE, RATE_WINDOW
 from lastcall.store import AccountRow, Store
@@ -132,32 +133,37 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
 
 
 def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict[str, Any] | None) -> AccountView:
-    details = [
-        text(lang, "web.accounts.language", name=language_name(lang, row.language)),
-        text(lang, "web.accounts.reserve", pct=percent(lang, row.reserve_pct)),
-    ]
+    details = []
+    if row.keyed:
+        model, review = row.models.get("deep", ""), row.models.get("balanced", "")
+        details.append(text(lang, "web.accounts.on", provider=provider_title(row)))
+        if model:
+            details.append(text(lang, "web.accounts.model", model=model))
+        if review and review != model:
+            details.append(text(lang, "web.accounts.review_model", model=review))
+    details.append(text(lang, "web.accounts.language", name=language_name(lang, row.language)))
+    if not row.keyed:
+        details.append(text(lang, "web.accounts.reserve", pct=percent(lang, row.reserve_pct)))
     if not row.enabled:
         details.append(text(lang, "web.accounts.disabled"))
     line = " · ".join(details)
     line = line[:1].upper() + line[1:]
-    reading = store.last_reading(row.id)
+    reading = ledger(store, row, now) if row.keyed else store.last_reading(row.id)
     windows, read, plan_text, paid = [], text(lang, "web.accounts.never"), "", False
     if reading:
-        for w in reading.windows:
-            resets = text(lang, "web.window.resets", when=until(lang, w.resets_at, now)) if w.resets_at else ""
-            windows.append(
-                WindowView(
-                    window_label(lang, w.name, w.model),
-                    w.used_pct,
-                    text(lang, "web.window.used", pct=percent(lang, w.used_pct)),
-                    resets,
-                )
-            )
-        read = text(lang, "web.accounts.read", when=ago(lang, reading.taken_at, now))
-        policy = SpendPolicy(reserve_pct=row.reserve_pct)
-        rate = account_rate(store.readings(row.id, now - RATE_WINDOW), reading, policy, DEFAULT_RATE)
-        models = audit_models(row.engine) if row.engine in engines.BUILTIN else []
-        plan_text = describe_plan(lang, plan(reading, policy, rate, now, models), now)
+        windows = [window_view(lang, w, now, row.budget_usd) for w in reading.windows]
+        if row.keyed:
+            read = "" if row.budget_usd else text(lang, "web.accounts.free")
+        else:
+            read = text(lang, "web.accounts.read", when=ago(lang, reading.taken_at, now))
+        policy = row.spend_policy()
+        history = [] if row.keyed else store.readings(row.id, now - RATE_WINDOW)
+        rate = account_rate(history, reading, policy, DEFAULT_RATE)
+        try:
+            models = audit_models(row.account())
+        except ValueError:  # an account that this version cannot run
+            models = []
+        plan_text = describe_plan(lang, plan(reading, policy, rate, now, models), now, row.budget_usd, row.schedule)
         paid = reading.paid_usage
     working = ""
     if run is not None:
@@ -170,6 +176,30 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
     return AccountView(row.id, title, line, windows, read, plan_text, paid, working)
 
 
+def ledger(store: Store, row: AccountRow, now: float) -> Reading:
+    """The reading of an account on an API key or a local model: this month's spending, from the ledger."""
+    return ledger_reading(row.id, row.budget_usd, store.spent(row.id, month(now)[0]), now)
+
+
+def window_view(lang: str, w: Window, now: float, budget_usd: float | None = None) -> WindowView:
+    resets = text(lang, "web.window.resets", when=until(lang, w.resets_at, now)) if w.resets_at else ""
+    if w.name == BUDGET and budget_usd:
+        spent = money(lang, w.used_pct * budget_usd / 100)
+        used = text(lang, "web.window.spent", spent=spent, budget=money(lang, budget_usd))
+        return WindowView(text(lang, "web.window.budget"), min(100.0, w.used_pct), used, resets)
+    used = text(lang, "web.window.used", pct=percent(lang, w.used_pct))
+    return WindowView(window_label(lang, w.name, w.model), min(100.0, w.used_pct), used, resets)
+
+
+def provider_title(row: AccountRow) -> str:
+    """The provider of an account on a key as people know it: "OpenRouter"."""
+    engine = engines.BUILTIN[row.engine]() if row.engine in engines.BUILTIN else None
+    found: list[str] = (
+        [p.title for p in engine.providers if p.name == row.provider] if isinstance(engine, Keyed) else []
+    )
+    return found[0] if found else row.provider
+
+
 def working_on(running: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """The run each busy account is in: its own, or another account's run that it reviews for."""
     busy: dict[str, dict[str, Any]] = {}
@@ -180,14 +210,24 @@ def working_on(running: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return busy
 
 
-def describe_plan(lang: str, p: Plan, now: float) -> str:
+def describe_plan(lang: str, p: Plan, now: float, budget_usd: float | None = None, schedule: str = "") -> str:
     leftover = percent(lang, max(0.0, p.leftover_pct))
+    starts = until(lang, now + (p.starts_in_hours or 0) * HOUR, now)
+    if p.budget is not None and budget_usd and p.code in ("pace", "ahead", "spent"):
+        spent, total = money(lang, p.budget.used_pct * budget_usd / 100), money(lang, budget_usd)
+        resets = until(lang, p.budget.resets_at or now, now)
+        return text(lang, f"web.plan.{p.code}", spent=spent, budget=total, when=starts, resets=resets)
     match p.code:
+        case "schedule" | "never" | "bad-schedule":
+            return text(lang, f"web.plan.{p.code}", cron=schedule)
+        case "window":
+            return text(lang, "web.plan.window", when=starts, cron=schedule)
+        case "no-budget":
+            return text(lang, "web.plan.no-budget")
         case "now":
             return text(lang, "web.plan.now", leftover=leftover, span=span(lang, (p.hours_to_reset or 0) * HOUR))
         case "later":
-            when = until(lang, now + (p.starts_in_hours or 0) * HOUR, now)
-            return text(lang, "web.plan.later", when=when, leftover=leftover)
+            return text(lang, "web.plan.later", when=starts, leftover=leftover)
         case "small":
             return text(lang, "web.plan.small", leftover=leftover)
         case "model" if p.full:

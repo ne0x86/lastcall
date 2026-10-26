@@ -3,7 +3,8 @@ left over, spends that capacity on the active projects (DESIGN.md, sections 5 an
 
 Every minute it ticks:
 - every 15 minutes it reads the quota of each enabled account (no model call), learns the burst rate from the
-  account's readings and plans whether to burst;
+  account's readings and plans whether to burst; an account on an API key or a local model plans every minute, from
+  lastcall's own ledger, by its policy: its monthly budget at the pace of the month, or its schedule;
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
 - every 6 hours it refreshes the suggestions for the installed repositories;
 - the owner's orders ("audit this project now" or "improve it now", from the web UI) start on a free account; an
@@ -31,7 +32,7 @@ from typing import Any
 from lastcall import i18n, projects
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
-from lastcall.quota import Plan, QuotaError, Reading, SpendPolicy, account_rate, plan
+from lastcall.quota import Plan, QuotaError, Reading, account_rate, plan
 from lastcall.ranking import rank
 from lastcall.runs import Instance, Options, audit_models, audit_repo, improve_repo, issues_repo
 from lastcall.sandbox import SandboxError
@@ -60,7 +61,7 @@ class Service:
         log: Log = print,
     ) -> None:
         self.inst, self.clock, self.log = inst, clock, log
-        self.read = read or (lambda account, now: read_quota(account, inst.box, now))
+        self.read = read or (lambda account, now: read_quota(account, inst.box, now, inst.store, inst.secrets))
         self.audit = audit or self._audit
         self.improve = improve or self._improve
         self.issues = issues or self._issues
@@ -88,8 +89,7 @@ class Service:
     def tick(self) -> None:
         now = self.clock()
         self.inst.store.set_setting("heartbeat", f"{now:.0f}")  # the web UI tells whether the service is alive
-        if now - self.last_read >= READ_EVERY:
-            self.read_quotas(now)
+        self.read_quotas(now, probe=now - self.last_read >= READ_EVERY)
         if now - self.last_sync >= SYNC_EVERY:
             self.last_sync = now
             try:
@@ -117,38 +117,62 @@ class Service:
 
     # quota
 
-    def read_quotas(self, now: float) -> None:
-        self.last_read = now
+    def read_quotas(self, now: float, probe: bool = True) -> None:
+        """Read the quotas and plan. `probe`: also the accounts whose reading runs in the sandbox, and keep every
+        reading; otherwise only the accounts on API keys and local models, whose reading is lastcall's ledger."""
+        if probe:
+            self.last_read = now
         for account in self.inst.store.accounts(enabled_only=True):
-            try:
-                reading = self.read(Account(account.id, account.engine), now)
-            except (QuotaError, SandboxError) as e:
+            if probe or account.keyed:
+                self.read_account(account, now, record=probe)
+
+    def read_account(self, account: AccountRow, now: float, record: bool = True) -> None:
+        try:
+            acc = account.account()
+            reading = self.read(acc, now)
+        except (QuotaError, SandboxError, ValueError) as e:
+            if record or account.id in self.plans:  # a failing ledger is told once, not every minute
                 self.log(f"{account.id}: no quota reading: {e}")
-                self.plans.pop(account.id, None)
-                self.alert(account.id, "quota", True, error=str(e)[:400])
-                continue
-            self.alert(account.id, "quota", False)
+            self.plans.pop(account.id, None)
+            self.alert(account.id, "quota", True, error=str(e)[:400])
+            return
+        self.alert(account.id, "quota", False)
+        if record:
             self.inst.store.record_reading(reading)
-            policy = SpendPolicy(reserve_pct=account.reserve_pct)
-            history = self.inst.store.readings(account.id, now - RATE_WINDOW)
-            rate = account_rate(history, reading, policy, DEFAULT_RATE)
-            before = self.plans.get(account.id)
-            self.plans[account.id] = current = plan(reading, policy, rate, now, audit_models(account.engine))
-            if current.burst and not (before and before.burst):
-                self.log(f"{account.id}: burst starts ({current.reason}; {rate:.1f}%/h)")
-                if self.inst.notify:
-                    lang = self.inst.notify.language()
-                    self.inst.notify.notify(
-                        "burst",
-                        account=account.id,
-                        leftover=i18n.percent(lang, max(0.0, current.leftover_pct)),
-                        span=i18n.span(lang, (current.hours_to_reset or 0) * 3600),
-                    )
-            elif before and before.burst and not current.burst:
-                self.log(f"{account.id}: burst over ({current.reason})")
-            if reading.paid_usage:
-                self.log(f"{account.id}: paid usage is active on this account: lastcall spends nothing from it")
-            self.alert(account.id, "paid", reading.paid_usage)
+        policy = account.spend_policy()
+        history = self.inst.store.readings(account.id, now - RATE_WINDOW) if not account.keyed else []
+        rate = account_rate(history, reading, policy, DEFAULT_RATE)
+        before = self.plans.get(account.id)
+        self.plans[account.id] = current = plan(reading, policy, rate, now, audit_models(acc))
+        if current.burst and not (before and before.burst):
+            pace = "" if account.keyed else f"; {rate:.1f}%/h"
+            self.log(f"{account.id}: burst starts ({current.reason}{pace})")
+            self.tell_burst(account, current)
+        elif before and before.burst and not current.burst:
+            self.log(f"{account.id}: burst over ({current.reason})")
+        if reading.paid_usage and record:
+            self.log(f"{account.id}: paid usage is active on this account: lastcall spends nothing from it")
+        self.alert(account.id, "paid", reading.paid_usage)
+
+    def tell_burst(self, account: AccountRow, current: Plan) -> None:
+        """Tell the owner that a burst starts, in the terms of the account's policy."""
+        notify = self.inst.notify
+        if notify is None:
+            return
+        lang = notify.language()
+        if current.code == "schedule":
+            notify.notify("burst", "burst-schedule", account=account.id, cron=account.schedule)
+        elif current.budget is not None and account.budget_usd:
+            spent = i18n.money(lang, current.budget.used_pct * account.budget_usd / 100)
+            budget = i18n.money(lang, account.budget_usd)
+            notify.notify("burst", "burst-budget", account=account.id, spent=spent, budget=budget)
+        else:
+            notify.notify(
+                "burst",
+                account=account.id,
+                leftover=i18n.percent(lang, max(0.0, current.leftover_pct)),
+                span=i18n.span(lang, (current.hours_to_reset or 0) * 3600),
+            )
 
     def alert(self, account: str, event: str, on: bool, **values: str) -> None:
         """Tell the owner when a problem starts, once; forget it when it ends, so the next one is told again."""
@@ -278,7 +302,7 @@ class Service:
         return Options(
             language=(project.language if project and project.language else None) or account.language,
             max_prs=project.max_prs if project else 3,
-            policy=SpendPolicy(reserve_pct=account.reserve_pct),
+            policy=account.spend_policy(),
             wait=True,
             trigger=trigger,
         )
@@ -288,11 +312,11 @@ class Service:
         return audit_repo(
             self.inst,
             repo,
-            Account(account.id, account.engine),
+            account.account(),
             self.options(repo, account, trigger),
             on_step=lambda s: self.log(f"{prefix} {s.role}: {'ok' if s.ok else 'failed'} in {s.seconds:g} s"),
             log=lambda message: self.log(f"{prefix} {message}"),
-            peers=[(Account(c.id, c.engine), SpendPolicy(reserve_pct=c.reserve_pct)) for c in crew],
+            peers=[(c.account(), c.spend_policy()) for c in crew],
         )
 
     def _issues(self, repo: str, account: AccountRow, trigger: str) -> Any:
@@ -300,7 +324,7 @@ class Service:
         return issues_repo(
             self.inst,
             repo,
-            Account(account.id, account.engine),
+            account.account(),
             self.options(repo, account, trigger),
             on_step=lambda s: self.log(f"{prefix} {s.role}: {'ok' if s.ok else 'failed'} in {s.seconds:g} s"),
             log=lambda message: self.log(f"{prefix} {message}"),
@@ -311,7 +335,7 @@ class Service:
         return improve_repo(
             self.inst,
             repo,
-            Account(account.id, account.engine),
+            account.account(),
             self.options(repo, account, trigger),
             on_step=lambda s: self.log(f"{prefix} {s.role}: {'ok' if s.ok else 'failed'} in {s.seconds:g} s"),
             log=lambda message: self.log(f"{prefix} {message}"),

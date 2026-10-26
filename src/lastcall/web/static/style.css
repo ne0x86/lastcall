@@ -162,6 +162,7 @@ select {
 .facts { margin: 0 0 .75rem; padding: 0; list-style: none; color: var(--muted); }
 .settings { display: grid; gap: .75rem; margin: 0 0 1rem; padding: .75rem 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .settings .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .75rem; }
+.settings .fields.wide { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }  /* model names are long */
 .settings select { width: 100%; }
 .settings button { justify-self: start; }
 .check { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
@@ -183,7 +184,10 @@ fieldset { display: grid; gap: .5rem; margin: 0; padding: 0; border: 0; }
   .picker-wrap:has(option[value="discord"]:checked) .dest-discord,
   .picker-wrap:has(option[value="slack"]:checked) .dest-slack,
   .picker-wrap:has(option[value="email"]:checked) .dest-email,
-  .picker-wrap:has(option[value="apprise"]:checked) .dest-apprise { display: block; }
+  .picker-wrap:has(option[value="apprise"]:checked) .dest-apprise,
+  .picker-wrap:has(option[value="subscription"]:checked) .dest-subscription,
+  .picker-wrap:has(option[value="key"]:checked) .dest-key,
+  .picker-wrap:has(option[value="local"]:checked) .dest-local { display: block; }
 }
 legend { margin-bottom: .5rem; font-weight: 600; }
 .check.plain { align-items: flex-start; font-weight: 400; }  /* long labels: the box stays by their first line */

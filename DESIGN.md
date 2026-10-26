@@ -68,7 +68,8 @@ lastcall's rules follow from that:
 2. It never sees subscription credentials. The owner signs in with the CLI's own login flow, inside a credential
    volume that only that account's runner containers mount. `lastcall login` only starts that flow (`claude auth
    login`, `codex login --device-auth`) in a container with the isolation of a step, on the owner's terminal.
-3. API keys are a first-class alternative for every engine.
+3. API keys and local models are a first-class alternative. Since v0.5 the `opencode` engine runs on them; the
+   API keys of the other engines may follow. lastcall holds such a key itself (section 12): no vendor login applies.
 4. When the owner connects an account, lastcall shows a summary of that provider's current terms with a link to the
    source. The owner decides.
 5. There will be no hosted version.
@@ -102,12 +103,15 @@ flowchart LR
     subgraph sandbox ["internal network, no direct egress"]
       R1["runner: claude-code"]
       R2["runner: codex"]
+      R3["runner: opencode"]
       T["verify container"]
+      L["ollama<br/>local models, optional"]
     end
   end
   S -- "StepSpec" --> V
-  V --> R1 & R2 & T
-  R1 & R2 & T --> E
+  V --> R1 & R2 & R3 & T
+  R1 & R2 & R3 & T --> E
+  R3 -.-> L
   E --> M["model APIs<br/>package registries"]
   C1 -.-> R1
   S --> G["GitHub App<br/>clone · push · PR · issues"]
@@ -124,12 +128,16 @@ flowchart LR
 - **Runners.** One ephemeral container per step: user 1000, `--cap-drop ALL`, `no-new-privileges`, memory, CPU and
   process limits, on an `internal` Docker network whose only way out is the egress proxy. Mounts: the workspace
   (read-only for reviewers and the judge, writable for an implementer, on its own clone), `/ctx` read-only, and the
-  account's credential volume at the CLI's home. Runners have no forge token, no SSH keys and no Docker socket. The
-  image holds the official CLIs at pinned versions, Python 3.12 and Node.js 22.
+  account's credential volume at the CLI's home. An account on an API key has no volume: its key comes as a file in
+  `/ctx`. Runners have no forge token, no SSH keys and no Docker socket. The image holds the official CLIs at pinned
+  versions, Python 3.12 and Node.js 22.
+- **Local model server.** Optional: the compose service `ollama`, on the sandbox network only, which steps reach
+  directly. It has no way out, so no step can make it download anything. Models come in only through `ollama-pull`,
+  a separate container on the outside network that the owner runs.
 - **Data volume.** `runs/` belongs to the service, which runs as user 1000 like the runners, so an implementer can
   write to its clone. `steps/<id>/ctx/` exists only while its step runs.
-- **Egress proxy.** Allows HTTPS `CONNECT` only to an allowlist built from the enabled engines (model APIs and auth
-  endpoints) and from the project's package ecosystems. It relies on a Docker `internal` network, not on host
+- **Egress proxy.** Allows HTTPS `CONNECT` only to an allowlist built from the engines (model APIs, auth endpoints,
+  and models.dev, where OpenCode reads the prices) and from the package registries of the supported ecosystems. It relies on a Docker `internal` network, not on host
   firewall rules, so it works the same on Linux and on Docker Desktop.
 - **Forge.** A GitHub App that each instance creates in the owner's account through GitHub's manifest flow. The App
   authors the pull requests, so the owner can approve them.
@@ -138,8 +146,10 @@ flowchart LR
 
 ### Life of a burst
 
-1. Every 15 minutes the service reads the quota of each account, without any model call.
-2. An account whose expiring window would reset with capacity left over enters burst mode.
+1. Every 15 minutes the service reads the quota of each account, without any model call. An account on an API key
+   or a local model plans every minute instead, from lastcall's own ledger.
+2. An account whose expiring window would reset with capacity left over enters burst mode. So does an account on a
+   key while its spending is behind the calendar month, and one on a schedule during its hours.
 3. The ranking picks a project. The service clones it and builds the context pack, without any model call.
 4. The reviewers run one after another: the first one writes the provider's cache and the others read it. Then the
    judge runs.
@@ -181,8 +191,10 @@ Each quota reader declares its **fidelity**:
 - `exact`: the provider reports usage (Claude's usage request, the Codex app-server `account/rateLimits/read`,
   OpenRouter key usage);
 - `events`: rate-limit events and 429 responses seen during runs;
-- `ledger`: lastcall's own accounting of tokens and cost per step, against a limit that the owner declares;
-- `none`: there is nothing to read, so only the `schedule` policy applies.
+- `ledger`: lastcall's own accounting of what each step cost, against the monthly budget that the owner declares
+  (accounts on API keys). Its one window, `budget`, is expiring and resets with the calendar month (UTC);
+- `none`: there is nothing to count against (a local model), so only the `schedule` policy, or the owner, starts
+  runs.
 
 The two exact readers that exist today use experimental CLI interfaces. Engine versions are therefore pinned and
 updated on purpose, and the readers fall back to `events`. Each one is a small script (`lastcall.probes`) that runs
@@ -210,9 +222,20 @@ in the sandbox with the account volume mounted:
 
   The rate is the share of the expiring window that a burst can spend per hour, as limited by the throttle windows.
   lastcall **learns** it per account from past readings; a default per plan bootstraps it.
-- `budget`: spend up to an amount per period (API keys), spread over the period.
-- `schedule`: cron windows, for local models and for accounts without a reader.
-- `manual`: only runs that the owner starts.
+- `budget`, the default for API keys: a monthly budget in USD, for the calendar month (UTC).
+  - The ledger keeps what each step cost, as OpenCode reports it with the prices of models.dev.
+  - A burst starts while the share of the budget spent is behind the share of the month gone: a burst early in the
+    month leaves room for the rest of it.
+  - The gate stops the steps when the budget is spent. A step that is already running finishes, so the owner gives
+    the key its own limit at the provider too.
+  - A step that used tokens with no price stops the run: the budget could not hold. Free models (OpenRouter's
+    `:free`) cost nothing, rightly.
+- `schedule`, the default for local models: a cron expression in UTC, five fields (`* 1-6 * * *` is every night
+  from 01:00 to 06:59). A burst starts in the minutes that match; a run that starts inside the schedule may end
+  after it. An API key on a schedule keeps its monthly budget.
+- `manual`: only runs that the owner starts. An API key keeps its budget here too.
+
+An account on an API key keeps no reserve: its budget is the owner's limit.
 
 The gates run before every step:
 
@@ -244,13 +267,19 @@ accounts:
     spend: {policy: before-reset, reserve_pct: 10}
   - id: openrouter             # v0.5
     engine: opencode
-    login: api-key
+    provider: openrouter       # or anthropic, openai: an API key that lastcall keeps in its secret store
+    tiers: {fast: qwen/qwen3-coder-flash, balanced: qwen/qwen3-coder-flash, deep: qwen/qwen3-coder}
     spend: {policy: budget, usd_per_month: 20}
   - id: local                  # v0.5
-    engine: codex
-    base_url: http://ollama:11434/v1
-    spend: {policy: schedule, cron: "0 1-6 * * *"}
+    engine: opencode
+    provider: ollama           # the compose service `ollama`, at http://ollama:11434/v1
+    tiers: {fast: qwen3-coder, balanced: qwen3-coder, deep: qwen3-coder}
+    spend: {policy: schedule, cron: "* 1-6 * * *"}
 ```
+
+An account can name its own models. An engine with no defaults in the data file (`opencode`) needs them: the owner
+gives one model, and maybe a cheaper one for the reviewers (the `balanced` and `fast` tiers). A model of the
+account's own keeps the default effort of its tier.
 
 **Several accounts on one project.** Different providers find different problems (section 16). A review step can
 therefore fan out across accounts, and one judge merges the results.
@@ -261,7 +290,7 @@ therefore fan out across accounts, and one judge merges the results.
 |---|---|---|---|
 | `claude-code` (v0.1) | Claude plans, through the `claude` login | Anthropic API | Anthropic-compatible gateways (`ANTHROPIC_BASE_URL`) |
 | `codex` (v0.1) | ChatGPT plans, through `codex login`; access tokens for Business and Enterprise | OpenAI API | OpenAI-compatible providers (`model_providers`), local models |
-| `opencode` (v0.5) | — | Many providers | OpenRouter, OpenAI-compatible endpoints, Ollama |
+| `opencode` (v0.5) | — | OpenRouter, Anthropic, OpenAI | Local models on Ollama |
 
 ## 7. Engine contract
 
@@ -274,7 +303,7 @@ class Engine(Protocol):
     egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist
     home: str  # where the CLI keeps its login; the account's credential volume is mounted here
     home_env: str  # the variable that points the CLI at `home`
-    login: tuple[str, ...]  # the CLI's own interactive login
+    login: tuple[str, ...]  # the CLI's own interactive login; empty for an engine on API keys
 
     def invocation(self, step: StepSpec) -> Invocation: ...  # argv, stdin, env, files and mounts
     def parse(self, line: str) -> Event | None: ...  # tool use, message, usage, rate limit, result, error
@@ -284,6 +313,12 @@ class Engine(Protocol):
 class QuotaProbe(Protocol):  # an engine that can read its account's quota without calling the model
     def quota_invocation(self) -> Invocation: ...
     def quota_reading(self, account: str, lines: Sequence[str], now: float) -> Reading: ...
+
+
+class Keyed(Protocol):  # an engine on API keys that lastcall holds, or on a local model server
+    providers: tuple[Provider, ...]  # each with its title, where to create a key and where its models are listed
+
+    def with_key(self, provider: str, key: str | None, base_url: str | None = None) -> Engine: ...
 ```
 
 The rest of lastcall works only through this contract:
@@ -292,7 +327,10 @@ The rest of lastcall works only through this contract:
 - the egress allowlist comes from the engines' `egress`;
 - the web UI shows `provider` and `title`;
 - the burst rate is learned from whatever windows an engine's quota reader reports;
-- one compose service, `login`, signs in any engine through `runner/login.sh`.
+- one compose service, `login`, signs in any engine through `runner/login.sh`; an engine on API keys has nothing to
+  sign in, and the script says so;
+- an engine on API keys gets its account's key at run time (`with_key`), and passes it to the step as a read-only
+  file in `/ctx`, never on the command line or in the environment. The web UI offers its providers.
 
 [CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists the steps to add an engine.
 
@@ -306,7 +344,8 @@ Rules for engines:
   message prefix. In the prototype this cut the cost of the reviewers by 61%. The engine decides where the prefix
   goes; recipes only mark it as shared.
 - **Structured output.** Steps return JSON validated against a schema. Engines with native schema support use it.
-  Other engines get the schema in the prompt; lastcall validates the output and asks once for a repair.
+  OpenCode has none: its steps get the schema in the prompt, and their output is the JSON of the last answer, also
+  inside a code fence. An answer that is not that JSON fails the step; asking once for a repair is still to come.
 - **Normalized events** feed the run log, the ledger and the `events` quota reader.
 - **A `scripted` engine** replays recorded event streams, so recipes run end to end in tests and in CI without
   spending quota.
@@ -571,7 +610,9 @@ runs, and different network rights for setup and verify.
 | A project's environment image is hostile | The owner's repository chooses it, and it runs with the isolation of any step: user 1000, no capabilities, the sandbox network, the change's copy as its only writable mount, and never an account volume or the Docker socket. |
 | Subscription credentials leak | lastcall never reads them: they stay in the CLI's own storage, in a volume. |
 | An agent copies its CLI credentials into its output | Every text lastcall publishes (pull request, issue, comment) goes through the secret scanner first, and a hit blocks it. |
-| Unexpected bills | Hard stop when paid usage is active, and a reserve per account. |
+| Unexpected bills | Hard stop when paid usage is active, and a reserve per account. An API key has a monthly budget that the gate checks before every step, and a step whose tokens have no price stops the run. |
+| An API key leaks | It lives in the secret store, and only the steps of its account get it, as a read-only file in `/ctx` that the supervisor deletes after the step; never on a command line, in the environment or in a log. An agent can read it, as it can read its CLI's login: the secret scanner blocks it in what lastcall publishes, and the egress allowlist limits where it can go. The owner gives the key a spending limit at the provider. |
+| A step abuses the local model server | The server runs on the sandbox network with no way out, so no step can make it download anything. Models come in only through `ollama-pull`, which the owner runs. |
 | Takeover of the web UI | It listens only on the host by default. The password is chosen with a one-time code that only the service's log shows, and kept as an scrypt hash. Sign-in locks after repeated failures. Sessions live in the store; the `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) holds only a random token. Every POST needs this site's `Origin` and, when signed in, the session's CSRF token. A strict CSP, and no JavaScript. |
 
 The secrets that lastcall does hold (the GitHub App key, API keys, notification URLs) live in their own volume, one
@@ -587,8 +628,10 @@ is running, pull requests to review), projects, runs, decisions, statistics, acc
 It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
 (`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the language
 is the browser's, until the owner picks one. So far it has the sign-in, the GitHub App page (the manifest flow, whose
-page alone may post a form to github.com), the accounts page (add an account, the exact login command for it, and a
-quota reading on demand to check the login), the dashboard (with pause and resume, and a notice when the service stops
+page alone may post a form to github.com), the accounts page (add a subscription, with the exact login command for
+it and a quota reading on demand to check the login; an API key, with its provider, model, monthly budget and
+policy; or a local model with its schedule; each form shows its steps, with links to where keys and model names
+come from), the dashboard (with pause and resume, and a notice when the service stops
 writing its heartbeat) and the projects page: each project's settings (merge on approve and the watch after the merge
 among them), an audit or an improvement on demand, adding a repository by its address, and the suggestions, which the
 service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
@@ -676,7 +719,8 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 
 **v0.5: wider reach**
 
-- Engine `opencode` (API keys, OpenRouter, local models); spend policies `budget` and `schedule`.
+- Engine `opencode` (API keys of OpenRouter, Anthropic and OpenAI, and local models on Ollama); spend policies
+  `budget` and `schedule`, and lastcall's ledger. Done.
 - Recipe `issues`. Done.
 - Recipes `tests` and `deps`.
 - Signals (container logs, Sentry or GlitchTip); GitLab or Forgejo.

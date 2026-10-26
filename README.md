@@ -12,7 +12,8 @@ lastcall watches those limits. When a reset is coming with capacity left over, i
 repositories: it audits them, fixes what it can in small pull requests verified by your own tests, and leaves the
 rest in an issue for you to decide. Nothing reaches your default branch without your approval. 🙌
 
-It works through each vendor's official command-line tool, with your own login: today Claude Code and Codex, and
+It works through each vendor's official command-line tool, with your own login: today Claude Code and Codex. It can
+also spend an API key with a monthly budget, or a local model at the hours you choose, through OpenCode. And
 [more can plug in](#-engines).
 
 ## ✨ What it does
@@ -36,7 +37,8 @@ It works through each vendor's official command-line tool, with your own login: 
 - 🧠 **Remembers.** It never proposes again what you rejected or dismissed, and it finishes what did not fit last
   time.
 - ⏳ **Picks its moment.** It spends only capacity that would otherwise expire. It keeps a reserve for you and stops
-  before any paid usage.
+  before any paid usage. An API key spends its monthly budget at the pace of the month, and a local model works at
+  the hours of its schedule.
 - 🖥️ **Shows you everything.** A dashboard in English and Spanish: what is left of every quota, the next burst, the
   pull requests to review and the decisions waiting for you.
 - 🔔 **Tells you.** A notification when a pull request opens, a decision waits, an audit fails or an account needs
@@ -72,20 +74,28 @@ flowchart LR
   domain.
 - 🔑 Agents never hold GitHub credentials and never push. lastcall does, after verifying.
 - 🙈 Your subscription login stays in the official CLI's own storage. lastcall never reads it.
+- 💳 An API key stays in lastcall's secret store, only the steps of its account get it, and its monthly budget caps
+  what they cost. The local model server has no way out to the internet.
 - 🧑‍⚖️ Nothing is merged without your approval, and a revert is only ever proposed.
 
 ## 🔌 Engines
 
-lastcall drives each vendor's official command-line tool, with your own login:
+lastcall drives each vendor's official command-line tool, with your own login, and OpenCode for API keys and local
+models:
 
-| Engine | Plans | Quota it reads |
+| Engine | Runs on | Quota it reads |
 |---|---|---|
 | Claude Code (`claude-code`) | Claude Pro, Max and Team | the 5-hour and weekly windows, and each model's own weekly window, exactly |
 | Codex (`codex`) | ChatGPT Plus, Pro and Business | the 5-hour and weekly windows, exactly |
+| OpenCode (`opencode`) | API keys of OpenRouter, Anthropic and OpenAI; local models on Ollama | what its steps cost this month, from lastcall's own ledger, against the budget you set |
+
+An account on an API key needs no login: you give lastcall the key, a model and a monthly budget. OpenCode reports
+what each step costs, with the prices of [models.dev](https://models.dev), and lastcall stops when this month's
+steps have cost the budget. A step that is already running may go a little over it, so give the key its own
+spending limit at the provider too.
 
 The rest of lastcall only knows the engine contract. Adding another tool is one module and a few small changes:
-[CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists them. The next engine on the roadmap is opencode, for
-API keys, OpenRouter and local models.
+[CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists them.
 
 ## 🚀 Quickstart
 
@@ -117,6 +127,15 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
   ```
 
   On PowerShell: `$env:ACCOUNT="claude-max"; $env:ENGINE="claude-code"; docker compose run --rm login`.
+
+  An API key or a local model needs no login: the Accounts page asks for the key, the model and a monthly budget,
+  or a schedule, with links to where each one comes from. A local model runs on the Ollama server that comes with
+  lastcall, which has no way out to the internet; models come in only through `ollama-pull`:
+
+  ```sh
+  docker compose --profile local up -d ollama                      # the model server
+  docker compose --profile local run --rm ollama-pull qwen3-coder  # a model, about 19 GB: a graphics card helps
+  ```
 - 📁 **Projects.** lastcall suggests your repositories and says why. Add the ones you want, or any by its address.
 - 🔔 **Settings.** Where lastcall should notify you. Choose the service and fill in what it asks for: Telegram (paste
   your bot's token and lastcall finds your chat), ntfy, Discord, Slack or email, or any of the
@@ -143,6 +162,10 @@ docker compose pull && docker compose up -d
 ```sh
 docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-github-login>
 docker compose run --rm cli account add claude-max --engine claude-code --language English
+docker compose run --rm cli account add openrouter --engine opencode --provider openrouter \
+  --model <model> --budget 20                                  # asks for the key; or --key-file - with -T
+docker compose run --rm cli account add local --engine opencode --provider ollama \
+  --model qwen3-coder --policy schedule --schedule "* 1-6 * * *"   # every night, 01:00 to 06:59 UTC
 docker compose run --rm cli quota claude-max
 docker compose run --rm cli github repos
 docker compose run --rm cli project add <owner/name>
@@ -209,7 +232,8 @@ Subscription plans are meant for each vendor's own tools. lastcall follows these
 - it never handles your subscription credentials;
 - it never offers a hosted version.
 
-API keys will be a first-class alternative. Read the current terms of your provider before you connect an account;
+API keys and local models are the alternative: OpenCode runs on them, under each provider's API terms. Read the
+current terms of your provider before you connect an account;
 [DESIGN.md](DESIGN.md#3-provider-terms-and-responsible-use) has the details and the sources. This is not legal
 advice.
 
@@ -235,7 +259,8 @@ advice.
   - Merge on approve; watch after the merge and propose a revert.
   - The gate checks the weekly window of each model.
 - 🔜 **v0.5, wider reach.**
-  - API keys and local models: opencode, OpenRouter, Ollama.
+  - ✅ API keys and local models: OpenCode on OpenRouter, Anthropic, OpenAI and Ollama, with a monthly budget or a
+    schedule.
   - ✅ The `issues` recipe: label an issue `lastcall`, and it becomes a pull request.
   - More recipes: tests, dependencies.
   - GitLab and Forgejo.

@@ -49,7 +49,7 @@
       {%- if a.paid %}<p class="error">{{ t("web.accounts.paid") }}</p>{% endif %}
       {%- if a.plan %}<p>{{ a.plan }}</p>{% endif %}
       {%- if a.working %}<p class="working">{{ a.working }}</p>{% endif %}
-      <p class="muted small">{{ a.read }}</p>
+      {%- if a.read %}<p class="muted small">{{ a.read }}</p>{% endif %}
     </article>
     {%- endfor %}
   </div>

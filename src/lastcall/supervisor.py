@@ -43,6 +43,7 @@ SAFE_PATH = re.compile(r"[A-Za-z0-9._/-]+")  # no commas: paths end up in --moun
 ACCOUNT_VOLUME = re.compile(r"lastcall-account-[a-z0-9][a-z0-9-]{0,39}")
 ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 RESERVED_ENV = {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"}
+NO_PROXY = "localhost,127.0.0.1,ollama"  # the local model server lives on the sandbox network, not behind the proxy
 
 
 @dataclass(frozen=True)
@@ -184,7 +185,7 @@ def docker_argv(req: StepRequest, step_id: str, config: Config) -> list[str]:
     argv = ["docker", "run", "--rm", "-i", "--name", container_name(step_id), "--network", config.network]
     argv += ["--user", f"{RUNNER_UID}:{RUNNER_UID}", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"]
     argv += ["--memory", config.memory, "--cpus", config.cpus, "--pids-limit", str(config.pids)]
-    env = {"HTTPS_PROXY": config.proxy, "HTTP_PROXY": config.proxy, "NO_PROXY": "localhost,127.0.0.1", **req.env}
+    env = {"HTTPS_PROXY": config.proxy, "HTTP_PROXY": config.proxy, "NO_PROXY": NO_PROXY, **req.env}
     for name, value in env.items():
         argv += ["-e", f"{name}={value}"]
     argv += ["--mount", _volume(config.data_volume, "/work", req.workspace, readonly=not req.writable)]
