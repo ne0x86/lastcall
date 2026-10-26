@@ -28,6 +28,8 @@ It works through each vendor's official command-line tool, with your own login: 
   take go to one issue.
 - 💡 **Improves.** When you ask, a plan of small improvements that fit your project, checked against the code: one
   issue with a checkbox per idea. lastcall builds the ones you tick, one pull request each.
+- 🏷️ **Takes requests.** Label an issue `lastcall`, and a coming burst works on it: a pull request that closes the
+  issue, or a comment on it that says what is missing. lastcall adds the label to your active repositories.
 - 👀 **Merges and watches, if you want.** It merges the pull requests you approve once their checks pass, and it
   watches each merge for a day: when the checks or your health address break, it proposes a revert and pauses the
   project.
@@ -147,6 +149,7 @@ docker compose run --rm cli project add <owner/name>
 docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
 docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
 docker compose run --rm cli improve <owner/name> --account claude-max                # a plan; then the ideas you tick
+docker compose run --rm cli issues <owner/name> --account claude-max                 # labelled issues, now
 docker compose run --rm cli status                                                   # accounts, bursts, findings
 docker compose run --rm cli pause                                                    # or resume
 ```
@@ -233,7 +236,8 @@ advice.
   - The gate checks the weekly window of each model.
 - 🔜 **v0.5, wider reach.**
   - API keys and local models: opencode, OpenRouter, Ollama.
-  - More recipes: issues, tests, dependencies.
+  - ✅ The `issues` recipe: label an issue `lastcall`, and it becomes a pull request.
+  - More recipes: tests, dependencies.
   - GitLab and Forgejo.
 
 ## 🧑‍💻 Development

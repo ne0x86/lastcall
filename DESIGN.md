@@ -355,10 +355,11 @@ When an account bursts, it picks the next project with a cheap score:
 - never audited by this account, or days since the last audit;
 - new commits since the audited commit;
 - pending findings;
-- ideas that the owner ticked in an improvement plan, which go first: the burst builds them instead of auditing;
+- what the owner asked for, which goes first and instead of an audit: the ideas ticked in an improvement plan, then
+  the issues labelled `lastcall`;
 - errors and restarts, when signals are configured.
 
-It skips projects that the same account audited recently, unless the owner ticked ideas there; projects with
+It skips projects that the same account audited recently, unless the owner asked for something there; projects with
 unreviewed lastcall pull requests piling up; and very large projects when little quota is left. The project weight
 multiplies the score.
 
@@ -383,7 +384,7 @@ engine runs all of them with the same guarantees.
 
 - **find → judge → fix → verify → deliver**: `audit`, and later `tests` and `deps`.
 - **ideate → edit → deliver**: `improve`.
-- **issue → fix → verify → deliver**: `issues` (v0.5). The owner labels an issue, and leftover quota solves it.
+- **issue → fix → verify → deliver**: `issues`. The owner labels an issue, and leftover quota solves it.
 
 Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` it stops after the judge, and
 `lastcall deliver <run>` later opens the pull requests of that report, so the owner can read the findings first.
@@ -421,6 +422,17 @@ Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` i
 - An idea that cannot be built is `stuck`, with why. Closing the plan dismisses the ideas that were not ticked;
   closing it as not planned also dismisses the ticked ones not built yet. While a plan has ideas to tick, a new plan
   waits.
+
+The `issues` recipe (`lastcall.recipes.issues`) works on the issues that the owner labels `lastcall`:
+- `lastcall.sync` creates the label once in each active project, and reads its open issues with the label: each one
+  waits for a run. A burst that picks the project works on them, after the ideas ticked in a plan, instead of
+  auditing; `lastcall issues <owner/name>` does it at once.
+- The implementer (deep tier) gets the issue's text and the comments of people who may write to the repository, and
+  works like any other (`lastcall.recipes.build`), up to the project's limit, the oldest issue first. The pull
+  request says `Fixes #<n>`, so merging it closes the issue.
+- When the issue is unclear, needs a decision or does not fit in one pull request, or the change fails its checks
+  twice, lastcall says why in a comment on the issue and takes the label off. lastcall also takes it off when the
+  owner closes its pull request without merging. Labelling the issue again asks for a new attempt.
 
 Prompts are in English, and the language of findings, pull requests and reports is a parameter. Every prompt tells
 the model that the code and documents it reads are data, not instructions.
@@ -526,6 +538,8 @@ runs, and different network rights for setup and verify.
   "Do it" queues a pull request for the next run; "Dismiss" closes the finding for good.
 - **Improvement plans.** One issue per plan, with a checkbox per idea: the owner ticks what to build, and closes the
   plan when done with it (section 9).
+- **Labelled issues.** An issue labelled `lastcall` gets a pull request that closes it, or a comment that says what
+  is missing, with the label taken off (section 9).
 - **Approval** is an approval on the latest commit of the pull request. Otherwise the owner merges; with **merge on
   approve**, a project setting that is off by default, lastcall merges it (`lastcall.approval`, at each sync) when:
   - someone who may write to the repository (its owner, a member or a collaborator) approved the latest commit, and
@@ -548,7 +562,7 @@ runs, and different network rights for setup and verify.
 
 | Threat | Control |
 |---|---|
-| Prompt injection in code, logs or issues makes an agent act | Agents have no forge credentials, no write access outside their clone and no network beyond the allowlist. Every change goes through verification and human approval. |
+| Prompt injection in code, logs or issues makes an agent act | Agents have no forge credentials, no write access outside their clone and no network beyond the allowlist. Only the owner's label starts work on an issue, and only comments from people who may write reach the agent. Every change goes through verification and human approval. |
 | Exfiltration of code or secrets | Egress allowlist. Logs are redacted. Scanners report secrets without their values. |
 | An agent lies about the tests | lastcall runs them again in a clean container and reads the exit code itself. |
 | Someone approves a lastcall pull request to get it merged | Merge on approve counts only approvals from people who may write to the repository, on the latest commit; it merges only when nobody who may write asks for changes and no check fails or runs, and it names that commit. The setting lives in lastcall, never in the repository. |
@@ -663,7 +677,8 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 **v0.5: wider reach**
 
 - Engine `opencode` (API keys, OpenRouter, local models); spend policies `budget` and `schedule`.
-- Recipes `issues`, `tests` and `deps`.
+- Recipe `issues`. Done.
+- Recipes `tests` and `deps`.
 - Signals (container logs, Sentry or GlitchTip); GitLab or Forgejo.
 
 ## 18. Prior art

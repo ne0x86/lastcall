@@ -15,8 +15,17 @@ from lastcall.web.dashboard import ago, language_name, project_view
 WEIGHTS = (("0.5", "low"), ("1", "normal"), ("2", "high"), ("3", "top"))
 LANGUAGES = ("English", "Spanish")
 MAX_PRS = range(1, 6)
-QUEUED = ("web.project.queued", "web.project.queued.improve")  # by whether the order is an improvement
-RUNNING = ("web.project.running", "web.project.running.improve")
+# what a project's card says while an order of each recipe waits, or while a run of it works
+QUEUED = {
+    "audit": "web.project.queued",
+    "improve": "web.project.queued.improve",
+    "issues": "web.project.queued.issues",
+}
+RUNNING = {
+    "audit": "web.project.running",
+    "improve": "web.project.running.improve",
+    "issues": "web.project.running.issues",
+}
 
 
 @dataclass(frozen=True)
@@ -68,8 +77,8 @@ class ProjectsPage:
 
 def build(store: Store, lang: str, now: float, install_url: str, reading: bool) -> ProjectsPage:
     projects = store.projects()
-    busy = {o["repo"].lower(): text(lang, QUEUED[o["kind"] == "improve"]) for o in store.orders()}
-    busy |= {r["repo"].lower(): text(lang, RUNNING[r["recipe"] == "improve"]) for r in store.running()}
+    busy = {o["repo"].lower(): text(lang, QUEUED.get(o["kind"], QUEUED["audit"])) for o in store.orders()}
+    busy |= {r["repo"].lower(): text(lang, RUNNING.get(r["recipe"], RUNNING["audit"])) for r in store.running()}
     latest = store.latest_runs()
     page = ProjectsPage(bool(install_url), install_url, refreshed(store, lang, now, reading))
     page.projects = [card(store, p, lang, now, latest.get(p.repo), busy.get(p.repo.lower(), "")) for p in projects]
@@ -94,6 +103,9 @@ def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any
     summary = [last_run + (f" · {view.last_status}" if view.last_status else "")]
     summary.append(f"{text(lang, 'web.projects.findings')}: {view.findings}")
     summary.append(plural(lang, "web.project.prs", view.prs))
+    waiting = store.waiting_count(p.repo)
+    if waiting:
+        summary.append(plural(lang, "web.project.tickets", waiting))
     weights = [Option(v, text(lang, f"web.project.weight.{k}"), float(v) == p.weight) for v, k in WEIGHTS]
     if not any(o.selected for o in weights):
         custom = text(lang, "web.project.weight.custom", weight=number(lang, p.weight))

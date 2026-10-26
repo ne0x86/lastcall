@@ -143,6 +143,30 @@ class GitHub:
                 return repos
             page += 1
 
+    def labelled_issues(self, token: str, repo: str, label: str) -> list[dict[str, Any]]:
+        """The open issues with the label, without pull requests: their number, url and title."""
+        path = f"/repos/{repo}/issues?state=open&labels={urllib.parse.quote(label)}&per_page=100"
+        issues = [i for i in self.request("GET", path, token) if "pull_request" not in i]
+        return [{"number": i["number"], "url": i["html_url"], "title": i["title"]} for i in issues]
+
+    def ensure_label(self, token: str, repo: str, label: str, description: str) -> None:
+        """Create the label in the repository, unless it has it already."""
+        try:
+            self.request("GET", f"/repos/{repo}/labels/{urllib.parse.quote(label)}", token)
+        except GitHubError as e:
+            if e.status != 404:
+                raise
+            body = {"name": label, "color": "0e8a16", "description": description}
+            self.request("POST", f"/repos/{repo}/labels", token, body)
+
+    def unlabel(self, token: str, repo: str, number: int, label: str) -> None:
+        """Take the label off an issue; an issue without it is fine."""
+        try:
+            self.request("DELETE", f"/repos/{repo}/issues/{number}/labels/{urllib.parse.quote(label)}", token)
+        except GitHubError as e:
+            if e.status != 404:
+                raise
+
     def files(self, token: str, repo: str, ref: str) -> tuple[list[tuple[str, int]], bool]:
         """(path, size) of every file at `ref`, and whether GitHub truncated the list. Empty for an empty repo."""
         path = f"/repos/{repo}/git/trees/{urllib.parse.quote(ref, safe='')}?recursive=1"
@@ -179,3 +203,17 @@ class GitHubForge:
 
     def open_issue(self, title: str, body: str) -> str:
         return self.client.open_issue(self.client.repository_token(self.repo), self.repo, title, body)
+
+    def issue(self, number: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """An issue as GitHub returns it, and its comments, up to the latest 100."""
+        token = self.client.repository_token(self.repo)
+        found = self.client.request("GET", f"/repos/{self.repo}/issues/{number}", token)
+        comments = self.client.request("GET", f"/repos/{self.repo}/issues/{number}/comments?per_page=100", token)
+        return dict(found), list(comments)
+
+    def comment(self, number: int, body: str) -> None:
+        token = self.client.repository_token(self.repo)
+        self.client.request("POST", f"/repos/{self.repo}/issues/{number}/comments", token, {"body": body})
+
+    def unlabel(self, number: int, label: str) -> None:
+        self.client.unlabel(self.client.repository_token(self.repo), self.repo, number, label)

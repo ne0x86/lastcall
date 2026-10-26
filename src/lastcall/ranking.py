@@ -1,13 +1,13 @@
 """Which project an account audits next, decided without any model call (DESIGN.md, section 8).
 
-Left out: projects the same account audited in the last 7 days, unless the owner ticked ideas to build there;
-projects with 2 or more lastcall pull requests the owner has not reviewed yet; and projects another account is
-working on right now.
+Left out: projects the same account audited in the last 7 days, unless the owner asked for something there (ideas
+ticked in a plan, issues labelled `lastcall`); projects with 2 or more lastcall pull requests the owner has not
+reviewed yet; and projects another account is working on right now.
 
 Points: never audited by this account (100), or days since its last audit (2 a day, up to 30) and new commits since
-the audited commit (3 each, up to 30); pending findings (5 each, up to 25); ideas the owner ticked (100, and 5 each
-up to 25: they go first); one unreviewed lastcall pull request (minus 20). The project's weight multiplies the
-total.
+the audited commit (3 each, up to 30); pending findings (5 each, up to 25); what the owner asked for (100, and 5 for
+each ticked idea or labelled issue, up to 25: they go first); one unreviewed lastcall pull request (minus 20). The
+project's weight multiplies the total.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def rank(
             reasons.append(f"{waiting} pending findings")
         if chosen:
             score += 100 + min(25, 5 * chosen)
-            reasons.append(f"{chosen} ideas the owner chose")
+            reasons.append(f"{chosen} asked for by the owner")
         if unreviewed == 1:
             score -= 20
             reasons.append("1 lastcall pull request to review")
