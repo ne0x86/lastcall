@@ -128,8 +128,7 @@ class Service:
         if self.inst.store.setting("fanout") == "yes":
             self.fan_out(now)
         for account in self.inst.store.accounts(enabled_only=True):
-            p = self.plans.get(account.id)
-            if p is None or not p.burst or account.id in self.running:
+            if not self.bursting(account.id, now) or account.id in self.running:
                 continue
             repo = self.pick(account, now)
             if repo:
@@ -173,6 +172,12 @@ class Service:
         if reading.paid_usage and record:
             self.log(f"{account.id}: paid usage is active on this account: lastcall spends nothing from it")
         self.alert(account.id, "paid", reading.paid_usage)
+
+    def bursting(self, account: str, now: float) -> bool:
+        """Whether the account's plan bursts now. A plan lasts until the next reading, up to 15 minutes; once the
+        reset it was made for has come, the leftover it would spend is gone, and no new burst run starts on it."""
+        p = self.plans.get(account)
+        return p is not None and p.burst and not p.over(now)
 
     def tell_burst(self, account: AccountRow, current: Plan) -> None:
         """Tell the owner that a burst starts, in the terms of the account's policy."""
@@ -271,7 +276,7 @@ class Service:
             bursting = [
                 a
                 for a in self.inst.store.accounts(enabled_only=True)
-                if a.id not in self.running and a.id in self.plans and self.plans[a.id].burst
+                if a.id not in self.running and self.bursting(a.id, now)
             ]
         if len(bursting) < 2:
             return

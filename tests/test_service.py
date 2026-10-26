@@ -121,6 +121,37 @@ def test_pause_stops_new_runs(store: Store) -> None:
     assert len(started) == 1
 
 
+def test_no_new_burst_after_the_reset_its_plan_was_made_for(store: Store) -> None:
+    # the plan is made at a reading 10 min before the reset; the next reading is 15 min later
+    clock, started = Clock(), list[Callable[[], None]]()
+    readings: dict[str, Reading | Exception] = {"claude": reading("claude", 68, 10 / 60), "chatgpt": QuotaError("x")}
+    svc = service(store, readings, [], clock, started)
+    svc.tick()
+    assert len(started) == 1 and svc.plans["claude"].burst
+    started.pop()()  # the burst run ends 5 min before the reset
+    clock.now += 11 * 60  # a minute after the reset: the leftover it was for is gone
+    svc.tick()
+    assert started == [] and svc.running == {}
+    clock.now += READ_EVERY  # the next reading plans again, from the new window
+    readings["claude"] = reading("claude", 0, 168)
+    svc.tick()
+    assert started == [] and svc.plans["claude"].code == "later"
+
+
+def test_accounts_whose_reset_passed_do_not_fan_out(store: Store) -> None:
+    clock, started = Clock(), list[Callable[[], None]]()
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 68, 10 / 60),
+        "chatgpt": reading("chatgpt", 68, 10 / 60),
+    }
+    svc = service(store, readings, [], clock, started)
+    svc.read_quotas(clock.now)
+    store.set_setting("fanout", "yes")
+    clock.now += 11 * 60
+    svc.tick()
+    assert started == [] and svc.running == {}
+
+
 def test_quota_and_sync_have_their_own_rhythm(store: Store) -> None:
     clock = Clock()
     readings: dict[str, Reading | Exception] = {"claude": reading("claude", 30, 150), "chatgpt": QuotaError("x")}

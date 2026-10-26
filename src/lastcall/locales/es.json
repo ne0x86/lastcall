@@ -203,6 +203,11 @@
   "web.plan.window": "Próxima ráfaga {when}, en las horas de su horario ({cron}, UTC).",
   "web.plan.never": "Sin ráfaga: su horario ({cron}) no llega nunca.",
   "web.plan.bad-schedule": "Sin ráfaga: su horario ({cron}) no es válido.",
+  "web.plan.passed": "Sin ráfaga: la ventana se ha reiniciado desde esta lectura y lo que le quedaba se ha perdido. A la espera de una lectura nueva.",
+  "web.plan.no-key": "Le falta su clave de API: esta cuenta no gasta nada, ni siquiera en las ejecuciones que lances tú, hasta que vuelvas a darle la clave.",
+  "web.plan.due_now": "Ráfaga pendiente: queda {leftover} y faltan {span} para el reinicio. Empieza cuando termine la ejecución en curso.",
+  "web.plan.due_pace": "Ráfaga pendiente: {spent} de {budget} gastado este mes, por detrás del calendario. Empieza cuando termine la ejecución en curso.",
+  "web.plan.due_schedule": "Ráfaga pendiente: dentro de su horario ({cron}, UTC). Empieza cuando termine la ejecución en curso, si para entonces su horario no ha acabado.",
 
   "web.review.title": "Pendiente de ti",
   "web.review.prs": "Pull requests por revisar",

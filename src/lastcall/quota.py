@@ -115,9 +115,17 @@ class Plan:
     hours_to_reset: float | None = None
     hours_needed: float = 0.0
     starts_in_hours: float | None = None
-    code: str = ""  # the reason, for the web UI: manual, paid, no-window, model, no-reset, small, now, later...
+    code: str = ""  # the reason, for the web UI: manual, paid, no-window, model, no-reset, passed, small, now...
     full: Window | None = None  # code "model": the window of a model that the burst needs, at the reserve
     budget: Window | None = None  # the monthly budget of an account on an API key
+    resets_at: float | None = None  # a burst: the reset it spends before, in epoch seconds; after it, it is over
+
+    def over(self, now: float) -> bool:
+        """Whether the reset that this plan was made for has come: what it would spend is gone."""
+        return self.resets_at is not None and self.resets_at <= now
+
+
+PASSED = "the window has reset since this reading: waiting for a new reading"
 
 
 def plan(
@@ -129,7 +137,8 @@ def plan(
     can sustain (with a 10% margin and one extra hour), and never more than `max_lead_hours` before the reset. With
     several expiring windows, the one that resets first sets the deadline and the smallest leftover sets the amount.
     `models` are those the burst's steps use: while the window of one of them is at the reserve, those steps could
-    not run, so there is no burst.
+    not run, so there is no burst. A reading from before the reset of a window it would spend (an old reading)
+    never bursts: the leftover it shows was lost at that reset.
     """
     if policy.kind == "manual":
         return Plan(False, "policy manual: only runs started by the owner", code="manual")
@@ -142,6 +151,9 @@ def plan(
     windows = reading.expiring
     if not windows:
         return Plan(False, "no expiring window to spend", code="no-window")
+    resets = [w.resets_at for w in windows if w.resets_at is not None]
+    if resets and min(resets) <= now:
+        return Plan(False, PASSED, code="passed")
     full = at_reserve((w for w in reading.limiting(models) if w.model), policy)
     if full:
         return Plan(
@@ -151,7 +163,6 @@ def plan(
             full=full,
         )
     leftover = min(100.0 - policy.reserve_pct - w.used_pct for w in windows)
-    resets = [w.resets_at for w in windows if w.resets_at is not None]
     if not resets:
         return Plan(False, "reset time unknown", leftover_pct=leftover, code="no-reset")
     hours_to_reset = (min(resets) - now) / HOUR
@@ -163,7 +174,9 @@ def plan(
     burst = starts_in <= 0
     reason = f"{leftover:.1f}% left, {hours_to_reset:.1f} h to the reset" if burst else f"burst in {starts_in:.1f} h"
     code = "now" if burst else "later"
-    return Plan(burst, reason, leftover, hours_to_reset, hours_needed, max(0.0, starts_in), code)
+    return Plan(
+        burst, reason, leftover, hours_to_reset, hours_needed, max(0.0, starts_in), code, resets_at=min(resets)
+    )
 
 
 def _budget(reading: Reading, policy: SpendPolicy, now: float) -> Plan:
@@ -172,6 +185,8 @@ def _budget(reading: Reading, policy: SpendPolicy, now: float) -> Plan:
     w = reading.window(BUDGET)
     if w is None or w.resets_at is None or not w.duration_hours:
         return Plan(False, "no monthly budget", code="no-budget")
+    if w.resets_at <= now:  # a reading of a past month
+        return Plan(False, PASSED, code="passed")
     hours_to_reset = (w.resets_at - now) / HOUR
     leftover = 100.0 - policy.reserve_pct - w.used_pct
     if leftover <= policy.min_leftover_pct:
@@ -180,7 +195,7 @@ def _budget(reading: Reading, policy: SpendPolicy, now: float) -> Plan:
     gone = 100.0 * (1.0 - hours_to_reset / w.duration_hours)
     if w.used_pct < gone:
         reason = f"{w.used_pct:.0f}% of the budget spent and {gone:.0f}% of the month gone"
-        return Plan(True, reason, leftover, hours_to_reset, code="pace", budget=w)
+        return Plan(True, reason, leftover, hours_to_reset, code="pace", budget=w, resets_at=w.resets_at)
     starts_in = (w.used_pct - gone) / 100.0 * w.duration_hours
     reason = f"burst in {starts_in:.1f} h, when the month catches up with the spending"
     return Plan(False, reason, leftover, hours_to_reset, starts_in_hours=starts_in, code="ahead", budget=w)
@@ -189,6 +204,8 @@ def _budget(reading: Reading, policy: SpendPolicy, now: float) -> Plan:
 def _schedule(reading: Reading, policy: SpendPolicy, now: float) -> Plan:
     """Burst in the minutes of a cron expression, while the monthly budget, when the account has one, has room."""
     w = reading.window(BUDGET)
+    if w is not None and w.resets_at is not None and w.resets_at <= now:  # a reading of a past month
+        return Plan(False, PASSED, code="passed")
     if w is not None and w.used_pct >= 100.0 - policy.reserve_pct:
         hours = (w.resets_at - now) / HOUR if w.resets_at is not None else None
         return Plan(False, f"budget spent ({w.used_pct:.0f}%)", 0.0, hours, code="spent", budget=w)

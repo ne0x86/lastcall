@@ -241,6 +241,11 @@ in the sandbox with the account volume mounted:
 
 An account on an API key keeps no reserve: its budget is the owner's limit.
 
+A plan holds only until the reset it was made for. A reading taken before the reset of the window it would spend
+(or of the budget's month) never bursts, since that leftover is gone, and the service starts no new burst on a plan
+whose reset has come before the next reading. A run that is already going on finishes, behind the gates. An account
+on an API key whose key is missing has no reading, so it never bursts; the owner is told once.
+
 The gates run before every step:
 
 - the account is not above its reserve, and neither is the window of the step's model;

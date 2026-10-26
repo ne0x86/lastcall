@@ -288,3 +288,29 @@ def test_the_gate_stops_an_account_on_a_key_at_its_budget() -> None:
     assert not closed.ok and closed.reason == "this month's budget is spent (102%)"
     always = SpendPolicy(kind="schedule", reserve_pct=0, cron="* * * * *")
     assert gate(ledger_reading("local", None, 0.0, now), always, now).ok
+
+
+# a reading whose reset has passed: its leftover is gone
+
+
+def test_no_burst_once_the_reset_has_passed() -> None:
+    # read before the reset, planned after it: the leftover of that window is gone, and the next reading tells
+    old = reading(week=68, week_reset_h=-25)
+    p = plan(old, POLICY, 2.0, NOW)
+    assert not p.burst and p.code == "passed" and p.starts_in_hours is None
+    assert plan(reading(week=68, week_reset_h=0), POLICY, 2.0, NOW).code == "passed"  # the very second it resets
+    assert plan(reading(week=97, week_reset_h=-1), POLICY, 2.0, NOW).code == "passed"  # however much it had left
+    assert plan(reading(week=68, week_reset_h=1), POLICY, 2.0, NOW).code == "now"  # a reset still ahead bursts
+    assert plan(old, SpendPolicy(kind="manual"), 2.0, NOW).code == "manual"  # the policy says it first
+
+
+def test_a_budget_or_a_schedule_from_a_past_month_never_bursts() -> None:
+    november = at(2026, 11, 2)
+    october = ledger_reading("key", 20.0, 1.0, at(2026, 10, 11))  # behind the pace of October, read in October
+    p = plan(october, SpendPolicy(kind="budget", reserve_pct=0), 2.0, november)
+    assert not p.burst and p.code == "passed"
+    nights = SpendPolicy(kind="schedule", reserve_pct=0, cron="* * * * *")
+    assert plan(october, nights, 2.0, november).code == "passed"
+    spent = ledger_reading("key", 20.0, 20.0, at(2026, 10, 11))
+    assert plan(spent, nights, 2.0, november).code == "passed"  # October's spending says nothing of November
+    assert plan(ledger_reading("local", None, 0.0, november), nights, 2.0, november).code == "schedule"

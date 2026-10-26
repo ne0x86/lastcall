@@ -3,6 +3,7 @@ owner, the projects and the recent runs. Templates only lay it out."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -53,6 +54,8 @@ class AccountView:
     enabled: bool = True
     plan_code: str = ""  # the plan's code, for the account's state chip
     reviewing: bool = False  # busy as a reviewer of another account's run
+    chip: str = ""  # "nokey" or "unreadable": the error that the state chip names instead of what it does
+    trigger: str = ""  # what started the run it is in: "burst", or "manual" when the owner started it
 
 
 @dataclass(frozen=True)
@@ -114,7 +117,10 @@ def service_state(store: Store, now: float) -> tuple[bool, bool]:
     return store.setting("paused") == "yes", now - heartbeat >= SERVICE_GONE
 
 
-def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
+def build(
+    store: Store, lang: str, now: float, github_ready: bool, chips: Mapping[str, str] | None = None
+) -> Dashboard:
+    """`chips`: the error each account's state chip names, by account ("nokey", "unreadable")."""
     paused, down = service_state(store, now)
     heartbeat = float(store.setting("heartbeat") or 0)
     view = Dashboard(
@@ -138,7 +144,9 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
     if not all(step.done for step in steps):
         view.start = steps
     working = working_on(store.running())
-    view.accounts = [account_view(store, a, lang, now, working.get(a.id)) for a in accounts]
+    view.accounts = [
+        account_view(store, a, lang, now, working.get(a.id), (chips or {}).get(a.id, "")) for a in accounts
+    ]
     view.prs = [
         Link(safe_url(pr["url"]), pr["title"], f"{pr['repo']}#{pr['number']} · " + opened(lang, pr["created"], now))
         for pr in store.open_prs()
@@ -162,7 +170,11 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
     return view
 
 
-def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict[str, Any] | None) -> AccountView:
+def account_view(
+    store: Store, row: AccountRow, lang: str, now: float, run: dict[str, Any] | None, chip: str = ""
+) -> AccountView:
+    """The account's card. `run`: the run it is in, if any. `chip`: the error its state chip names, if any; an account
+    on an API key without its key cannot spend at all, so its plan says that instead of what the planner would do."""
     details = []
     if row.keyed:
         model, review = row.models.get("deep", ""), row.models.get("balanced", "")
@@ -195,8 +207,11 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
         except ValueError:  # an account that this version cannot run
             models = []
         planned = plan(reading, policy, rate, now, models)
-        plan_text, code = describe_plan(lang, planned, now, row.budget_usd, row.schedule), planned.code
-        paid = reading.paid_usage
+        due = run is not None and run["trigger"] != "burst"  # a burst it plans starts when the owner's run ends
+        plan_text = describe_plan(lang, planned, now, row.budget_usd, row.schedule, due)
+        code, paid = planned.code, reading.paid_usage
+    if chip == "nokey":
+        plan_text, code = text(lang, "web.plan.no-key"), "no-key"
     working, reviewing = "", False
     if run is not None:
         when = ago(lang, run["started"], now)
@@ -207,7 +222,20 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
             reviewing = True
     title = engines.BUILTIN[row.engine]().title if row.engine in engines.BUILTIN else row.engine
     return AccountView(
-        row.id, title, line, windows, read, plan_text, paid, working, row.engine, row.enabled, code, reviewing
+        row.id,
+        title,
+        line,
+        windows,
+        read,
+        plan_text,
+        paid,
+        working,
+        row.engine,
+        row.enabled,
+        code,
+        reviewing,
+        chip,
+        str(run["trigger"]) if run is not None else "",
     )
 
 
@@ -254,7 +282,12 @@ def working_on(running: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return busy
 
 
-def describe_plan(lang: str, p: Plan, now: float, budget_usd: float | None = None, schedule: str = "") -> str:
+def describe_plan(
+    lang: str, p: Plan, now: float, budget_usd: float | None = None, schedule: str = "", due: bool = False
+) -> str:
+    """The plan in the owner's words. `due`: the account is in a run that the owner started, so a burst that the plan
+    calls for starts only when that run finishes (the service starts one run per account at a time)."""
+    later = "due_" if due and p.code in ("now", "pace", "schedule") else ""
     leftover = percent(lang, max(0.0, p.leftover_pct))
     starts = until(lang, now + (p.starts_in_hours or 0) * HOUR, now)
     # a schedule never breaks across lines: no-break spaces between its fields, no-break hyphens in its ranges
@@ -262,23 +295,25 @@ def describe_plan(lang: str, p: Plan, now: float, budget_usd: float | None = Non
     if p.budget is not None and budget_usd and p.code in ("pace", "ahead", "spent"):
         spent, total = money(lang, p.budget.used_pct * budget_usd / 100), money(lang, budget_usd)
         resets = until(lang, p.budget.resets_at or now, now)
-        return text(lang, f"web.plan.{p.code}", spent=spent, budget=total, when=starts, resets=resets)
+        return text(lang, f"web.plan.{later}{p.code}", spent=spent, budget=total, when=starts, resets=resets)
     match p.code:
         case "schedule" | "never" | "bad-schedule":
-            return text(lang, f"web.plan.{p.code}", cron=cron)
+            return text(lang, f"web.plan.{later}{p.code}", cron=cron)
         case "window":
             return text(lang, "web.plan.window", when=starts, cron=cron)
         case "no-budget":
             return text(lang, "web.plan.no-budget")
         case "now":
-            return text(lang, "web.plan.now", leftover=leftover, span=span(lang, (p.hours_to_reset or 0) * HOUR))
+            return text(
+                lang, f"web.plan.{later}now", leftover=leftover, span=span(lang, (p.hours_to_reset or 0) * HOUR)
+            )
         case "later":
             return text(lang, "web.plan.later", when=starts, leftover=leftover)
         case "small":
             return text(lang, "web.plan.small", leftover=leftover)
         case "model" if p.full:
             return text(lang, "web.plan.model", model=p.full.model, used=percent(lang, p.full.used_pct))
-        case "paid" | "no-window" | "no-reset" | "manual":
+        case "paid" | "no-window" | "no-reset" | "manual" | "passed":
             return text(lang, f"web.plan.{p.code}")
     return p.reason
 

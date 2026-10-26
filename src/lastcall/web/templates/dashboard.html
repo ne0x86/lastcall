@@ -103,7 +103,7 @@
     {%- for a in v.accounts %}
     {%- set keyed = a.engine_key == "opencode" %}
     <article class="card account edge-{{ a.engine_key or 'other' }}{% if not a.enabled %} is-off{% endif %}">
-      {{ card.head(hb, a, "h3", "", held) }}
+      {{ card.head(hb, a, "h3", held) }}
       {{ card.details_line(hb, a, keyed) }}
       {{ card.plan(hb, a, held) }}
       {{ card.meters(hb, a, loop.index) }}

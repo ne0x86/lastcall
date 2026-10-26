@@ -203,6 +203,11 @@
   "web.plan.window": "Next burst {when}, at the hours of its schedule ({cron}, UTC).",
   "web.plan.never": "No burst: its schedule ({cron}) never comes.",
   "web.plan.bad-schedule": "No burst: its schedule ({cron}) is not valid.",
+  "web.plan.passed": "No burst: the window has reset since this reading, and what it had left is gone. Waiting for a new reading.",
+  "web.plan.no-key": "Its API key is missing: this account spends nothing, not even on runs you start, until you give it the key again.",
+  "web.plan.due_now": "Burst due: {leftover} left and {span} to the reset. It starts when the run under way finishes.",
+  "web.plan.due_pace": "Burst due: {spent} of {budget} spent this month, behind the calendar. It starts when the run under way finishes.",
+  "web.plan.due_schedule": "Burst due: inside its schedule ({cron}, UTC). It starts when the run under way finishes, if the schedule has not ended by then.",
 
   "web.review.title": "Waiting for you",
   "web.review.prs": "Pull requests to review",

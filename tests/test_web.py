@@ -1686,3 +1686,85 @@ def test_a_projects_findings_keep_their_help_beside_them(github_web: Web) -> Non
     # the text wraps in its own box, and its "?" is never left alone on a line
     assert '<dd><span class="with-help"><span>none yet</span><button type="button" class="help"' in page
     assert 'aria-label="Help: Findings">?</button></span></dd>' in page
+
+
+def test_a_reading_from_before_its_reset_never_says_a_burst_is_on(web: Web) -> None:
+    web.store.add_account("claude", "claude-code", "English", 10)
+    week = Window("week", 68, NOW - 25 * HOUR, "expiring", 168.0)  # read 2 days ago, before the weekly reset
+    web.store.record_reading(Reading("claude", (week,), False, "exact", NOW - 2 * DAY))
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert "reset passed, waiting for a new reading" in page
+        assert "Burst in progress" not in page and ">Bursting</span>" not in page and "is-live" not in page
+        assert "No burst: the window has reset since this reading, and what it had left is gone." in page
+    web.client.get("/language/es")
+    page = web.client.get("/").get_data(as_text=True)
+    assert "Sin ráfaga: la ventana se ha reiniciado desde esta lectura y lo que le quedaba se ha perdido." in page
+
+
+def test_a_key_account_without_its_key_cannot_spend_on_either_page(web: Web) -> None:
+    from lastcall.accounts import tier_models
+
+    web.store.add_account(
+        "zen", "opencode", provider="openrouter", models=tier_models("qwen3-coder"), policy="budget", budget_usd=20
+    )
+    web.store.record_spend("zen", 6.4, "deep", "r0", NOW - 60)  # behind the pace of the month: its plan would burst
+    web.store.set_setting("heartbeat", str(NOW))
+    web.set_up()
+    missing = "Its API key is missing: this account spends nothing, not even on runs you start, until you give"
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert ">Needs a key</span>" in page and ">Bursting</span>" not in page, path
+        assert "Burst in progress" not in page and "is-live" not in page and missing in page, path
+    web.secrets.set("key-zen", "sk-or-test")
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert ">Needs a key</span>" not in page and ">Bursting</span>" in page and "Burst in progress" in page
+    web.secrets.delete("key-zen")
+    web.client.get("/language/es")
+    page = web.client.get("/").get_data(as_text=True)
+    assert ">Falta la clave</span>" in page and "Le falta su clave de API: esta cuenta no gasta nada" in page
+
+
+def test_a_burst_due_waits_for_the_run_the_owner_started(web: Web) -> None:
+    web.store.add_account("claude", "claude-code", "English", 10)
+    week = Window("week", 62, NOW + 10 * HOUR, "expiring", 168.0)  # 28% left, 10 h to the reset: a burst is due
+    web.store.record_reading(Reading("claude", (week,), False, "exact", NOW - 600))
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    web.store.start_run("r1", "acme/api", "claude", "manual")
+    due = "Burst due: 28% left and 10\u00a0h to the reset. It starts when the run under way finishes."
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert ">Working</span>" in page and due in page and "Burst in progress" not in page, path
+        assert "is-live" not in page, path
+    web.client.get("/language/es")
+    page = web.client.get("/").get_data(as_text=True)
+    assert "Ráfaga pendiente: queda 28\u00a0% y faltan 10\u00a0h para el reinicio. Empieza cuando termine" in page
+    web.store.finish_run("r1", "ok", None)
+    web.store.start_run("r2", "acme/api", "claude", "burst")  # the burst itself
+    web.client.get("/language/en")
+    page = web.client.get("/").get_data(as_text=True)
+    assert "Burst in progress: 28% left and 10\u00a0h to the reset." in page and "Burst due" not in page
+
+
+def test_an_account_whose_quota_cannot_be_read_says_so_on_both_pages(tmp_path: Path) -> None:
+    from lastcall.sandbox import SandboxError
+
+    def read(account: Account) -> Reading:
+        raise SandboxError("docker is not running")
+
+    web = Web(tmp_path, read_quota=read)
+    web.store.add_account("claude", "claude-code", "English", 10)
+    web.store.set_setting("heartbeat", str(NOW))
+    web.set_up()
+    response = web.client.post("/accounts/claude/quota", data={"csrf": web.csrf()}, headers=SITE)
+    assert response.status_code == 302
+    for path in ("/", "/accounts"):
+        assert ">Cannot read</span>" in web.client.get(path).get_data(as_text=True), path
+    assert "docker is not running" in web.client.get("/accounts").get_data(as_text=True)
+    web.client.get("/language/es")
+    for path in ("/", "/accounts"):
+        assert ">Sin lectura</span>" in web.client.get(path).get_data(as_text=True), path

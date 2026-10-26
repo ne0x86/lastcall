@@ -204,7 +204,8 @@ def create_app(
     @app.get("/")
     @signed_in
     def home() -> ResponseReturnValue:
-        view = dashboard.build(store, g.lang, clock(), App.load(secrets) is not None)
+        chips = {row.id: chip for row in store.accounts() if (chip := chip_kind(row))}
+        view = dashboard.build(store, g.lang, clock(), App.load(secrets) is not None, chips)
         done = request.args.get("done", "")
         return page("dashboard.html", v=view, done=t(f"web.done.{done}") if done in ("paused", "resumed") else "")
 
@@ -802,16 +803,27 @@ def create_app(
             filled={k: v for k, v in (filled or {}).items() if k not in ("key", "csrf")},
         )
 
+    def chip_kind(row: AccountRow) -> str:
+        """The error that an account's state chip names, on the dashboard and on Accounts: "nokey" when it runs on an
+        API key that it no longer has, "unreadable" when the last reading of its quota from this page failed."""
+        try:
+            account = row.account()
+        except ValueError:  # an account that this version cannot run
+            account = None
+        if account is not None and account.needs_key() and secrets.get(account.key_name) is None:
+            return "nokey"
+        return "unreadable" if row.id in quota_errors else ""
+
     def account_card(row: AccountRow, now: float, working: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
         try:
             base = defaults(row.engine)
         except ValueError:  # an engine with no defaults, such as opencode: the account names its models
             base = {}
+        chip = chip_kind(row)
         card: dict[str, Any] = {
             "row": row,
-            "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
-            "error": quota_errors.get(row.id, ""),
-            "chip": "unreadable" if row.id in quota_errors else "",  # what the state chip says of the error
+            "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id), chip),
+            "error": t("web.accounts.no_key") if chip == "nokey" else quota_errors.get(row.id, ""),
             "login": f"ACCOUNT={row.id} ENGINE={row.engine} docker compose run --rm login",
             "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
             "policies": [],
@@ -834,9 +846,6 @@ def create_app(
             return card
         card["policies"] = [(kind, t(f"web.spend.{kind}")) for kind in policies(account)]
         card["needs_key"] = account.needs_key()
-        if account.needs_key() and secrets.get(account.key_name) is None:
-            card["error"] = t("web.accounts.no_key")
-            card["chip"] = "nokey"
         return card
 
     @app.post("/accounts/add")
