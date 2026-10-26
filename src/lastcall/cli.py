@@ -3,6 +3,7 @@
 lastcall login <account> --engine <engine>      # on the host: the CLI's own login, inside the sandbox
 lastcall account add <account> --engine <engine> [--language Spanish] [--reserve 10]
 lastcall account add <account> --engine opencode --provider openrouter --model <model> --budget 20  # an API key
+lastcall account tier <account> deep --effort max   # a tier's model and effort; - for lastcall's default
 lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive] [--signals <tracker project>]
 lastcall signals connect --url https://sentry.io --org <slug>   # the error tracker, Sentry or GlitchTip
 lastcall signals show <owner/name>                # the errors in production that the audits read
@@ -43,11 +44,13 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from lastcall import engines, logs, loki, projects, signals, web
 from lastcall.accounts import (
+    MODEL,
     Account,
     check_spending,
     ensure_volume,
@@ -83,6 +86,7 @@ from lastcall.store import Store, import_runs
 from lastcall.suggest import Suggestion
 from lastcall.supervisor import CONTAINER, STEP, Config
 from lastcall.sync import sync
+from lastcall.tiers import TIERS
 from lastcall.web import auth
 
 DEFAULT_RATE = 2.0  # % of the week per hour until the rate is learned from readings
@@ -129,6 +133,11 @@ def main(argv: list[str] | None = None) -> int:
     acc_add.add_argument("--schedule", help='policy schedule: when it bursts, as cron in UTC, such as "* 1-6 * * *"')
     acc_add.add_argument("--base-url", help="another address of the provider's API, such as a local model server")
     acc.add_parser("list", help="the accounts")
+    acc_tier = acc.add_parser("tier", help="the model and effort of an account's tiers; give a tier to change it")
+    acc_tier.add_argument("account")
+    acc_tier.add_argument("tier", nargs="?", choices=TIERS)
+    acc_tier.add_argument("--model", help="its model, as the engine names it; - for lastcall's default")
+    acc_tier.add_argument("--effort", help="its effort, such as high, xhigh or max; - for lastcall's default")
 
     proj = commands.add_parser("project", help="repositories lastcall works on").add_subparsers(
         dest="action", required=True
@@ -262,6 +271,8 @@ def dispatch(args: argparse.Namespace) -> int:
             return login(Account(args.account, args.engine))
         case "account", "add":
             return add_account(args)
+        case "account", "tier":
+            return account_tier(args.account, args.tier, args.model, args.effort)
         case "account", "list":
             for a in store().accounts():
                 engine = f"{a.engine}/{a.provider}" if a.provider else a.engine
@@ -448,6 +459,29 @@ def show_logs(repo: str) -> int:
         print(f"No container is read for {repo}: choose them with `lastcall logs set`.", file=sys.stderr)
         return 1
     print(logs.section(containers, kinds))
+    return 0
+
+
+def account_tier(account_id: str, tier: str | None, model: str | None, effort: str | None) -> int:
+    st = store()
+    row = st.account(account_id)
+    if row is None:
+        raise ValueError(f"no account {account_id!r}: `lastcall account list` shows them")
+    account = row.account()
+    if tier is not None and (model or effort):
+        if model and model != "-" and not MODEL.fullmatch(model):
+            raise ValueError(f"not a model's name: {model!r}")
+        models, chosen = dict(row.models), dict(row.efforts)
+        for value, own in ((model, models), (effort, chosen)):
+            if value == "-":
+                own.pop(tier, None)
+            elif value:
+                own[tier] = value
+        account = replace(account, models=models, efforts=chosen)  # a ValueError says what is wrong
+        st.set_tiers(row.id, account.models, account.efforts)
+    for name, (used, level) in account.tiers().items():
+        mark = " (its own)" if name in account.models or name in account.efforts else ""
+        print(f"{name:<9} {used}, effort {level or 'the model default'}{mark}")
     return 0
 
 

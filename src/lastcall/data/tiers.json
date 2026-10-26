@@ -1,5 +1,5 @@
 {
-  "_about": "Default model and effort for each tier, per engine (DESIGN.md, section 6). Catalogs change every month: update this file, not the code. An account can override any tier.",
+  "_about": "Default model and effort for each tier, per engine (DESIGN.md, section 6), and the effort levels that each engine's CLI takes. Catalogs change every month: update this file, not the code. An account can override any tier's model and effort.",
   "claude-code": {
     "fast": ["haiku", "medium"],
     "balanced": ["sonnet", "high"],
@@ -9,5 +9,11 @@
     "fast": ["gpt-6-luna", "high"],
     "balanced": ["gpt-6.1-sol", "high"],
     "deep": ["gpt-6.1-sol", "high"]
+  },
+  "efforts": {
+    "_about": "Lowest first. Claude Code's --effort; Codex's model_reasoning_effort; OpenCode's --variant, whose levels depend on the model.",
+    "claude-code": ["low", "medium", "high", "xhigh", "max"],
+    "codex": ["minimal", "low", "medium", "high", "xhigh", "max"],
+    "opencode": ["minimal", "low", "medium", "high", "xhigh", "max"]
   }
 }

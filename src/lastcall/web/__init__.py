@@ -31,7 +31,7 @@ from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from lastcall import __version__, cron, destinations, engines, i18n, logs, loki, projects, signals
-from lastcall.accounts import ACCOUNT_ID, Account, policies, tier_models
+from lastcall.accounts import ACCOUNT_ID, MODEL, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
 from lastcall.github_setup import LOGIN, Exchange, exchange_code, form_action, manifest
@@ -41,6 +41,7 @@ from lastcall.sandbox import SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.store import AccountRow, Store
 from lastcall.supervisor import STEP
+from lastcall.tiers import TIERS, defaults, efforts
 from lastcall.web import auth, dashboard, project_views
 
 COOKIE = "lastcall_session"
@@ -750,7 +751,7 @@ def create_app(
         now = clock()
         working = dashboard.working_on(store.running())
         done = request.args.get("done", "")
-        known = ("saved", "account_added", "key_added", "reading")
+        known = ("saved", "account_added", "key_added", "reading", "tiers")
         message = t(f"web.done.{done}") if done in known and not error else ""
         all_engines = [engines.get(name) for name in sorted(engines.BUILTIN)]
         sources = [(e, p) for e in all_engines if isinstance(e, Keyed) for p in e.providers]
@@ -773,8 +774,10 @@ def create_app(
         )
 
     def account_card(row: AccountRow, now: float, working: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
-        model = row.models.get("deep", "")
-        review = row.models.get("balanced", "")
+        try:
+            base = defaults(row.engine)
+        except ValueError:  # an engine with no defaults, such as opencode: the account names its models
+            base = {}
         card: dict[str, Any] = {
             "row": row,
             "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
@@ -783,8 +786,17 @@ def create_app(
             "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
             "policies": [],
             "needs_key": False,
-            "model": model,
-            "review": review if review != model else "",
+            "levels": efforts(row.engine),
+            "tiers": [
+                {
+                    "tier": tier,
+                    "model": row.models.get(tier, ""),
+                    "effort": row.efforts.get(tier, ""),
+                    "default_model": base[tier][0] if tier in base else "",
+                    "default_effort": (base[tier][1] or "") if tier in base else "",
+                }
+                for tier in TIERS
+            ],
         }
         try:
             account = row.account()
@@ -857,11 +869,15 @@ def create_app(
         form: Mapping[str, str], row: AccountRow | None, engine: str, provider: str, account_id: str
     ) -> tuple[Account, str, str] | str:
         """The account on a key that a form describes, with its policy and schedule; or what is wrong with the form,
-        in the owner's language ("" when only a forged form could be wrong)."""
-        model = form.get("model", "").strip()
-        if not model:
-            return t("web.accounts.need_model")
-        models = tier_models(model, form.get("review_model", "").strip())
+        in the owner's language ("" when only a forged form could be wrong). The models of an account that exists
+        change in its own form, Models and effort."""
+        if row is not None:
+            models = dict(row.models)
+        else:
+            model = form.get("model", "").strip()
+            if not model:
+                return t("web.accounts.need_model")
+            models = tier_models(model, form.get("review_model", "").strip())
         try:
             account = Account(account_id, engine, provider, row.base_url if row else "", models)
         except ValueError:
@@ -927,6 +943,34 @@ def create_app(
             return problem(400, "web.error.form")
         store.update_account(row.id, enabled=enabled, language=language, reserve_pct=reserve, policy=policy)
         return redirect(url_for("accounts_page", done="saved"))
+
+    @app.post("/accounts/<account_id>/tiers")
+    @signed_in
+    def account_tiers(account_id: str) -> ResponseReturnValue:
+        """The model and the effort of each tier for one account, over the engine's defaults: an empty field keeps
+        the default."""
+        row = store.account(account_id)
+        if row is None:
+            return problem(404, "web.error.not_found")
+        form, levels = request.form, efforts(row.engine)
+        models: dict[str, str] = {}
+        chosen: dict[str, str] = {}
+        for tier in TIERS:
+            model, effort = form.get(f"model-{tier}", "").strip(), form.get(f"effort-{tier}", "")
+            if (model and not MODEL.fullmatch(model)) or (effort and effort not in levels):
+                return problem(400, "web.error.form")
+            if model:
+                models[tier] = model
+            if effort:
+                chosen[tier] = effort
+        try:
+            account = replace(row.account(), models=models, efforts=chosen)
+        except ValueError:  # an engine with no defaults, such as opencode, needs a model for every tier
+            return show_accounts(400, t("web.tiers.need_models"))
+        store.set_tiers(row.id, account.models, account.efforts)
+        used = ", ".join(f"{tier} {m}/{e or '-'}" for tier, (m, e) in account.tiers().items())
+        log(f"Web UI: account {row.id} now runs {used}")
+        return redirect(url_for("accounts_page", done="tiers") + f"#account-{row.id}")
 
     @app.post("/accounts/<account_id>/quota")
     @signed_in

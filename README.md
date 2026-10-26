@@ -107,6 +107,12 @@ what each step costs, with the prices of [models.dev](https://models.dev), and l
 steps have cost the budget. A step that is already running may go a little over it, so give the key its own
 spending limit at the provider too.
 
+**Models and effort.** Every step asks for a tier: the reviewers for *balanced*; the judge, the implementers and the
+improvement plans for *deep*; your repository's own reviewers for the one they name. Each engine has a default
+model and effort per tier, such as opus at `high` effort for Claude Code's *deep*. On the Accounts page, under
+*Models and effort*, or with `lastcall account tier`, you can change both for one account, subscriptions included.
+More effort finds more, and spends more of the quota.
+
 The rest of lastcall only knows the engine contract. Adding another tool is one module and a few small changes:
 [CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists them.
 
@@ -182,6 +188,7 @@ docker compose run --rm cli account add openrouter --engine opencode --provider 
 docker compose run --rm cli account add local --engine opencode --provider ollama \
   --model qwen3-coder --policy schedule --schedule "* 1-6 * * *"   # every night, 01:00 to 06:59 UTC
 docker compose run --rm cli quota claude-max
+docker compose run --rm cli account tier claude-max deep --effort max                # the judge and fixes, at max
 docker compose run --rm cli github repos
 docker compose run --rm cli project add <owner/name> --signals <its project in Sentry or GlitchTip>
 docker compose run --rm cli signals connect --url https://sentry.io --org <slug>     # asks for the token
