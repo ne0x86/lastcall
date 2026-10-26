@@ -2,11 +2,14 @@
     _help.html's help macro: each macro takes the page's help namespace `hb`. -#}
 {% from "_help.html" import help with context %}
 
-{#- The state chip: one word for what the account is doing. -#}
-{% macro state_chip(a, error="", held=false) -%}
+{#- The state chip: one word for what the account is doing. `held` is "down" or "paused" when nothing bursts: then no
+    chip says that an account is bursting or spending (a run that goes on while paused is the exception, because it
+    really is still spending). -#}
+{% macro state_chip(a, error="", held="") -%}
 {%- if not a.enabled %}{% set key = "off" %}
 {%- elif error %}{% set key = "signin" %}
 {%- elif a.paid %}{% set key = "paid" %}
+{%- elif held == "down" and (a.working or a.plan_code in ("now", "pace", "schedule", "later", "ahead", "window")) %}{% set key = "held" %}
 {%- elif a.working and a.reviewing %}{% set key = "reviewing" %}
 {%- elif a.working %}{% set key = "spending" %}
 {%- elif held and a.plan_code in ("now", "pace", "schedule", "later", "ahead", "window") %}{% set key = "held" %}
@@ -17,18 +20,18 @@
 <span class="chip state state-{{ key }}">{{ t("web.chip." ~ key) }}</span>
 {%- endmacro %}
 
-{#- The header: name, engine chip and its help, state chip. `level` is h2 on the Accounts page, h3 on the dashboard. -#}
-{% macro head(hb, a, level="h3", error="", held=false) -%}
+{#- The header: name, engine chip, state chip and the engine's help after both, so the chips stay together. `level` is h2 on the Accounts page, h3 on the dashboard. -#}
+{% macro head(hb, a, level="h3", error="", held="") -%}
 <header class="account-head">
   <{{ level }} class="account-name">{{ a.id }}</{{ level }}>
-  <span class="chips"><span class="chip engine engine-{{ a.engine_key or 'other' }}">{{ a.engine }}</span>{{ help(hb, "common-engine", t("web.help.common.engine.title"), ["common.engine"]) }}{{ state_chip(a, error, held) }}</span>
+  <span class="chips"><span class="chip engine engine-{{ a.engine_key or 'other' }}">{{ a.engine }}</span>{{ state_chip(a, error, held) }}{{ help(hb, "common-engine", t("web.help.common.engine.title"), ["common.engine"]) }}</span>
 </header>
 {%- endmacro %}
 
 {#- The plan sentence, the card's main line, with the bubble that explains it. `held` mutes it while nothing bursts. -#}
-{% macro plan(hb, a, held=false) -%}
+{% macro plan(hb, a, held="") -%}
 {%- if a.plan %}
-<div class="plan{% if held %} is-held{% endif %}{% if a.plan_code in ('now', 'pace', 'schedule') %} is-live{% endif %}">
+<div class="plan{% if held %} is-held{% elif a.plan_code in ('now', 'pace', 'schedule') %} is-live{% endif %}">
   <p>{{ a.plan }}</p>
   {%- if a.plan_code in ("now", "later", "small") %}{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}
   {%- elif a.plan_code == "model" %}{{ help(hb, "common-window_model", t("web.help.common.burst.title"), ["common.window_model"]) }}

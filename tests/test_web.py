@@ -996,3 +996,53 @@ def test_a_project_says_how_many_labelled_issues_wait(github_web: Web) -> None:
     assert "2 labelled issues wait for a burst" in web.client.get("/projects").get_data(as_text=True)
     page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert "2 issues etiquetados esperan una ráfaga" in page
+
+
+def two_accounts(web: Web) -> None:
+    for name in ("claude", "max"):
+        web.store.add_account(name, "claude-code", "English", 10)
+        week = Window("week", 62, NOW + 30 * HOUR, "expiring", 168.0)
+        web.store.record_reading(
+            Reading(name, (Window("5h", 40, NOW + 2 * HOUR, "throttle", 5.0), week), False, "exact", NOW - 600)
+        )
+
+
+def test_a_help_button_shows_once_per_page_and_opens_its_popover(web: Web) -> None:
+    two_accounts(web)
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        buttons = re.findall(r'<button type="button" class="help" popovertarget="(help-[^"]+)"', page)
+        assert buttons
+        if path == "/":
+            assert len(buttons) == len(set(buttons))  # one "?" per bubble, unless a form shows alone
+        for target in buttons:
+            assert f'id="{target}" popover' in page  # every "?" opens a popover that exists
+        popovers = re.findall(r'id="(help-[^"]+)" popover', page)
+        assert sorted(popovers) == sorted(set(buttons))  # and a popover exists only when one of its "?" does
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert page.count("<article") == 2
+    for common in ("help-common-engine", "help-common-window_throttle", "help-common-window_expiring"):
+        # two cards, one "?" for each: the second card does not repeat a common bubble
+        assert page.count(f'class="help" popovertarget="{common}"') == 1
+        assert page.count(f'id="{common}" popover') == 1
+
+
+def test_no_card_says_bursting_while_the_service_is_down_or_paused(web: Web) -> None:
+    two_accounts(web)
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert "On hold" not in page and "Waiting for its moment" in page
+    web.store.set_setting("paused", "yes")
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert page.count(">On hold</span>") == 2 and "Waiting for its moment" not in page
+        assert 'class="plan is-held"' in page
+    web.store.set_setting("paused", "no")
+    web.store.set_setting("heartbeat", str(NOW - 3 * HOUR))  # the service is gone
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert page.count(">On hold</span>") == 2 and "Bursting" not in page

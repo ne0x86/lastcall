@@ -4,6 +4,8 @@
 {%- from "_help.html" import help, bubbles with context %}
 {%- import "_account.html" as card with context %}
 {%- set hb = namespace(items=[], seen=[]) %}
+{#- The "?" of a field shows once per page, on its first card or form. The local form repeats the ones of the key form
+    that it shares (When it spends, Schedule), because the picker shows one form at a time. -#}
 {#- The "When it spends" bubble holds one paragraph per option that this page offers. #}
 {%- set pol = namespace(kinds=[]) %}
 {%- for c in cards %}{% for kind, label in c.policies %}{% if kind not in pol.kinds %}{% set pol.kinds = pol.kinds + [kind] %}{% endif %}{% endfor %}{% endfor %}
@@ -27,10 +29,10 @@
   {%- set n = loop.index %}
   {%- set a = c.view %}
   {%- set row = c.row %}
-  <article class="card account{% if not row.enabled %} is-off{% endif %}" id="account-{{ a.id }}">
-    {{ card.head(hb, a, "h2", c.error) }}
+  <article class="card account edge-{{ a.engine_key or 'other' }}{% if not row.enabled %} is-off{% endif %}" id="account-{{ a.id }}">
+    {{ card.head(hb, a, "h2", c.error, held) }}
     {{ card.details_line(hb, a, row.keyed) }}
-    {{ card.plan(hb, a) }}
+    {{ card.plan(hb, a, held) }}
     {{ card.meters(hb, a, n) }}
     {{ card.lines(hb, a, row.keyed) }}
     {%- if c.error %}<div class="line line-bad"><p>{% if row.keyed %}{{ c.error }}{% else %}{{ t("web.accounts.error", error=c.error) }}{% endif %}</p></div>{% endif %}
@@ -284,13 +286,13 @@
           <p id="local-model-hint" class="hint">{{ t("web.accounts.local.model_hint") }}</p>
         </div>
         <fieldset>
-          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys) }}</div>
+          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys, true) }}</div>
           {%- for kind in ("schedule", "manual") %}
           <label class="check plain"><input type="radio" name="policy" value="{{ kind }}"{% if (f.policy or "schedule") == kind %} checked{% endif %}> {{ t("web.spend." ~ kind) }}</label>
           {%- endfor %}
         </fieldset>
         <div class="field field-schedule">
-          <div class="label-row"><label for="local-schedule">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}</div>
+          <div class="label-row"><label for="local-schedule">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"], true) }}</div>
           <input id="local-schedule" name="schedule" type="text" value="{{ f.schedule or '* 1-6 * * *' }}" autocomplete="off" spellcheck="false" aria-describedby="local-schedule-hint">
           <p id="local-schedule-hint" class="hint">{{ t("web.accounts.schedule_hint") }} <a href="{{ cron_help }}">crontab.guru</a></p>
         </div>

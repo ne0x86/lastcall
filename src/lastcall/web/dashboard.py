@@ -101,15 +101,21 @@ class Dashboard:
     runs: list[RunView] = field(default_factory=list)
 
 
-def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
-    paused = store.setting("paused") == "yes"
+def service_state(store: Store, now: float) -> tuple[bool, bool]:
+    """Whether bursts are paused and whether the service is gone (no heartbeat for a while). Either way, no card
+    may say that an account is bursting."""
     heartbeat = float(store.setting("heartbeat") or 0)
-    alive = now - heartbeat < SERVICE_GONE
+    return store.setting("paused") == "yes", now - heartbeat >= SERVICE_GONE
+
+
+def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
+    paused, down = service_state(store, now)
+    heartbeat = float(store.setting("heartbeat") or 0)
     view = Dashboard(
         paused=paused,
         service=text(lang, "web.service.paused" if paused else "web.service.allowed"),
-        down=not alive,
-        seen=text(lang, "web.service.seen", when=ago(lang, heartbeat, now)) if heartbeat and not alive else "",
+        down=down,
+        seen=text(lang, "web.service.seen", when=ago(lang, heartbeat, now)) if heartbeat and down else "",
     )
     accounts = store.accounts()
     projects = store.projects()

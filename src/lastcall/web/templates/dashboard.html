@@ -7,15 +7,33 @@
 <header class="page-head">
   <h1>{{ t("web.dashboard.title") }}</h1>
   <p class="lede">{{ t("web.dashboard.lede") }}</p>
+  <ul class="readout">
+    <li><a href="{{ '#accounts' if v.accounts else url_for('accounts_page') }}"><span class="readout-n">{{ v.accounts|length }}</span> <span class="readout-l">{{ t("web.accounts.title") }}</span></a></li>
+    <li><a href="#waiting"><span class="readout-n">{{ v.prs|length + v.decisions|length + v.plans|length }}</span> <span class="readout-l">{{ t("web.review.title") }}</span></a></li>
+    <li><a href="#projects"><span class="readout-n">{{ v.projects|length }}</span> <span class="readout-l">{{ t("web.projects.title") }}</span></a></li>
+  </ul>
 </header>
 
 {% if done %}<p class="notice done" role="status">{{ done }}</p>{% endif %}
 
+{% if v.start %}
+<section class="welcome" aria-labelledby="start-title">
+  <h2 id="start-title">{{ t("web.start.title") }}</h2>
+  <p class="lede">{{ t("web.start.intro") }}</p>
+  <ol class="steps">
+    {%- for step in v.start %}
+    <li{% if step.done %} class="is-done"{% endif %}><p>{{ step.text }} <a href="{{ url_for(step.link) }}">{{ step.label }}</a></p>{% if step.done %}<span class="visually-hidden">{{ t("web.start.done") }}</span>{% endif %}</li>
+    {%- endfor %}
+  </ol>
+</section>
+{% endif %}
+
 {%- set state = "down" if v.down else ("paused" if v.paused else "on") %}
+{%- set held = "" if state == "on" else state %}
 <section class="hero hero-{{ state }}" aria-labelledby="service-title">
   <div class="hero-main">
+    <p class="kicker"><span class="dot" aria-hidden="true"></span>{{ t("web.service.title") }}</p>
     <div class="hero-head">
-      <span class="dot" aria-hidden="true"></span>
       <h2 id="service-title">{{ t("web.service.state." ~ state) }}</h2>
       {%- if v.down %}{{ help(hb, "dashboard-service", t("web.service.title"), ["dashboard.service"]) }}{% endif %}
     </div>
@@ -38,19 +56,8 @@
   </div>
 </section>
 
-{% if v.start %}
-<section class="welcome" aria-labelledby="start-title">
-  <h2 id="start-title">{{ t("web.start.title") }}</h2>
-  <p class="lede">{{ t("web.start.intro") }}</p>
-  <ol class="steps">
-    {%- for step in v.start %}
-    <li{% if step.done %} class="is-done"{% endif %}><p>{{ step.text }} <a href="{{ url_for(step.link) }}">{{ step.label }}</a></p>{% if step.done %}<span class="visually-hidden">{{ t("web.start.done") }}</span>{% endif %}</li>
-    {%- endfor %}
-  </ol>
-</section>
-{% endif %}
 
-<section class="card waiting" aria-labelledby="review-title">
+<section class="card waiting" id="waiting" aria-labelledby="review-title">
   <h2 id="review-title">{{ t("web.review.title") }}</h2>
   {%- if not v.prs and not v.decisions and not v.plans %}
   <p class="empty">{{ t("web.review.none") }}</p>
@@ -90,15 +97,15 @@
 </section>
 
 {% if v.accounts %}
-<section aria-labelledby="accounts-title">
+<section id="accounts" aria-labelledby="accounts-title">
   <div class="section-head section-title"><h2 id="accounts-title">{{ t("web.accounts.title") }}</h2></div>
   <div class="grid">
     {%- for a in v.accounts %}
     {%- set keyed = a.engine_key == "opencode" %}
-    <article class="card account{% if not a.enabled %} is-off{% endif %}">
-      {{ card.head(hb, a, "h3", "", v.down or v.paused) }}
+    <article class="card account edge-{{ a.engine_key or 'other' }}{% if not a.enabled %} is-off{% endif %}">
+      {{ card.head(hb, a, "h3", "", held) }}
       {{ card.details_line(hb, a, keyed) }}
-      {{ card.plan(hb, a, v.down or v.paused) }}
+      {{ card.plan(hb, a, held) }}
       {{ card.meters(hb, a, loop.index) }}
       {{ card.lines(hb, a, keyed) }}
     </article>
@@ -107,7 +114,7 @@
 </section>
 {% endif %}
 
-<section class="card" aria-labelledby="projects-title">
+<section class="card" id="projects" aria-labelledby="projects-title">
   <div class="section-head"><h2 id="projects-title">{{ t("web.projects.title") }}</h2>{{ help(hb, "dashboard-projects", t("web.help.common.table.title"), ["dashboard.state", "common.findings", "dashboard.prs"]) }}</div>
   {%- if v.projects %}
   <div class="table projects-table">
@@ -122,7 +129,7 @@
       <tbody>
         {%- for p in v.projects %}
         <tr>
-          <th scope="row">{{ p.repo }}</th>
+          <th scope="row" class="mono">{{ p.repo }}</th>
           <td data-label="{{ t('web.projects.state') }}"><span class="chip {{ 'state-active' if p.active else 'state-off' }}">{{ p.state }}</span></td>
           <td data-label="{{ t('web.projects.last') }}">{{ p.last }}{% if p.last_status %} · <span class="run run-{{ p.last_key }}">{{ p.last_status }}</span>{% endif %}</td>
           <td data-label="{{ t('web.projects.findings') }}">{{ p.findings }}</td>
@@ -137,7 +144,7 @@
   {%- endif %}
 </section>
 
-<section class="card" aria-labelledby="runs-title">
+<section class="card" id="runs" aria-labelledby="runs-title">
   <div class="section-head"><h2 id="runs-title">{{ t("web.runs.title") }}</h2>{{ help(hb, "dashboard-runs", t("web.help.common.table.title"), ["dashboard.trigger", "dashboard.status"]) }}</div>
   {%- if v.runs %}
   <div class="table runs-table">
@@ -154,11 +161,11 @@
         {%- for r in v.runs %}
         <tr>
           <th scope="row"><span title="{{ r.started_iso }}">{{ r.started }}</span></th>
-          <td data-label="{{ t('web.runs.project') }}">{{ r.repo }}</td>
-          <td data-label="{{ t('web.runs.account') }}">{{ r.account }}</td>
+          <td data-label="{{ t('web.runs.project') }}" class="mono">{{ r.repo }}</td>
+          <td data-label="{{ t('web.runs.account') }}" class="mono">{{ r.account }}</td>
           <td data-label="{{ t('web.runs.trigger') }}">{{ r.trigger }}</td>
           <td data-label="{{ t('web.runs.status') }}" class="state-{{ r.status_key }}"><span class="run run-{{ r.status_key }}">{{ r.status }}</span></td>
-          <td data-label="{{ t('web.runs.duration') }}">{{ r.duration }}</td>
+          <td data-label="{{ t('web.runs.duration') }}" class="mono">{{ r.duration }}</td>
         </tr>
         {%- endfor %}
       </tbody>

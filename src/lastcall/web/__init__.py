@@ -754,6 +754,7 @@ def create_app(
         what the owner wrote in `filled` (never the API key)."""
         now = clock()
         working = dashboard.working_on(store.running())
+        paused, down = dashboard.service_state(store, now)
         done = request.args.get("done", "")
         known = ("saved", "account_added", "key_added", "reading", "tiers")
         message = t(f"web.done.{done}") if done in known and not error else ""
@@ -763,6 +764,7 @@ def create_app(
             "accounts.html",
             status,
             cards=[account_card(row, now, working) for row in store.accounts()],
+            held="down" if down else ("paused" if paused else ""),
             engines=[(e.name, f"{e.provider} ({e.title})") for e in all_engines if e.login],
             keys=[(f"{e.name}/{p.name}", p) for e, p in sources if p.keys],
             local=next(((f"{e.name}/{p.name}", p) for e, p in sources if not p.keys), None),
