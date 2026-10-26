@@ -424,7 +424,7 @@ def test_notification_settings(web: Web) -> None:
     assert web.secrets.get_json("notify") is None
     web.outbox.ok = True
     added = add(service="telegram", token=BOT, chat="12345")
-    assert added.headers["Location"] == "/settings?done=notify_added"
+    assert added.headers["Location"] == "/settings?done=notify_added#notify"
     assert web.outbox.sent[-1] == (
         [f"tgram://{BOT}/12345"],
         "lastcall: notificación de prueba",
@@ -439,7 +439,7 @@ def test_notification_settings(web: Web) -> None:
     assert (web.store.setting("notify_events"), web.store.setting("notify_language")) == ("pr,burst", "es")
     assert web.client.post("/settings/notify", data={**form, "language": "xx"}, headers=SITE).status_code == 400
     sent = web.client.post("/settings/notify/test/0", data={"csrf": csrf}, headers=SITE)
-    assert sent.headers["Location"] == "/settings?done=notify_sent"
+    assert sent.headers["Location"] == "/settings?done=notify_sent#notify"
     web.outbox.ok = False
     failed = web.client.post("/settings/notify/test/0", data={"csrf": csrf}, headers=SITE)
     assert failed.status_code == 502 and "There were not Telegram chat_ids" in failed.get_data(as_text=True)
@@ -1042,7 +1042,10 @@ def test_no_card_says_bursting_while_the_service_is_down_or_paused(web: Web) -> 
         page = web.client.get(path).get_data(as_text=True)
         assert page.count(">On hold</span>") == 2 and "Waiting for its moment" not in page
         assert 'class="plan is-held"' in page
-        assert "Burst in progress" not in page and page.count("Bursts are paused: this account waits") == 2
+        assert (
+            "Burst in progress" not in page
+            and page.count("Bursts are paused: this account spends no leftover quota on its own") == 2
+        )
     web.store.set_setting("paused", "no")
     web.store.set_setting("heartbeat", str(NOW - 3 * HOUR))  # the service is gone
     for path in ("/", "/accounts"):
@@ -1166,3 +1169,101 @@ def test_saving_a_project_returns_to_its_card(github_web: Web) -> None:
     form = {"csrf": web.csrf(), "weight": "1", "language": "", "max_prs": "3"}
     response = web.client.post("/projects/acme/api", data=form, headers=SITE)
     assert response.headers["Location"] == "/projects?done=saved#project-acme--api"
+
+
+def test_settings_save_and_return_to_their_sections(web: Web) -> None:
+    web.set_up()
+    csrf = web.csrf()
+    runs = web.client.post("/settings/runs", data={"csrf": csrf, "fanout": "1"}, headers=SITE)
+    assert runs.headers["Location"] == "/settings?done=saved#runs"
+    notify = web.client.post("/settings/notify", data={"csrf": csrf, "language": "en"}, headers=SITE)
+    assert notify.headers["Location"] == "/settings?done=saved#notify"
+
+
+def test_settings_say_what_the_events_wait_for_and_preselect_the_pages_language(web: Web) -> None:
+    web.set_up()
+    spanish = {"Accept-Language": "es"}
+    page = web.client.get("/settings", headers=spanish).get_data(as_text=True)
+    assert "Se aplican cuando añadas un destino arriba." in page
+    assert '<option value="es" selected>' in page  # nothing saved yet: the page's language
+    web.store.set_setting("notify_language", "en")
+    page = web.client.get("/settings", headers=spanish).get_data(as_text=True)
+    assert '<option value="en" selected>' in page and '<option value="es" selected>' not in page  # the saved choice
+    web.client.post(
+        "/settings/notify/add",
+        data={"csrf": web.csrf(), "service": "ntfy", "topic": "lastcall-abc", "server": "https://ntfy.sh"},
+        headers=SITE,
+    )
+    assert "They apply once you add a destination above." not in web.client.get("/settings").get_data(as_text=True)
+
+
+def test_a_connected_integration_drops_its_intro(tmp_path: Path) -> None:
+    from lastcall import signals
+
+    web = Web(tmp_path, github=FakeGitHub())
+    web.set_up()
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "lastcall works through your own GitHub App" not in page  # the App exists
+    assert "lastcall can read the errors that your apps send" in page  # not connected yet: the intro is there
+    signals.Tracker("https://glitchtip.example.com", "acme", "good-token").save(web.secrets)
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert 'class="status-line">Connected to https://glitchtip.example.com' in page
+    assert "lastcall can read the errors that your apps send" not in page
+
+
+def test_the_github_page_has_steps_a_way_back_and_its_help(tmp_path: Path) -> None:
+    web = Web(tmp_path)
+    web.set_up()
+    page = web.client.get("/github").get_data(as_text=True)
+    assert 'class="crumbs"' in page and 'href="/settings#github">Settings</a>' in page
+    assert page.count('<li aria-current="step">Create</li>') == 1
+    assert "lastcall works through your own GitHub App" in page  # the intro, in the default branch
+    for topic in ("app", "owner", "org"):
+        assert (
+            f'class="help" popovertarget="help-github-{topic}"' in page
+            and f'id="help-github-{topic}" popover' in page
+        )
+    confirm = web.client.get("/github/new?owner=acme&org=1").get_data(as_text=True)
+    assert "lastcall works through your own GitHub App" not in confirm
+    assert "help-github-permissions" in confirm and "help-github-create" in confirm
+    ready = Web(tmp_path / "ready", github=FakeGitHub())
+    ready.set_up()
+    page = ready.client.get("/github").get_data(as_text=True)
+    assert 'class="status-line"' in page and 'href="/projects">Next: choose your projects</a>' in page
+    assert '<li class="is-done">Create' in page and "help-github-install" in page
+    assert "lastcall works through your own GitHub App" not in page
+
+
+def test_setup_and_login_explain_themselves(web: Web) -> None:
+    page = web.client.get("/setup").get_data(as_text=True)
+    assert page.count('<ol class="steps sign-steps">') == 1 and 'placeholder="XXXX-XXXX"' in page
+    assert 'minlength="12"' in page and 'aria-describedby="password-hint"' in page
+    for topic in ("setup-why", "setup-code", "setup-password"):
+        assert f'popovertarget="help-{topic}"' in page and f'id="help-{topic}" popover' in page
+    assert "help-login-locked" not in page  # no error, no bubble
+    assert 'hreflang="es">Español</a>' in page  # the signed-out header has the language switch
+    web.set_up()
+    other = web.app.test_client()
+    page = other.get("/login").get_data(as_text=True)
+    assert "<details" in page and 'autocomplete="current-password"' in page and "autofocus" in page
+    for topic in ("login-session", "login-reset"):
+        assert f'popovertarget="help-{topic}"' in page
+    assert "help-login-locked" not in page
+    wrong = other.post("/login", data={"password": "wrong"}, headers=SITE).get_data(as_text=True)
+    assert 'popovertarget="help-login-locked"' in wrong
+
+
+def test_the_error_page_leads_back_and_explains_its_cause(tmp_path: Path) -> None:
+    web = Web(tmp_path, origins=("https://lastcall.example.com",))
+    web.set_up()
+    other = web.app.test_client()
+    page = other.post("/login", data={"password": PASSWORD}).get_data(as_text=True)  # no Origin: refused
+    assert "Form not accepted" in page and 'popovertarget="help-error-origin"' in page
+    assert 'href="/login">Back to sign in</a>' in page
+    gone = other.get("/nowhere").get_data(as_text=True)
+    assert 'href="/login">Back to sign in</a>' in gone and "help-error" not in gone
+    site = {"Origin": "https://lastcall.example.com"}
+    forged = web.client.post("/service/pause", data={"csrf": "forged"}, headers=site)
+    page = forged.get_data(as_text=True)
+    assert forged.status_code == 403 and "Form expired" in page and 'popovertarget="help-error-csrf"' in page
+    assert 'href="/">Back to the dashboard</a>' in page

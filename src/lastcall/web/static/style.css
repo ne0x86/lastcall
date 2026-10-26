@@ -980,6 +980,11 @@ ul.rows > li:last-child { border-bottom: 0; }
   border-radius: inherit;
 }
 .card.add-card { --edge: var(--accent); }
+main > .empty { margin-bottom: var(--s4); }
+
+/* After a save or an order the page jumps to the card: keep the notice in view, and clear it when scrolling to the card. */
+main > .notice.done { position: sticky; top: var(--s2); z-index: 3; box-shadow: inset 0 3px 0 var(--edge), var(--shadow); }
+.card.project { scroll-margin-top: 6rem; }
 
 .project-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
 .project-name { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700; letter-spacing: -.02em; overflow-wrap: anywhere; }
@@ -1053,6 +1058,99 @@ fieldset.has-help > legend { margin: 0; }
 .sign-card h1 { margin-bottom: var(--s1); font-size: 1.75rem; }
 .sign-card .lede { margin-bottom: var(--s4); }
 .sign-card details.fold { margin-top: var(--s4); }
+
+/* ================================================================================================================
+   Setup, login and the error page: two numbered steps, an error row with its "?", and the way back.
+   ================================================================================================================ */
+.alert-row { display: flex; align-items: flex-start; gap: var(--s1); margin: 0 0 var(--s4); }
+.alert-row .notice { flex: 1 1 auto; min-width: 0; margin: 0; }
+.alert-row .help { margin-top: .6rem; }
+.sign-card > .line { margin: 0 0 var(--s4); }
+.sign-card > .line .lede { margin: 0; }
+.sign-steps { margin-bottom: 0; }
+.sign-steps > li { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); margin-bottom: var(--s5); min-height: 0; }
+.sign-steps > li:last-child { margin-bottom: 0; }
+.sign-steps > li > * { margin: 0; }
+.sign-steps > li:not(:last-child)::after { bottom: calc(.35rem - var(--s5)); }
+.sign-card h1 + .alert-row { margin-top: var(--s3); }
+@media (max-width: 47.99rem) {
+  .sign-card { padding: var(--s5) var(--s4); }
+  .sign-steps pre { font-size: .84rem; }
+}
+.sign-steps h2 { font-size: 1.12rem; line-height: 1.9rem; }
+.sign-steps .stack { grid-template-columns: minmax(0, 1fr); margin: 0; }
+.sign-card .fold-body { grid-template-columns: minmax(0, 1fr); }
+.sign-steps .command { margin: 0; }
+.next-step { margin: var(--s4) 0 0; }
+.next-step a { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; font-family: var(--font-round); font-weight: 700; text-decoration: none; }
+.next-step a::after { content: "\2192"; }
+.next-step a:hover { text-decoration: underline; text-decoration-thickness: 2px; }
+
+/* ================================================================================================================
+   GitHub App page: the way back to Settings, the three steps and the one card that matters now.
+   ================================================================================================================ */
+.crumbs { margin: 0 0 var(--s1); }
+.crumbs a { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; font-weight: 600; text-decoration: none; }
+.crumbs a::before { content: "\2039"; font-size: 1.5em; line-height: 1; }
+.crumbs a:hover { text-decoration: underline; text-decoration-thickness: 2px; }
+.progress { counter-reset: round; max-width: 44rem; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s2); margin: 0 0 var(--s5); padding: 0; list-style: none; }
+.progress li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: .4rem;
+  color: var(--muted);
+  font-family: var(--font-round);
+  font-size: .92rem;
+  font-weight: 650;
+  line-height: 1.3;
+  text-align: center;
+  counter-increment: round;
+}
+.progress li::before {
+  content: counter(round);
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  color: var(--muted);
+  font-size: .95rem;
+  font-weight: 800;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 50%;
+}
+.progress li:not(:last-child)::after {  /* the hairline to the next circle */
+  content: "";
+  position: absolute;
+  top: calc(1rem - 1px);
+  left: calc(50% + 1.35rem);
+  width: calc(100% + var(--s2) - 2.7rem);
+  height: 2px;
+  background: var(--border);
+}
+.progress li[aria-current] { color: var(--text); }
+.progress li[aria-current]::before { color: var(--ember-text); background: var(--ember-soft); border-color: var(--ember); box-shadow: 0 0 0 4px var(--glow); }
+.progress li.is-done { color: var(--muted); }
+.progress li.is-done::before { content: "\2713"; color: var(--on-accent); background: var(--good); border-color: var(--good); }
+.progress li.is-done::after { background: var(--good); }
+.github-card { --edge: var(--accent); }
+.github-card > p:first-child { margin-top: 0; }
+.github-card .stack { margin: 0; }
+.github-card .stack > .field { max-width: 30rem; }
+.github-card .form-actions { margin: var(--s3) 0; }
+.github-card .hint { margin-top: 0; }
+.github-card .status-line { margin-bottom: var(--s3); }
+
+/* ================================================================================================================
+   Settings polish: a sticky index that stays clear of the notice, and the hint under the events.
+   ================================================================================================================ */
+.toc li { margin: 0; }
+fieldset > .hint { margin: 0; }
+@media (min-width: 48rem) {
+  .toc { top: 5rem; }
+}
 
 /* ---------- Help: the "?" and its bubble ---------- */
 .help {

@@ -131,7 +131,7 @@ def create_app(
         return render_template(template, **values), status
 
     def problem(status: int, key: str) -> ResponseReturnValue:
-        return page("error.html", status, message=t(key))
+        return page("error.html", status, message=t(key), key=key)
 
     def signed_in(view: View) -> View:
         @wraps(view)
@@ -424,7 +424,10 @@ def create_app(
         loki_error: str = "",
         loki_tried: Mapping[str, str] | None = None,
     ) -> ResponseReturnValue:
-        chosen, language, filled = notifications.events(), notifications.language(), dict(values or {})
+        chosen, filled = notifications.events(), dict(values or {})
+        language = (
+            notifications.language() if store.setting("notify_language") else g.lang
+        )  # until saved: this page's
         tracker = signals.Tracker.load(secrets)
         view = {
             "destinations": [(n, describe(url) or "?") for n, url in enumerate(notifications.urls())],
@@ -642,7 +645,7 @@ def create_app(
             return show_settings(400, t("web.dest.failed"), said, service=service, values=form)
         notifications.add_url(url)
         log(f"Web UI: notification destination added ({service})")
-        return redirect(url_for("settings_page", done="notify_added"))
+        return redirect(url_for("settings_page", done="notify_added") + "#notify")
 
     @app.post("/settings/notify/telegram")
     @signed_in
@@ -665,7 +668,7 @@ def create_app(
         sent, said = notifications.test(urls[index])
         if not sent:
             return show_settings(502, t("web.dest.test_failed"), said)
-        return redirect(url_for("settings_page", done="notify_sent"))
+        return redirect(url_for("settings_page", done="notify_sent") + "#notify")
 
     @app.post("/settings/notify/remove")
     @signed_in
@@ -674,13 +677,13 @@ def create_app(
             notifications.remove_url(int(request.form.get("index", "")))
         except ValueError:
             return problem(400, "web.error.form")
-        return redirect(url_for("settings_page", done="notify_removed"))
+        return redirect(url_for("settings_page", done="notify_removed") + "#notify")
 
     @app.post("/settings/runs")
     @signed_in
     def run_settings() -> ResponseReturnValue:
         store.set_setting("fanout", "yes" if request.form.get("fanout") == "1" else "no")
-        return redirect(url_for("settings_page", done="saved"))
+        return redirect(url_for("settings_page", done="saved") + "#runs")
 
     @app.post("/settings/notify")
     @signed_in
@@ -689,7 +692,7 @@ def create_app(
         if language not in i18n.CATALOGS:
             return problem(400, "web.error.form")
         notifications.choose(request.form.getlist("events"), language)
-        return redirect(url_for("settings_page", done="saved"))
+        return redirect(url_for("settings_page", done="saved") + "#notify")
 
     @app.get("/github")
     @signed_in

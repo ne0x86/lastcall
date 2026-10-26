@@ -219,8 +219,11 @@
 
   <form method="post" action="{{ url_for('notify_settings') }}" class="stack events-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <fieldset>
+    <fieldset{% if not v.destinations %} aria-describedby="events-hint"{% endif %}>
       <legend>{{ t("web.notify.events") }}</legend>
+      {%- if not v.destinations %}
+      <p id="events-hint" class="hint">{{ t("web.settings.events_hint") }}</p>
+      {%- endif %}
       {%- for value, label, checked in v.events %}
       <div class="check-row"><label class="check plain"><input type="checkbox" name="events" value="{{ value }}"{% if checked %} checked{% endif %}> {{ label }}</label>{% if value in event_help %}{{ help(hb, "settings-event-" ~ value, label[:1]|upper ~ label[1:], ["settings.event." ~ value]) }}{% endif %}</div>
       {%- endfor %}
@@ -237,10 +240,10 @@
 
 <section class="card" id="github" aria-labelledby="github-title">
   <div class="section-head"><h2 id="github-title">{{ t("web.github.title") }}</h2><span class="pill {{ 'pill-on' if github else 'pill-off' }}">{{ t("web.settings.on") if github else t("web.settings.off") }}</span></div>
-  <p class="lede">{{ t("web.github.intro") }}</p>
   {%- if github %}
   <div class="line"><p>{{ t("web.github.ready", name=github.name, owner=github.owner) }} <a href="{{ github.install_url }}">{{ t("web.github.install") }}</a></p>{{ help(hb, "github-install", t("web.github.install"), ["github.install"]) }}</div>
   {%- else %}
+  <p class="lede">{{ t("web.github.intro") }}</p>
   <p>{{ t("web.start.github") }} <a href="{{ url_for('github_page') }}">{{ t("web.github.title") }}</a></p>
   {%- endif %}
 </section>
@@ -263,9 +266,10 @@
 
   <section class="card" aria-labelledby="signals-title" id="signals">
     <div class="section-head"><h3 id="signals-title">{{ t("web.signals.title") }}</h3><span class="pill {{ 'pill-on' if v.tracker else 'pill-off' }}">{{ t("web.settings.on") if v.tracker else t("web.settings.off") }}</span></div>
-    <p>{{ t("web.signals.intro") }}</p>
     {%- if v.tracker %}
     <p class="status-line">{{ t("web.signals.connected", url=v.tracker.url, org=v.tracker.org) }}</p>
+    {%- else %}
+    <p>{{ t("web.signals.intro") }}</p>
     {%- endif %}
     {%- if signals_error %}
     <p class="notice error" role="alert">{{ signals_error }}</p>
@@ -356,9 +360,10 @@
 
   <section class="card" aria-labelledby="loki-title" id="loki">
     <div class="section-head"><h3 id="loki-title">{{ t("web.loki.title") }}</h3><span class="pill {{ 'pill-on' if v.loki.connection else 'pill-off' }}">{{ t("web.settings.on") if v.loki.connection else t("web.settings.off") }}</span></div>
-    <p>{{ t("web.loki.intro") }}</p>
     {%- if v.loki.connection %}
     <p class="status-line">{{ t("web.loki.connected", url=v.loki.connection.url) }}</p>
+    {%- else %}
+    <p>{{ t("web.loki.intro") }}</p>
     {%- endif %}
     {%- if loki_error %}
     <p class="notice error" role="alert">{{ loki_error }}</p>

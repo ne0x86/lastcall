@@ -78,7 +78,7 @@
 {%- endmacro %}
 
 {% if not v.projects %}
-<p class="empty">{{ t("web.projects.empty") }}</p>
+<p class="empty">{{ t("web.projects.empty") if v.github_ready else t("web.projects.none") }}</p>
 {{ add_section() }}
 {% else %}
 <section aria-label="{{ t('web.projects.title') }}">
