@@ -6,6 +6,7 @@
 #   docker compose run --rm cli <command>                    # the command line: status, audit, pause...
 #   docker compose --profile local up -d ollama              # a local model server, for accounts on local models
 #   docker compose --profile local run --rm ollama-pull <model>  # download a model into it, such as qwen3-coder
+#   git pull && docker compose pull && docker compose up -d  # update: the stable branch holds the latest release
 #
 # The images are those of this file's release, so that the file and the images always match. LASTCALL_VERSION picks
 # others: `edge` follows main. Development builds every image from the checkout: add `-f compose.yaml -f compose.dev.yaml`.
@@ -82,8 +83,8 @@ services:
   lastcall:  # the service and its web UI. It spends nothing until you add accounts and projects in the web UI
     <<: *lastcall
     command: ["serve"]
-    ports:  # the web UI, on this machine only; to reach it from elsewhere, put a reverse proxy with HTTPS in front
-      - "127.0.0.1:${LASTCALL_PORT:-8080}:8080"
+    ports:  # the web UI, on this machine only; LASTCALL_BIND in .env opens it wider (README: "On a server")
+      - "${LASTCALL_BIND:-127.0.0.1}:${LASTCALL_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
       interval: 30s
