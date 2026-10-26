@@ -301,6 +301,7 @@ footer.bottom {
 .card.edge-claude-code { --edge: var(--engine-claude); }
 .card.edge-codex { --edge: var(--engine-codex); }
 .card.edge-opencode { --edge: var(--engine-opencode); }
+.card.edge-bad { --edge: var(--bad); }
 .card.waiting { --edge: var(--accent); }
 
 .narrow { max-width: 30rem; margin: var(--s4) auto; }
@@ -1077,7 +1078,7 @@ fieldset.has-help > legend { margin: 0; }
 .sign-card h1 + .alert-row { margin-top: var(--s3); }
 @media (max-width: 47.99rem) {
   .sign-card { padding: var(--s5) var(--s4); }
-  .sign-steps pre { font-size: .84rem; }
+  .sign-card pre, .sign-card pre code { font-size: .84rem; }
 }
 .sign-steps h2 { font-size: 1.12rem; line-height: 1.9rem; }
 .sign-steps .stack { grid-template-columns: minmax(0, 1fr); margin: 0; }

@@ -1272,6 +1272,10 @@ def test_the_github_page_has_steps_a_way_back_and_its_help(tmp_path: Path) -> No
     web.set_up()
     page = web.client.get("/github").get_data(as_text=True)
     assert 'class="crumbs"' in page and 'href="/settings#github">Settings</a>' in page
+    assert '<nav class="crumbs" aria-label="Breadcrumb">' in page and "You are here" not in page
+    assert 'aria-label="Ruta de navegación"' in web.client.get("/github", headers={"Accept-Language": "es"}).get_data(
+        as_text=True
+    )
     assert page.count('<li aria-current="step">Create</li>') == 1
     assert "lastcall works through your own GitHub App" in page  # the intro, in the default branch
     for topic in ("app", "owner", "org"):
@@ -1288,6 +1292,14 @@ def test_the_github_page_has_steps_a_way_back_and_its_help(tmp_path: Path) -> No
     assert 'class="status-line"' in page and 'href="/projects">Next: choose your projects</a>' in page
     assert '<li class="is-done">Create' in page and "help-github-install" in page
     assert "lastcall works through your own GitHub App" not in page
+    done = ready.client.get("/github?done=app_created").get_data(as_text=True)
+    assert 'class="notice done readable" role="status"' in done  # the notices keep the card's 44rem
+    bad = ready.client.get("/github/new?owner=not%20a%20login").get_data(as_text=True)
+    assert 'class="notice error readable" role="alert"' in bad
+    settings = ready.client.get("/settings").get_data(as_text=True)  # the ready sentence, like the other integrations
+    assert re.search(
+        r'<p class="status-line">lastcall-test belongs to acme\.</p>\s*<div class="line"><a href="https://', settings
+    )
 
 
 def test_setup_and_login_explain_themselves(web: Web) -> None:
@@ -1331,6 +1343,7 @@ def test_the_error_page_leads_back_and_explains_its_cause(tmp_path: Path) -> Non
     page = other.post("/login", data={"password": PASSWORD}).get_data(as_text=True)  # no Origin: refused
     assert "Form not accepted" in page and 'popovertarget="help-error-origin"' in page
     assert 'href="/login">Back to sign in</a>' in page
+    assert 'class="card narrow sign-card edge-bad"' in page  # the edge says that something went wrong
     gone = other.get("/nowhere").get_data(as_text=True)
     assert 'href="/login">Back to sign in</a>' in gone and "help-error" not in gone
     site = {"Origin": "https://lastcall.example.com"}
@@ -1338,3 +1351,9 @@ def test_the_error_page_leads_back_and_explains_its_cause(tmp_path: Path) -> Non
     page = forged.get_data(as_text=True)
     assert forged.status_code == 403 and "Form expired" in page and 'popovertarget="help-error-csrf"' in page
     assert 'href="/">Back to the dashboard</a>' in page
+
+
+def test_the_sign_cards_keep_their_commands_small_and_the_error_edge_red() -> None:
+    css = (Path(__file__).parent.parent / "src/lastcall/web/static/style.css").read_text(encoding="utf-8")
+    assert ".sign-card pre, .sign-card pre code { font-size: .84rem; }" in css  # the code inside the pre too
+    assert ".card.edge-bad { --edge: var(--bad); }" in css

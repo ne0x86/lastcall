@@ -727,9 +727,9 @@ is running, pull requests to review), projects, runs, decisions, statistics, acc
 
 The look is one warm design in a light and a dark scheme: ivory paper or warm charcoal, an ember accent for time and
 bursts, dusk blue for actions. Each card has a 3 px edge along its top, following its rounded corners, whose colour
-says something: the engine of an account, the kind of a notice, whether a project is on and
-whether the service is running, paused or down. Nothing loads from outside (no web fonts, no images as data), so the
-content security policy stays strict.
+says something: the engine on account cards, the kind of a notice, whether a project is on, the state of the service
+on the hero (on, paused or down), dusk blue where you act, ember for Getting started and quiet sand everywhere else.
+Nothing loads from outside (no web fonts, no images as data), so the content security policy stays strict.
 
 The language is chosen in Settings, under Language, and in the header while signed out; until then it is the
 browser's. A "?" next to a label, a heading or a button opens a short bubble that explains what is confusing on that
@@ -738,32 +738,31 @@ under "Help on this page", for browsers without `popover`. A "?" shows only when
 it), once per page for what repeats, and its text says only what the code does.
 
 It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
-(`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the language
-is the browser's, until the owner picks one. So far it has the sign-in, the GitHub App page (the manifest flow, whose
-page alone may post a form to github.com), the accounts page (add a subscription, with the exact login command for
-it and a quota reading on demand to check the login; an API key, with its provider, model, monthly budget and
-policy; or a local model with its schedule; each form shows its steps, with links to where keys and model names
-come from), the dashboard (with pause and resume, and a notice with the command to restart it
-when the service stops writing its heartbeat) and the projects page: each project's settings (merge on approve, the watch after the merge
-and tests and dependencies too among them), an audit, tests, upgrades or an improvement on demand, adding a repository by its address, and the suggestions, which the
-service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
-audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
-reset, and the dashboard says so. While paused, or while the service is not running, no account card says it is
-bursting. A form that saves returns to its own card or section (`#project-owner--name`, `#account-id`, `#runs`,
-`#notify`), under the notice. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
+(`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`). So far it has
+the sign-in, the GitHub App page (the manifest flow, whose page alone may post a form to github.com), the accounts
+page (add a subscription, with the exact login command for it and a quota reading on demand to check the login; an API
+key, with its provider, model, monthly budget and policy; or a local model with its schedule; each form shows its
+steps, with links to where keys and model names come from), the dashboard (with pause and resume, and a notice with
+the command to restart it when the service stops writing its heartbeat) and the projects page: each project's settings
+(merge on approve, the watch after the merge and tests and dependencies too among them), an audit, tests, upgrades or
+an improvement on demand, adding a repository by its address, and the suggestions, which the service reads from GitHub
+every 6 hours and the owner can read again at any time. Pause holds the bursts only: an audit, tests, upgrades or an
+improvement plan that you start yourself still starts, on the free account with the most quota left before its reset,
+and the dashboard says so. While paused, or while the service is not running, no account card says it is bursting. A
+form that saves returns to its own card or section (`#project-owner--name`, `#account-id`, `#runs`, `#notify`), under
+the notice. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
 organization and a read-only token, saved only when one request with them gets through), the container logs (the
-host's containers, each with its project or the one lastcall suggests, and the label that works as well), the logs
-in Loki (the connection, the label that names the sources, and the project of each, with suggestions), and the
-notifications: the destinations, chosen by service with only the fields that
-service needs (Telegram finds the owner's chat from the bot's recent messages) or as any Apprise URL, saved only when
-their test notification gets through, kept in the secret store and shown with their secrets hidden; the events (a pull
-request opens, decisions or ideas wait, lastcall merges an approved pull request or proposes a revert, a run fails or
-stops early, an account has paid usage on or its quota cannot be read, and, if the owner wants, a burst starts) and
-their language. A problem is told once when it starts, and a notification that fails is logged and never stops
-lastcall. The web UI listens on `127.0.0.1` unless the owner sets `LASTCALL_BIND`, such as to a VPN address. Behind
-a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address, scheme and host from the proxy's
-`X-Forwarded-*` headers, which the server drops otherwise, and `LASTCALL_WEB_ORIGIN` only adds origins that forms may
-come from.
+host's containers, each with its project or the one lastcall suggests, and the label that works as well), the logs in
+Loki (the connection, the label that names the sources, and the project of each, with suggestions), and the
+notifications: the destinations, chosen by service with only the fields that service needs (Telegram finds the owner's
+chat from the bot's recent messages) or as any Apprise URL, saved only when their test notification gets through, kept
+in the secret store and shown with their secrets hidden; the events (a pull request opens, decisions or ideas wait,
+lastcall merges an approved pull request or proposes a revert, a run fails or stops early, an account has paid usage
+on or its quota cannot be read, and, if the owner wants, a burst starts) and their language. A problem is told once
+when it starts, and a notification that fails is logged and never stops lastcall. The web UI listens on `127.0.0.1`
+unless the owner sets `LASTCALL_BIND`, such as to a VPN address. Behind a reverse proxy, `LASTCALL_TRUST_PROXY=1`
+makes lastcall read the client's address, scheme and host from the proxy's `X-Forwarded-*` headers, which the server
+drops otherwise, and `LASTCALL_WEB_ORIGIN` only adds origins that forms may come from.
 
 A CLI mirrors the main actions. Like the UI, it queues orders that the service executes, so two actions never run
 into each other.

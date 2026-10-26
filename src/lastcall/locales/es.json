@@ -758,7 +758,7 @@
   "web.project.deps_turn": "Por turnos con las auditorías, actualiza lo que necesita algo más que un número de versión nuevo.",
   "web.project.run_hints": "Qué hace cada botón",
   "web.settings.events_hint": "Se aplican cuando añadas un destino arriba.",
-  "web.nav.breadcrumb": "Estás aquí",
+  "web.nav.breadcrumb": "Ruta de navegación",
   "web.github.steps": "Preparar la App",
   "web.github.step.create": "Crear",
   "web.github.step.install": "Instalar",

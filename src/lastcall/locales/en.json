@@ -758,7 +758,7 @@
   "web.project.deps_turn": "In turn with the audits, it upgrades what needs more than a new version number.",
   "web.project.run_hints": "What each button does",
   "web.settings.events_hint": "They apply once you add a destination above.",
-  "web.nav.breadcrumb": "You are here",
+  "web.nav.breadcrumb": "Breadcrumb",
   "web.github.steps": "Setting up the App",
   "web.github.step.create": "Create",
   "web.github.step.install": "Install",

@@ -52,7 +52,10 @@ also spend an API key with a monthly budget, or a local model at the hours you c
 - 🔔 **Tells you.** A notification when a pull request opens, a decision waits, an audit fails or an account needs
   you: Telegram, ntfy, Discord, Slack, email and many more, through Apprise.
 
-<p align="center"><img src="docs/dashboard.png" width="760" alt="The lastcall dashboard: the quota left on two accounts, the next burst, and the pull requests and decisions waiting for review"></p>
+<p align="center"><img src="docs/dashboard.png" width="760"
+  alt="The lastcall dashboard in English: a service card saying bursts are on, with a Pause button; a Waiting for you
+  card with two pull requests to review, a decision and an idea to choose; and the first two account cards, chatgpt
+  on Codex and claude-max on Claude Code, each with its 5-hour and weekly quota meters"></p>
 
 ## 🔁 How it works
 
@@ -163,8 +166,9 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
   want: from Sentry or GlitchTip, your containers' logs or Loki (see *Your project's settings* below).
 
 That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
-does. Pause it from the dashboard at any time: Pause holds the bursts only, so an audit or an improvement plan that you
-start yourself from the Projects page still runs. Choose the language of the pages in Settings.
+does. Pause it from the dashboard at any time: Pause holds the bursts only, so an audit, tests, upgrades or an
+improvement plan that you start yourself from the Projects page still runs. Choose the language of the pages in
+Settings.
 
 The web UI listens only on this machine. To run lastcall on a server and reach it from elsewhere, see
 [On a server](#-on-a-server); to move to a new release, [Updating](#-updating).

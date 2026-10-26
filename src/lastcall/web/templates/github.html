@@ -19,8 +19,8 @@
   <li>{{ t("web.github.step.projects") }}</li>
 </ol>
 
-{% if done %}<p class="notice done" role="status">{{ done }}</p>{% endif %}
-{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+{% if done %}<p class="notice done readable" role="status">{{ done }}</p>{% endif %}
+{% if error %}<p class="notice error readable" role="alert">{{ error }}</p>{% endif %}
 
 <section class="card readable github-card">
   {%- if app %}
