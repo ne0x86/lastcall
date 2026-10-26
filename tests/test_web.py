@@ -29,6 +29,7 @@ from lastcall.web.auth import (
     hash_password,
     start_session,
 )
+from test_loki import FakeLoki
 from test_notify import Outbox
 from test_projects import FakeGitHub
 
@@ -857,6 +858,53 @@ def test_container_logs_from_the_web(tmp_path: Path) -> None:
     failing.set_up()
     page = failing.client.get("/settings").get_data(as_text=True)
     assert "The containers could not be listed: supervisor unreachable" in page
+
+
+def test_loki_from_the_web(tmp_path: Path) -> None:
+    from lastcall import loki
+
+    series = [{"container": "shop-web-1", "compose_project": "shop", "host": "vps-1"}, {"container": "redis"}]
+    fake = FakeLoki(series)
+
+    def fetch(url: str, headers: Mapping[str, str]) -> Any:
+        if url.startswith("http://down.example.com"):
+            raise loki.LokiError("no answer from http://down.example.com:3100")
+        return fake(url, headers)
+
+    web = Web(tmp_path, loki_fetch=fetch)
+    web.set_up()
+    web.store.add_project("acme/shop")
+    csrf = web.csrf()
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "Logs in Loki" in page and "Connected to" not in page
+    form = {"csrf": csrf, "url": "http://down.example.com:3100", "user": "", "token": "", "tenant": ""}
+    response = web.client.post("/settings/loki", data=form, headers=SITE)
+    assert response.status_code == 400 and loki.Loki.load(web.secrets) is None
+    assert "Loki could not be read: no answer from http://down.example.com:3100" in response.get_data(as_text=True)
+    form["url"] = "http://loki.example.com:3100/"
+    response = web.client.post("/settings/loki", data=form, headers=SITE)
+    assert response.headers["Location"] == "/settings?done=loki#loki"
+    assert loki.Loki.load(web.secrets) == loki.Loki("http://loki.example.com:3100")
+    login = {**form, "user": "123456", "token": "glc_t0ken"}
+    web.client.post("/settings/loki", data=login, headers=SITE)
+    web.client.post("/settings/loki", data={**login, "token": "", "tenant": "team-a"}, headers=SITE)  # the same login
+    assert loki.Loki.load(web.secrets) == loki.Loki("http://loki.example.com:3100", "123456", "glc_t0ken", "team-a")
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "Connected to http://loki.example.com:3100." in page
+    assert '<option value="container" selected>container</option>' in page
+    assert "Compose project: shop" in page and "Suggested: acme/shop. Save to read it." in page
+    rows = {"csrf": csrf, "label": "container", "name-1": "redis", "project-1": "", "shown-1": ""}
+    rows |= {"name-2": "shop-web-1", "project-2": "acme/shop", "shown-2": "acme/shop"}
+    response = web.client.post("/settings/loki/sources", data=rows, headers=SITE)
+    assert response.headers["Location"] == "/settings?done=loki_sources#loki"
+    assert (web.store.setting(loki.LABEL), loki.chosen(web.store)) == ("container", {"shop-web-1": "acme/shop"})
+    for bad in ({"name-1": "lastcall-step-abc123"}, {"project-1": "someone/else"}, {"label": "a b"}):
+        assert web.client.post("/settings/loki/sources", data={**rows, **bad}, headers=SITE).status_code == 400
+    response = web.client.post("/settings/loki/label", data={"csrf": csrf, "label": "host"}, headers=SITE)
+    assert response.headers["Location"] == "/settings?done=loki_label#loki"
+    assert (web.store.setting(loki.LABEL), loki.chosen(web.store)) == ("host", {})  # the choices start again
+    web.client.post("/settings/loki/remove", data={"csrf": csrf}, headers=SITE)
+    assert loki.Loki.load(web.secrets) is None
 
 
 def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:

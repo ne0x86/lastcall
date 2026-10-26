@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lastcall import environment, git, i18n, logs, pack, scanners, signals
+from lastcall import environment, git, i18n, logs, loki, pack, scanners, signals
 from lastcall.accounts import Account, engine_for, read_quota
 from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
 from lastcall.environment import TOOL_ENV, Environment
@@ -63,6 +63,7 @@ class Instance:
     notify: Notifier | None = None
     secrets: SecretStore | None = None  # where the API keys of accounts on keys are, and the error tracker's token
     fetch: signals.Fetch = signals.fetch_json  # how lastcall reads the error tracker
+    loki_fetch: loki.Fetch = loki.fetch_json  # and Loki
 
 
 @dataclass(frozen=True)
@@ -267,8 +268,8 @@ def audit_repo(
 
 def production_errors(inst: Instance, repo: str, clone: Path, log: Log = print) -> dict[str, str]:
     """The pack's sections on errors in production: from the owner's error tracker, when it is connected and the
-    project has its project there; and from the logs of the project's containers, those that the owner chose for it
-    or labelled. A source that cannot be read leaves a note, never a failed run."""
+    project has its project there; from the logs of the project's containers, those that the owner chose for it or
+    labelled; and from its sources in Loki. A source that cannot be read leaves a note, never a failed run."""
     out: dict[str, str] = {}
     project = inst.store.project(repo)
     tracker = signals.Tracker.load(inst.secrets) if inst.secrets is not None else None
@@ -289,6 +290,15 @@ def production_errors(inst: Instance, repo: str, clone: Path, log: Log = print) 
         if containers:
             log(f"Read the logs of {len(containers)} container(s) of {repo}: {len(kinds)} kinds of errors.")
             out[logs.TITLE] = logs.section(containers, kinds)
+    connection = loki.Loki.load(inst.secrets) if inst.secrets is not None else None
+    if connection is not None and loki.names_for(repo, loki.chosen(inst.store)):
+        try:
+            sources, kinds = loki.read(connection, inst.store, repo, git.files(clone), time.time(), inst.loki_fetch)
+            log(f"Read the logs of {len(sources)} source(s) of {repo} in Loki: {len(kinds)} kinds of errors.")
+            out[loki.TITLE] = loki.section(sources, kinds, inst.store.setting(loki.LABEL))
+        except loki.LokiError as e:
+            log(f"{repo}: the logs in Loki were not read: {e}")
+            out[loki.TITLE] = f"Not read: {e}"
     return out
 
 

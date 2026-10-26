@@ -86,7 +86,7 @@ flowchart LR
   what they cost. The local model server has no way out to the internet.
 - 🚨 What comes from production reaches the models masked: an error's type, its message without emails, addresses,
   tokens or long numbers, and the lines of your code. Never variables, requests or user data. lastcall reads the logs
-  of a container only after you give it a project.
+  of a container, or of a source in Loki, only after you give it a project.
 - 🧑‍⚖️ Nothing is merged without your approval, and a revert is only ever proposed.
 
 ## 🔌 Engines
@@ -185,6 +185,9 @@ docker compose run --rm cli signals show <owner/name>                           
 docker compose run --rm cli logs list                                                # containers, with suggestions
 docker compose run --rm cli logs set <container> <owner/name>                        # read it for that project
 docker compose run --rm cli logs show <owner/name>                                   # the errors in their logs
+docker compose run --rm cli loki connect --url http://<host>:3100                    # Loki, on other machines
+docker compose run --rm cli loki list                                                # its sources, with suggestions
+docker compose run --rm cli loki set <source> <owner/name>                           # read it for that project
 docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
 docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
 docker compose run --rm cli improve <owner/name> --account claude-max                # a plan; then the ideas you tick
@@ -272,6 +275,18 @@ error level such as `ERROR` or `level=error`), and the restarts, such as the ker
 memory. It reads only the containers that have a project, only their logs and state, and masks the lines before they
 reach a model.
 
+**Logs in Loki.** If your apps run on other machines and [Grafana Loki](https://grafana.com/oss/loki/) already
+collects their logs, lastcall reads them there, with nothing to install on those machines:
+1. On the Settings page, under *Logs in Loki*, give Loki's address and, if it asks for one, a login that can only
+   read. In Grafana Cloud, that is the user number of your Loki and a token with the `logs:read` scope.
+2. lastcall lists the sources that Loki saw in the last 7 days, named by their `container` label when they have one,
+   and suggests the project of each, as for the containers on its own machine. Choose them, and save.
+
+It asks Loki only for the lines of the last day that may be part of an error, the newest 5,000 of each source, and
+reads them as it reads a container's. In the terminal: `lastcall loki connect --url http://<host>:3100`,
+`lastcall loki list`, then `lastcall loki set <source> <owner/name>`. Loki itself has no login: keep its port closed
+to the internet, or put a proxy with a login in front of it, or anyone can read your logs.
+
 **After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
 in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
 - **Merge after my approval.** On GitHub, approving a pull request does not merge it. With this on, when you, a
@@ -325,9 +340,10 @@ advice.
 - 🔜 **v0.6, closer to your apps.**
   - ✅ Container logs as signals: the errors and restarts of your apps' containers on the same machine, chosen on
     the Settings page with suggestions, or by a label.
+  - ✅ Logs in Loki, for apps on other machines.
 - 🔭 **Next, as people ask for it** ([open an issue](https://github.com/ne0x86/lastcall/issues/new/choose)).
   - GitLab and Forgejo, next to GitHub.
-  - Container logs on other machines.
+  - A lastcall agent for the containers of other machines without Loki.
 
 ## 🧑‍💻 Development
 

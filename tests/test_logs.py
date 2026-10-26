@@ -174,6 +174,10 @@ def test_lastcall_suggests_a_project_from_the_image_the_compose_project_or_the_n
     assert logs.suggest(container("blog-worker-1", "python:3.12"), REPOS) == "acme/blog"
     assert logs.suggest(container("shop-web-1", "python:3.12"), REPOS) == ""  # two repos are called shop
     assert logs.suggest(container("redis", "redis:7"), REPOS) == ""
+    assert logs.suggest(container("Blog_Worker.1"), REPOS) == "acme/blog"  # hyphens, underscores and dots alike
+    assert logs.suggest(container("web_blog_v2"), REPOS) == "acme/blog"  # its name between other words
+    assert logs.suggest(container("x", compose="infra_blog"), REPOS) == "acme/blog"
+    assert logs.suggest(container("bot_api"), ["acme/api"]) == ""  # too short a name to find between words
 
 
 def test_a_container_belongs_to_a_project_by_its_label_or_the_owners_choice() -> None:

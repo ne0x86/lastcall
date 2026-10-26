@@ -8,7 +8,7 @@ Every minute it ticks:
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
 - every 6 hours it refreshes the suggestions for the installed repositories;
 - every 30 minutes it counts each project's errors in production in the last day, from the owner's error tracker
-  and from the logs of the project's containers: projects with errors rank higher;
+  and from the logs of the project's containers and of its sources in Loki: projects with errors rank higher;
 - the owner's orders ("audit this project now" or "improve it now", from the web UI) start on a free account; an
   audit can start on all of them together (fan-out);
 - with fan-out on, accounts that burst at the same time review one project together, with one judge;
@@ -31,7 +31,7 @@ import traceback
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from lastcall import i18n, logs, projects, signals
+from lastcall import i18n, logs, loki, projects, signals
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, account_rate, plan
@@ -196,8 +196,10 @@ class Service:
 
     def read_signals(self, now: float) -> None:
         """How many errors each active project had in production in the last day: from the owner's error tracker,
-        and kinds of errors in the logs of its containers."""
+        and kinds of errors in the logs of its containers and of its sources in Loki."""
         tracker = signals.Tracker.load(self.inst.secrets) if self.inst.secrets is not None else None
+        connection = loki.Loki.load(self.inst.secrets) if self.inst.secrets is not None else None
+        sources = loki.chosen(self.inst.store)
         choices, listed = logs.chosen(self.inst.store), list[dict[str, Any]]()
         try:
             listed = self.inst.box.containers() if self.inst.box is not None else []
@@ -218,6 +220,12 @@ class Service:
                     counts[p.repo] = counts.get(p.repo, 0) + len(kinds)
                 except SandboxError as e:
                     self.log(f"{p.repo}: the container logs were not read: {e}")
+            if connection is not None and loki.names_for(p.repo, sources):
+                try:
+                    kinds = loki.read(connection, self.inst.store, p.repo, (), now, self.inst.loki_fetch)[1]
+                    counts[p.repo] = counts.get(p.repo, 0) + len(kinds)
+                except loki.LokiError as e:
+                    self.log(f"{p.repo}: the logs in Loki were not read: {e}")
         self.errors = {repo: n for repo, n in counts.items() if n}
 
     def alert(self, account: str, event: str, on: bool, **values: str) -> None:

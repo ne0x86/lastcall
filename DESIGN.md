@@ -445,7 +445,23 @@ multiplies the score.
     `[error]`) by its text without the app's own timestamp, numbers, ids and quoted values.
   - The pack gets the 8 most frequent kinds, each with one masked sample line, how often and when, and the frames,
     and the state of each container. The service counts the kinds for the ranking.
-  - Container logs on other hosts may come later: from a log store such as Loki, an agent, or SSH.
+- **Logs in Loki** (`lastcall.loki`), for apps on other hosts, when Grafana Loki already collects their logs (with
+  Grafana Alloy, Promtail or Docker's Loki driver). Nothing runs on those hosts:
+  - The owner keeps one connection, in the secret store: Loki's address and, when Loki asks for one, a login that
+    can read (basic, for Grafana Cloud or a proxy, else a bearer token), and a tenant for a Loki with more than one.
+    lastcall saves it only after one request with it gets through.
+  - The settings page lists the sources that Loki saw in the last 7 days (`/loki/api/v1/series`): the values of the
+    label that names them, `container` when Loki has it, else `container_name`, `service_name`, `app` or `job`, or
+    the one that the owner picks, each with its hosts and its Compose project. The owner chooses the project of each,
+    with the suggestions of the container logs. A container of lastcall's steps is never listed.
+  - For each chosen source, lastcall asks `/loki/api/v1/query_range` for the newest 5,000 lines of the last day that
+    a filter keeps: those that may be part of an error (error levels, tracebacks with their last line, the frames of
+    stacks), so that busy apps keep a day's errors. It asks for the stream's labels apart from each line's metadata
+    (`categorize-labels`: Loki 3 would otherwise split a stream by the level that it detects in each line), puts the
+    pieces of a stream back together (Loki shards a busy one) and reads each stream as a container's. Checked
+    against Loki 3.7, with the logs of 29 containers that Grafana Alloy collected.
+  - The pack gets a section of its own, and the service counts its kinds for the ranking with the containers'.
+- An agent for the containers of other hosts without Loki may come later.
 
 ### Other forges
 
@@ -467,7 +483,7 @@ Today `lastcall audit <owner/name>` runs the whole audit. With `--report-only` i
 `lastcall deliver <run>` later opens the pull requests of that report, so the owner can read the findings first.
 - The context pack (`lastcall.pack`) holds the README, the recent history, the scanners' results, a map and the
   code with line numbers, up to 150k tokens. The judge also gets the memory of earlier findings, and the
-  reviewers the errors in production when the owner connected an error tracker (section 8).
+  reviewers the errors in production, from an error tracker, container logs or Loki (section 8).
 - Each implementer works in its own clone, on a branch `lastcall/<date>-<n>-<topic>`.
 - lastcall then takes over:
   - it runs the project's check (`lastcall.verify`) on a clean copy, in the runner image;
@@ -669,7 +685,7 @@ runs, and different network rights for setup and verify.
   merge, or the address fails 3 times in a row, it opens a pull request that reverts the change (against the first
   parent for a merge commit), pauses the project and tells the owner. It never merges the revert. Once the revert is
   merged, the change's findings are `reverted`, and the judge knows. Errors in production feed the audits since
-  v0.5 (section 8); container state may come later. A deploy adapter for Docker Compose over SSH, taken from the prototype, can come later as a plugin.
+  v0.5, and container logs and their state since v0.6 (section 8). A deploy adapter for Docker Compose over SSH, taken from the prototype, can come later as a plugin.
 
 ## 12. Security model
 
@@ -688,6 +704,7 @@ runs, and different network rights for setup and verify.
 | An API key leaks | It lives in the secret store, and only the steps of its account get it, as a read-only file in `/ctx` that the supervisor deletes after the step; never on a command line, in the environment or in a log. An agent can read it, as it can read its CLI's login: the secret scanner blocks it in what lastcall publishes, and the egress allowlist limits where it can go. The owner gives the key a spending limit at the provider. |
 | Data from production reaches a model | Only an error's type, its message masked (emails, addresses, credentials, tokens, long numbers), its counts, and the file, line, function and code line of the project's own frames. Never variables, request data, user data, tags or breadcrumbs. The tracker's token can only read, and lives in the secret store. From container logs, one masked line per kind of error. |
 | lastcall reads the logs of the owner's containers | None until the owner gives a container a project, on the settings page or with a label. The supervisor reads only the containers that the service names, and of them only their logs and state, within limits of time, lines and bytes; never the containers of lastcall's steps, whose output is the agents'. It never acts on a container, and the service never gets the Docker socket. The choice lives in the service: a bug there could name another container of the host, and get its logs and state, never more. |
+| lastcall reads the owner's logs in Loki | None until the owner gives a source a project. lastcall only queries, with the owner's login, which should only read and lives in the secret store, and asks only for the lines that may be errors. What reaches a model is masked as the tracker's errors are. Loki has no login of its own: the README asks the owner to keep its port closed to the internet. |
 | A step abuses the local model server | The server runs on the sandbox network with no way out, so no step can make it download anything. Models come in only through `ollama-pull`, which the owner runs. |
 | Takeover of the web UI | It listens only on the host by default. The password is chosen with a one-time code that only the service's log shows, and kept as an scrypt hash. Sign-in locks after repeated failures. Sessions live in the store; the `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) holds only a random token. Every POST needs this site's `Origin` and, when signed in, the session's CSRF token. A strict CSP, and no JavaScript. |
 
@@ -714,7 +731,8 @@ service reads from GitHub every 6 hours and the owner can read again at any time
 audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
 reset. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
 organization and a read-only token, saved only when one request with them gets through), the container logs (the
-host's containers, each with its project or the one lastcall suggests, and the label that works as well), and the
+host's containers, each with its project or the one lastcall suggests, and the label that works as well), the logs
+in Loki (the connection, the label that names the sources, and the project of each, with suggestions), and the
 notifications: the destinations, chosen by service with only the fields that
 service needs (Telegram finds the owner's chat from the bot's recent messages) or as any Apprise URL, saved only when
 their test notification gets through, kept in the secret store and shown with their secrets hidden; the events (a pull
@@ -807,11 +825,12 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 
 - Container logs as signals, on lastcall's own host: the owner chooses the containers of each project, with
   suggestions, or labels them (section 8). Done.
+- Logs in Loki, for apps on other hosts (section 8). Done.
 
 **Next, as people ask for it**
 
 - GitLab or Forgejo, through the `Forge` interface (section 8).
-- Container logs on other hosts: from a log store such as Loki, an agent, or SSH.
+- An agent for the container logs of other hosts without Loki.
 - Asking once for a repair when an engine without structured output answers with something that is not the JSON
   (section 7).
 
