@@ -533,7 +533,7 @@
   "web.logs.unavailable": "Los contenedores solo se pueden listar cuando lastcall corre con docker compose.",
   "web.logs.failed": "No se pudieron listar los contenedores: {error}",
   "web.logs.label_title": "O con una etiqueta en el compose",
-  "web.logs.label_how": "Un contenedor con la etiqueta lastcall.project se lee para ese proyecto, sin elegir nada aquí. Añádela al compose de la app, con el nombre del proyecto tal como lo escribe la página de proyectos, y ejecuta docker compose up -d en esa app:",
+  "web.logs.label_how": "Las dos formas conviven. Un contenedor con la etiqueta lastcall.project se lee para ese proyecto sin elegir nada: esta página lo muestra con su proyecto. Añádela al compose de la app, con el nombre del proyecto tal como lo escribe la página de proyectos, y ejecuta docker compose up -d en esa app:",
 
   "web.loki.title": "Logs en Loki",
   "web.loki.intro": "Si tus apps corren en otras máquinas y Grafana Loki ya recoge sus logs, lastcall puede leerlos allí, sin instalar nada en esas máquinas: los errores, agrupados por tipo, como con los contenedores de arriba. Las auditorías buscan primero su causa, los tests los cubren y los proyectos con errores en el último día van primero. Las líneas con datos personales y secretos se enmascaran antes de llegar a un modelo.",

@@ -34,9 +34,9 @@ also spend an API key with a monthly budget, or a local model at the hours you c
 - 📦 **Upgrades dependencies, if you want.** The upgrades that need more than a new version number: a known
   vulnerability, a deprecated package, a major version behind. It changes the code that the new version breaks, and
   your tests check it.
-- 🚨 **Reads your errors, if you want.** From Sentry or GlitchTip, or from the logs of your containers when they run
-  on the same machine: the audits look for the cause of the most frequent errors first, and projects with errors in
-  the last day go first.
+- 🚨 **Reads your errors, if you want.** From Sentry or GlitchTip, from the logs of your containers on the same
+  machine, or from Grafana Loki for your other machines: the audits look for the cause of the most frequent errors
+  first, and projects with errors in the last day go first.
 - 🏷️ **Takes requests.** Label an issue `lastcall`, and a coming burst works on it: a pull request that closes the
   issue, or a comment on it that says what is missing. lastcall adds the label to your active repositories.
 - 👀 **Merges and watches, if you want.** It merges the pull requests you approve once their checks pass, and it
@@ -78,15 +78,17 @@ flowchart LR
 
 - 📦 Every agent step runs in a throwaway container: unprivileged, no capabilities, and the code read-only for
   reviewers.
-- 🌐 The only way out is a proxy that allows the model API and package registries. No LAN, no GitHub, no other
-  domain.
+- 🌐 The only way out is a proxy with a short allowlist: the model APIs and their logins, the package registries,
+  and the services that lastcall's own tools use (vulnerabilities, latest versions, model prices). No LAN, no
+  GitHub, nothing else: [egress/filter](egress/filter) holds the list.
 - 🔑 Agents never hold GitHub credentials and never push. lastcall does, after verifying.
 - 🙈 Your subscription login stays in the official CLI's own storage. lastcall never reads it.
 - 💳 An API key stays in lastcall's secret store, only the steps of its account get it, and its monthly budget caps
   what they cost. The local model server has no way out to the internet.
-- 🚨 What comes from production reaches the models masked: an error's type, its message without emails, addresses,
-  tokens or long numbers, and the lines of your code. Never variables, requests or user data. lastcall reads the logs
-  of a container, or of a source in Loki, only after you give it a project.
+- 🚨 What comes from production reaches the models masked, without emails, addresses, tokens or long numbers. From a
+  tracker, an error's type, its message and the lines of your code, never its variables, request or user data; from
+  logs, one sample line of each kind of error. lastcall reads the logs of a container, or of a source in Loki, only
+  after you give it a project.
 - 🧑‍⚖️ Nothing is merged without your approval, and a revert is only ever proposed.
 
 ## 🔌 Engines
@@ -151,14 +153,16 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 - 🔔 **Settings.** Where lastcall should notify you. Choose the service and fill in what it asks for: Telegram (paste
   your bot's token and lastcall finds your chat), ntfy, Discord, Slack or email, or any of the
   [services that Apprise reaches](https://github.com/caronc/apprise#supported-notifications). lastcall saves a
-  destination only once its test notification gets through.
+  destination only once its test notification gets through. The same page can also read your apps' errors, if you
+  want: from Sentry or GlitchTip, your containers' logs or Loki (see *Your project's settings* below).
 
 That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
 does. Pause it from the dashboard at any time, or start an audit or an improvement plan yourself from the Projects
 page.
 
-The web UI listens only on this machine. To open it from elsewhere, put a reverse proxy with HTTPS in front of it
-and set `LASTCALL_TRUST_PROXY=1`.
+The web UI listens only on this machine. To open it from elsewhere, put a reverse proxy with HTTPS in front of it.
+Then add `LASTCALL_TRUST_PROXY=1` to a `.env` file next to `compose.yaml`, so that lastcall reads the client's
+address and scheme from the proxy's `X-Forwarded-*` headers, and run `docker compose up -d` again.
 
 To upgrade, check out the new release and pull its images; your settings and history stay in Docker volumes:
 
@@ -188,6 +192,7 @@ docker compose run --rm cli logs show <owner/name>                              
 docker compose run --rm cli loki connect --url http://<host>:3100                    # Loki, on other machines
 docker compose run --rm cli loki list                                                # its sources, with suggestions
 docker compose run --rm cli loki set <source> <owner/name>                           # read it for that project
+docker compose run --rm cli loki show <owner/name>                                   # the errors in its sources
 docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
 docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
 docker compose run --rm cli improve <owner/name> --account claude-max                # a plan; then the ideas you tick
@@ -254,20 +259,25 @@ The audits and the tests then get the most frequent unresolved errors of the las
 code where they happen, and the reviewers look for their causes first. Projects with errors in the last day go
 first. The messages are masked before they reach a model.
 
-**Container logs.** If your apps run in Docker on the same machine as lastcall, it can read their logs instead, with
-no change to their code. On the Settings page, under *Container logs*, choose the project of each container to read,
-and save. lastcall lists the machine's containers and suggests a project for each from its image
-(`ghcr.io/owner/name`), its Compose project or its name. It reads none until you save, and it remembers when you
-say no to a suggestion. In the terminal: `lastcall logs list`, then `lastcall logs set <container> <owner/name>`.
+**Container logs.** If your apps run in Docker on the same machine as lastcall, it can read their logs too, with or
+without a tracker, and with no change to their code. On the Settings page, under *Container logs*, choose the
+project of each container to read, and save. lastcall lists the machine's containers and suggests a project for
+each from its image (`ghcr.io/owner/name`), its Compose project or its name. It reads none until you save, and it
+remembers when you say no to a suggestion. In the terminal: `lastcall logs list`, then
+`lastcall logs set <container> <owner/name>`.
 
-To keep the choice with the app instead, label its containers with the project's name, as the Projects page writes
-it, and run `docker compose up -d` for that app. A labelled container is read with no choice on the Settings page:
+You can also keep the choice in the app's compose file: label its containers with the project's name, as the
+Projects page writes it, and run `docker compose up -d` for that app.
+
 ```yaml
 services:
   web:
     labels:
       lastcall.project: owner/name
 ```
+
+Both ways work together. A labelled container needs no choice on the Settings page, which shows it with its project,
+and the label wins over a choice made there. A container with neither a label nor a chosen project is never read.
 
 lastcall then reads the last 24 hours of those containers, every 30 minutes and before each run: the errors, grouped
 by kind (a Python traceback by its exception and the place in your code, a stack of Node.js or Java, a line with an
@@ -284,15 +294,16 @@ collects their logs, lastcall reads them there, with nothing to install on those
 
 It asks Loki only for the lines of the last day that may be part of an error, the newest 5,000 of each source, and
 reads them as it reads a container's. In the terminal: `lastcall loki connect --url http://<host>:3100`,
-`lastcall loki list`, then `lastcall loki set <source> <owner/name>`. Loki itself has no login: keep its port closed
-to the internet, or put a proxy with a login in front of it, or anyone can read your logs.
+`lastcall loki list`, then `lastcall loki set <source> <owner/name>`. Loki itself has no login: open its port only to
+your own addresses, such as the machine where lastcall runs, or put a proxy with a login in front of it. Otherwise
+anyone can read your logs.
 
 **After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
 in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
 - **Merge after my approval.** On GitHub, approving a pull request does not merge it. With this on, when you, a
   member or a collaborator approves the latest commit of a lastcall pull request, and no check fails or is still
-  running, lastcall merges it. If it no longer merges cleanly,
-  lastcall closes it, and the change comes back in a later run, on the current code.
+  running, lastcall merges it. If it no longer merges cleanly, lastcall closes it, and the change comes back in a
+  later run, on the current code.
 - **Watch after the merge.** For a day after a merge, lastcall looks at the checks of the merged commit and, if you
   give one, at a health address every 10 minutes. When the checks fail where they passed before, or the address
   fails 3 times in a row, it opens a pull request that reverts the change, pauses the project and tells you.

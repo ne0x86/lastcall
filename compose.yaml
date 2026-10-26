@@ -20,6 +20,10 @@ x-lastcall: &lastcall
     LASTCALL_DATA_ROOT: /data
     LASTCALL_SECRETS: /secrets
     LASTCALL_STATE: /state
+    # behind a reverse proxy, from a .env file: 1 to read the client from its X-Forwarded-* headers, or the public
+    # origins that forms may come from, such as https://lastcall.example.com
+    LASTCALL_TRUST_PROXY: ${LASTCALL_TRUST_PROXY:-}
+    LASTCALL_WEB_ORIGIN: ${LASTCALL_WEB_ORIGIN:-}
   volumes:
     - data:/data
     - run:/run/lastcall

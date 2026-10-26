@@ -432,7 +432,8 @@ multiplies the score.
     read only once the owner saves it, and a no to it is remembered, so that it is not suggested again. The choices
     live in the service's database.
   - A container labelled `lastcall.project=<owner/name>` in its compose file is read for that project, matched
-    without regard to case, with no choice: the choice can live with the app.
+    without regard to case, with no choice on the settings page, which shows it with its project: the choice can
+    live with the app. The two ways work together, and the label wins over a choice.
   - The supervisor lists the containers (their names, images, state and Compose labels) and reads, and only reads,
     those that the service names: their state (restarts, the kernel killing them for lack of memory, the exit code)
     and the logs of the last 24 hours, 5,000 lines and 2 MB per stream at most, from 10 containers at most. It keeps
