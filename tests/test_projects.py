@@ -98,7 +98,7 @@ def test_reasons_in_spanish(tmp_path: Path) -> None:
     api = store.suggestions()[0]
     spanish = [explain("es", r) for r in api.why]
     assert spanish[0] == "último push hace 5\u00a0días"
-    assert "1 issue abierto" in spanish
+    assert "1\u00a0issue abierto" in spanish
     assert explain("es", ("environment", {"language": "Go"})) == (
         "Go: añade un .lastcall.yml con su entorno, o un devcontainer"
     )

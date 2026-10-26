@@ -260,8 +260,9 @@ the window of a model that the audit needs is at the reserve.
 
 ### Tiers and models
 
-Recipes ask for a tier. Each account maps tiers to a model and an effort, and a per-role override exists for
-tuning. Model catalogs change every month, so the defaults live in a data file in the repository, not in code.
+Recipes ask for a tier. Each account maps tiers to a model and an effort, which the owner can change for each account
+and tier (below). Model catalogs change every month, so the defaults live in a data file in the repository, not in
+code.
 
 An illustration of what accounts hold, not a file that lastcall reads: they live in its database, which the web UI and
 `lastcall account add` change, and their default models and effort come from `src/lastcall/data/tiers.json`.
@@ -620,9 +621,9 @@ contrast set in code, keyboard traps, focus order. Cite file and lines.
 A recipe is a Python module in `lastcall.recipes`, not a file that the owner writes. The recipes that share the audit's
 shape (`audit`, `tests` and `deps`) differ only by a `Recipe` (`lastcall.recipes.audit`): their prompts (reviewer,
 judge, implementer), the footer of their pull requests and the paths that those may change, such as the test paths only
-for `tests`. The tier of each step is fixed in the module (the judge and the implementer are `deep`; a reviewer says its
-own in its front matter), and the pull requests per run come from the project's `max_prs` (3 by default), with at most 3
-findings in each.
+for `tests`. The tier of each step is fixed in the module (the judge and the implementer are `deep`; an audit
+reviewer says its own in its front matter, and the one reviewer of `tests` and of `deps` is `balanced`), and the pull
+requests per run come from the project's `max_prs` (3 by default), with at most 3 findings in each.
 
 ### Invariants
 
@@ -781,8 +782,9 @@ owner sets `LASTCALL_BIND`, such as to a VPN address. Behind a reverse proxy, `L
 read the client's address, scheme and host from the proxy's `X-Forwarded-*` headers, which the server drops otherwise,
 and `LASTCALL_WEB_ORIGIN` only adds origins that forms may come from.
 
-A CLI mirrors the main actions. Like the UI, it queues orders that the service executes, so two actions never run
-into each other.
+A CLI mirrors the main actions. Unlike the web UI, which queues orders that the service starts once an account is
+free, a CLI command such as `lastcall audit` runs the recipe at once in its own process; `pause`, `resume` and the
+settings commands only change the database.
 
 ## 14. Extensibility
 

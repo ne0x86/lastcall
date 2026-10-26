@@ -15,6 +15,7 @@ and the file and line of its frames.
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import re
 import urllib.error
@@ -124,7 +125,10 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Any:
         raise LokiError(f"{why.get(e.code, f'HTTP {e.code}')}{': ' + said if said else ''} ({where})") from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise LokiError(f"no answer from {where}: {e}") from None
-    except ValueError:  # http.client refuses a header it cannot send, and its message holds the header: never shown
+    except (
+        ValueError,
+        http.client.HTTPException,
+    ):  # http.client refuses a header it cannot send, and its message holds the header: never shown
         raise LokiError(
             f"the request to {where} could not be sent: check the address, the user, the token and the tenant"
         ) from None

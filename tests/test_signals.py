@@ -1,6 +1,7 @@
 """Errors in production, from Sentry or GlitchTip: what lastcall asks the tracker, what it keeps, and what it masks.
 The answers have the shape that a GlitchTip 6.2 instance gave for errors sent with the Sentry SDK."""
 
+import http.client
 import io
 import json
 import time
@@ -146,6 +147,53 @@ def test_masks_and_paths() -> None:
     assert signals.repo_path("C:\\Users\\dev\\shop\\app.py", files) == "app.py"
     assert signals.repo_path("/home/deploy/other/thing.py", files) == "other/thing.py"  # nothing of the server
     assert signals.project_frames({"entries": [{"type": "message"}]}, files) == ()
+
+
+def test_what_http_client_cannot_send_is_a_tracker_error_that_does_not_show_the_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for refusal in (
+        ValueError("Invalid header value b'Bearer sntrys_SECRET'"),
+        http.client.InvalidURL("URL can't contain control characters"),
+    ):
+
+        def urlopen(request: Any, timeout: float, refusal: Exception = refusal) -> io.BytesIO:
+            raise refusal
+
+        monkeypatch.setattr("urllib.request.urlopen", urlopen)
+        with pytest.raises(signals.SignalsError, match="could not be sent") as raised:
+            signals.check(signals.Tracker("https://glitchtip.example.com", "acme", "sntrys_SECRET"))
+        assert "SECRET" not in str(raised.value) and "Bearer" not in str(raised.value)
+    for text in ("http://h/a b", "http://h/a" + chr(10) + "b", "http://h/a" + chr(9), "http://h/a" + chr(127)):
+        assert not signals.address(text), repr(text)
+
+
+def test_the_command_line_refuses_a_tracker_token_with_a_line_break_inside(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lastcall import cli
+
+    monkeypatch.setenv("LASTCALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setenv("LASTCALL_SECRETS", str(tmp_path / "secrets"))
+    token = tmp_path / "token"
+    token.write_text("sntrys_SECRET" + chr(10) + "TAIL", encoding="utf-8")
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: pytest.fail("nothing is sent"))
+    with pytest.raises(SystemExit):
+        cli.main(
+            [
+                "signals",
+                "connect",
+                "--url",
+                "https://glitchtip.example.com",
+                "--org",
+                "acme",
+                "--token-file",
+                str(token),
+            ]
+        )
+    captured = capsys.readouterr()
+    assert "control characters" in captured.err and "SECRET" not in captured.err + captured.out
+    assert signals.Tracker.load(SecretStore(tmp_path / "secrets")) is None
 
 
 def test_the_tracker_says_what_is_wrong(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -442,7 +442,7 @@ def test_suggestions_in_spanish(github_web: Web) -> None:
     page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert "Leído de GitHub ahora mismo." in page
     assert 'acme/api</a> <span class="badge">sugerido</span>' in page
-    assert "tests · CI · 1 issue abierto" in page and "unos 11k tokens de código" in page
+    assert "tests · CI · 1\u00a0issue abierto" in page and "unos 11k tokens de código" in page
     assert "<summary>1 repositorio más</summary>" in page and "excluido: archivado" in page
     web.store.add_project("acme/api")
     page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
@@ -915,6 +915,32 @@ def test_errors_in_production_from_the_web(tmp_path: Path) -> None:
     assert response.headers["Location"] == "/settings?done=signals_removed#signals"
     assert web.secrets.get("signals") is None
     assert 'name="signals"' not in web.client.get("/projects").get_data(as_text=True)
+
+
+def test_a_token_with_a_line_break_or_an_address_with_a_space_never_reaches_the_tracker(tmp_path: Path) -> None:
+    def unexpected(*args: object) -> Any:
+        raise AssertionError("nothing is sent")
+
+    web = Web(tmp_path, signals_fetch=unexpected, loki_fetch=unexpected)
+    web.set_up()
+    csrf = web.csrf()
+    form = {
+        "csrf": csrf,
+        "url": "https://glitchtip.example.com",
+        "org": "acme",
+        "token": "sntrys_SECRET" + chr(10) + "TAIL",
+    }
+    response = web.client.post("/settings/signals", data=form, headers=SITE)
+    page = response.get_data(as_text=True)
+    assert response.status_code == 400 and "line breaks" in page and "sntrys_SECRET" not in page
+    assert web.secrets.get("signals") is None
+    for path, fields in (
+        ("/settings/signals", {"org": "acme", "token": "tok"}),
+        ("/settings/loki", {"user": "", "tenant": "", "token": "tok"}),
+    ):
+        for url in ("http://127.0.0.1:9/a b", "http://127.0.0.1:9/a" + chr(10) + "b"):
+            response = web.client.post(path, data={"csrf": csrf, "url": url, **fields}, headers=SITE)
+            assert response.status_code == 400, (path, url)
 
 
 def test_container_logs_from_the_web(tmp_path: Path) -> None:

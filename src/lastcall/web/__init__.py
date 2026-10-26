@@ -492,6 +492,8 @@ def create_app(
         tried = {"url": url, "org": org}
         if not signals.address(url) or not ORG_SLUG.fullmatch(org) or not token:
             return show_settings(400, signals_error=t("web.signals.bad"), tried=tried)
+        if loki.CONTROL.search(token):  # a pasted line break: no header can carry it
+            return show_settings(400, signals_error=t("web.signals.control"), tried=tried)
         tracker = signals.Tracker(url, org, token)
         try:
             signals.check(tracker, signals_fetch)

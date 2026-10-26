@@ -2,6 +2,7 @@
 Loki, and how it puts the pieces of a stream back together. The answers have the shape that Loki 3.7 gives."""
 
 import base64
+import http.client
 import io
 import json
 import re
@@ -253,6 +254,15 @@ def test_a_header_that_cannot_be_sent_is_a_loki_error_that_does_not_show_it(monk
     with pytest.raises(loki.LokiError, match=re.escape("could not be sent")) as raised:
         loki.labels(loki.Loki("http://loki.example.com:3100", token="secret-token"), NOW)
     assert "secret-token" not in str(raised.value) and "Bearer" not in str(raised.value)
+
+
+def test_a_request_that_http_client_refuses_is_a_loki_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def urlopen(request: Any, timeout: float) -> io.BytesIO:
+        raise http.client.InvalidURL("URL can't contain control characters")
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    with pytest.raises(loki.LokiError, match="could not be sent"):
+        loki.labels(loki.Loki("http://loki.example.com:3100/a b"), NOW)
 
 
 def test_a_control_character_in_a_login_is_found_before_it_is_sent() -> None:

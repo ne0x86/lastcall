@@ -65,6 +65,10 @@ def test_a_count_and_its_unit_never_part_in_the_texts_that_show_them() -> None:
     for lang in ("English", "Spanish"):
         assert "\u00a0" in plural(lang, "suggest.push", 1) and "\u00a0" in plural(lang, "suggest.push", 5)
     assert plural("Spanish", "suggest.push", 5) == "último push hace 5\u00a0días"
+    for key in ("suggest.issues", "suggest.reviewers"):  # the same line of reasons, joined with " · "
+        for lang in ("English", "Spanish"):
+            for count in (1, 5):
+                assert "\u00a0" in plural(lang, key, count), (key, lang, count)
     for lang in ("en", "es"):  # the chip "active · priority 2x" is one piece
         assert "\u00a0\u00d72" in text(lang, "web.projects.active", weight="2")
 

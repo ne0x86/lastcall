@@ -421,6 +421,8 @@ def connect_signals(url: str, org: str, token_file: str | None) -> int:
     token = read_key(token_file, ask=True) or (current.token if current else "")
     if not token:
         raise ValueError("give the token with --token-file: a file that holds it, or - for standard input")
+    if loki.CONTROL.search(token):
+        raise ValueError("the token cannot hold line breaks or other control characters")
     tracker = signals.Tracker(url, org.strip(), token)
     try:
         signals.check(tracker)
