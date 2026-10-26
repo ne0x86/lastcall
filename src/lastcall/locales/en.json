@@ -533,7 +533,7 @@
   "web.logs.unavailable": "The containers can be listed only when lastcall runs with docker compose.",
   "web.logs.failed": "The containers could not be listed: {error}",
   "web.logs.label_title": "Or with a label in the compose file",
-  "web.logs.label_how": "A container with the label lastcall.project is read for that project, with no choice here. Add it to the app's compose file, with the project's name as the Projects page writes it, and run docker compose up -d for that app:",
+  "web.logs.label_how": "Both ways work together. A container with the label lastcall.project is read for that project with nothing to choose: this page shows it with its project. Add it to the app's compose file, with the project's name as the Projects page writes it, and run docker compose up -d for that app:",
 
   "web.loki.title": "Logs in Loki",
   "web.loki.intro": "If your apps run on other machines and Grafana Loki already collects their logs, lastcall can read them there, with nothing to install on those machines: the errors, grouped by kind, as with the containers above. The audits look for their causes first, the tests cover them, and projects with errors in the last day go first. Lines with personal data and secrets are masked before they reach a model.",
