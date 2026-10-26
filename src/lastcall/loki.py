@@ -107,8 +107,10 @@ class Loki:
 def fetch_json(url: str, headers: Mapping[str, str]) -> Any:
     where = url.split("/loki/api/")[0]
     request = urllib.request.Request(url, headers=dict(headers))
+    # a list answers at once, and the settings page waits for it; a query over a day may take longer
+    timeout = 30 if "/query_range?" in url else 10
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read(MAX_ANSWER + 1)
     except urllib.error.HTTPError as e:
         why = {

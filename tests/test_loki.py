@@ -222,9 +222,12 @@ def test_the_command_line_connects_loki_and_chooses_its_sources(
     monkeypatch.setenv("LASTCALL_STATE", str(tmp_path / "state"))
     monkeypatch.setenv("LASTCALL_SECRETS", str(tmp_path / "secrets"))
     fake = FakeLoki(SERIES, [{"stream": {"container": "shop-web-1"}, "values": [[ns(1), "ERROR boom"]]}])
+    waits: dict[str, float] = {}
 
     def urlopen(request: Any, timeout: float) -> io.BytesIO:
-        return io.BytesIO(json.dumps(fake(request.full_url, dict(request.header_items()))).encode())
+        answer = fake(request.full_url, dict(request.header_items()))
+        waits[fake.asked[-1][0]] = timeout
+        return io.BytesIO(json.dumps(answer).encode())
 
     monkeypatch.setattr("urllib.request.urlopen", urlopen)
     assert cli.main(["loki", "connect", "--url", "http://loki.example.com:3100/"]) == 0
@@ -239,3 +242,4 @@ def test_the_command_line_connects_loki_and_chooses_its_sources(
     assert (store.setting(loki.LABEL), loki.chosen(store)) == ("container", {"shop-web-1": "acme/shop"})
     assert cli.main(["loki", "show", "acme/shop"]) == 0
     assert "ERROR boom (once, last 2027-01-15 07:59 UTC)" in capsys.readouterr().out
+    assert waits == {"labels": 10, "series": 10, "query_range": 30}  # the settings page waits for the lists
