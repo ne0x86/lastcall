@@ -6,13 +6,14 @@
 #   docker compose run --rm cli <command>                    # the command line: status, audit, pause...
 #   docker compose --profile local up -d ollama              # a local model server, for accounts on local models
 #   docker compose --profile local run --rm ollama-pull <model>  # download a model into it, such as qwen3-coder
+#   git pull --ff-only && docker compose pull && docker compose up -d  # update to the latest release (README)
 #
 # The images are those of this file's release, so that the file and the images always match. LASTCALL_VERSION picks
 # others: `edge` follows main. Development builds every image from the checkout: add `-f compose.yaml -f compose.dev.yaml`.
 name: lastcall
 
 x-lastcall: &lastcall
-  image: ghcr.io/ne0x86/lastcall-service:${LASTCALL_VERSION:-0.6.2}
+  image: ghcr.io/ne0x86/lastcall-service:${LASTCALL_VERSION:-0.6.3}
   init: true  # stops at once on `docker compose stop`
   networks: [outside]  # lastcall itself talks to GitHub; agents never do
   environment:
@@ -20,8 +21,8 @@ x-lastcall: &lastcall
     LASTCALL_DATA_ROOT: /data
     LASTCALL_SECRETS: /secrets
     LASTCALL_STATE: /state
-    # behind a reverse proxy, from a .env file: 1 to read the client from its X-Forwarded-* headers, or the public
-    # origins that forms may come from, such as https://lastcall.example.com
+    # behind a reverse proxy, from a .env file: 1 to read the client, scheme and host from its X-Forwarded-* headers;
+    # LASTCALL_WEB_ORIGIN only adds origins that forms may come from, such as https://lastcall.example.com
     LASTCALL_TRUST_PROXY: ${LASTCALL_TRUST_PROXY:-}
     LASTCALL_WEB_ORIGIN: ${LASTCALL_WEB_ORIGIN:-}
   volumes:
@@ -34,7 +35,7 @@ x-lastcall: &lastcall
       condition: service_healthy
 
 x-login: &login  # the CLI's own interactive login, with the isolation of a step
-  image: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.6.2}
+  image: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.6.3}
   profiles: [login]
   networks: [sandbox]
   user: "1000:1000"
@@ -46,7 +47,7 @@ x-login: &login  # the CLI's own interactive login, with the isolation of a step
 
 services:
   egress:
-    image: ghcr.io/ne0x86/lastcall-egress:${LASTCALL_VERSION:-0.6.2}
+    image: ghcr.io/ne0x86/lastcall-egress:${LASTCALL_VERSION:-0.6.3}
     networks: [sandbox, outside]
     volumes:
       - ./egress/filter:/etc/tinyproxy/filter:ro
@@ -57,11 +58,11 @@ services:
     restart: unless-stopped
 
   supervisor:
-    image: ghcr.io/ne0x86/lastcall-supervisor:${LASTCALL_VERSION:-0.6.2}
+    image: ghcr.io/ne0x86/lastcall-supervisor:${LASTCALL_VERSION:-0.6.3}
     network_mode: none  # it talks to Docker through the socket and to lastcall through a Unix socket
     environment:
       LASTCALL_CLIENT_GID: "1000"
-      LASTCALL_RUNNER_IMAGE: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.6.2}
+      LASTCALL_RUNNER_IMAGE: ghcr.io/ne0x86/lastcall-runner:${LASTCALL_VERSION:-0.6.3}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - data:/data
@@ -82,8 +83,8 @@ services:
   lastcall:  # the service and its web UI. It spends nothing until you add accounts and projects in the web UI
     <<: *lastcall
     command: ["serve"]
-    ports:  # the web UI, on this machine only; to reach it from elsewhere, put a reverse proxy with HTTPS in front
-      - "127.0.0.1:${LASTCALL_PORT:-8080}:8080"
+    ports:  # the web UI, on this machine only; LASTCALL_BIND in .env opens it wider (README: "On a server")
+      - "${LASTCALL_BIND:-127.0.0.1}:${LASTCALL_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
       interval: 30s

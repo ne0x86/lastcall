@@ -5,8 +5,9 @@
 site, and a form sent while signed in must carry the session's CSRF token. Pages load no script, and a strict
 Content-Security-Policy keeps it that way.
 
-Behind a reverse proxy, set LASTCALL_TRUST_PROXY=1 so that lastcall reads the client's address and scheme from the
-proxy's X-Forwarded-* headers, or list the public origin in LASTCALL_WEB_ORIGIN (https://lastcall.example.com).
+Behind a reverse proxy, set LASTCALL_TRUST_PROXY=1 so that lastcall reads the client's address, scheme and host from
+the proxy's X-Forwarded-* headers; LASTCALL_WEB_ORIGIN only adds origins that forms may come from
+(https://lastcall.example.com).
 """
 
 from __future__ import annotations
@@ -1063,7 +1064,11 @@ def local(target: str) -> str:
     return target
 
 
-def serve(app: Flask, host: str, port: int, log: Log = print) -> None:
+def serve(app: Flask, host: str, port: int, log: Log = print, trust_proxy: bool = False) -> None:
+    """Waitress drops the X-Forwarded-* headers that a client sends, unless lastcall trusts the proxy in front of it:
+    then they reach ProxyFix (create_app), which reads the client's address, scheme and host from them."""
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     log(f"Web UI on http://{shown}:{port}/ (in English and Spanish)")
-    waitress.serve(app, host=host, port=port, threads=8, ident="lastcall")
+    waitress.serve(
+        app, host=host, port=port, threads=8, ident="lastcall", clear_untrusted_proxy_headers=not trust_proxy
+    )

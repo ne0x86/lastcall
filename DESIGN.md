@@ -713,7 +713,7 @@ runs, and different network rights for setup and verify.
 | lastcall reads the logs of the owner's containers | None until the owner gives a container a project, on the settings page or with a label. The supervisor reads only the containers that the service names, and of them only their logs and state, within limits of time, lines and bytes; never the containers of lastcall's steps, whose output is the agents'. It never acts on a container, and the service never gets the Docker socket. The choice lives in the service: a bug there could name another container of the host, and get its logs and state, never more. |
 | lastcall reads the owner's logs in Loki | None until the owner gives a source a project. lastcall only queries, with the owner's login, which should only read and lives in the secret store, and asks only for the lines that may be errors. What reaches a model is masked as the tracker's errors are. Loki has no login of its own: the README asks the owner to keep its port closed to the internet. |
 | A step abuses the local model server | The server runs on the sandbox network with no way out, so no step can make it download anything. Models come in only through `ollama-pull`, which the owner runs. |
-| Takeover of the web UI | It listens only on the host by default. The password is chosen with a one-time code that only the service's log shows, and kept as an scrypt hash. Sign-in locks after repeated failures. Sessions live in the store; the `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) holds only a random token. Every POST needs this site's `Origin` and, when signed in, the session's CSRF token. A strict CSP, and no JavaScript. |
+| Takeover of the web UI | It listens only on the host by default; `LASTCALL_BIND` opens it wider only when the owner sets it. The password is chosen with a one-time code that only the service's log shows, and kept as an scrypt hash. Sign-in locks after repeated failures. Sessions live in the store; the `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) holds only a random token. Every POST needs this site's `Origin` and, when signed in, the session's CSRF token. A strict CSP, and no JavaScript. |
 
 The secrets that lastcall does hold (the GitHub App key, API keys, notification URLs) live in their own volume, one
 file each, readable only by lastcall's user (mode 0600). Planned: encryption at rest with a key from the environment,
@@ -760,8 +760,10 @@ their test notification gets through, kept in the secret store and shown with th
 request opens, decisions or ideas wait, lastcall merges an approved pull request or proposes a revert, a run fails or
 stops early, an account has paid usage on or its quota cannot be read, and, if the owner wants, a burst starts) and
 their language. A problem is told once when it starts, and a notification that fails is logged and never stops
-lastcall. Behind a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address and scheme from
-the proxy, and `LASTCALL_WEB_ORIGIN` lists the public origins that forms may come from.
+lastcall. The web UI listens on `127.0.0.1` unless the owner sets `LASTCALL_BIND`, such as to a VPN address. Behind
+a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address, scheme and host from the proxy's
+`X-Forwarded-*` headers, which the server drops otherwise, and `LASTCALL_WEB_ORIGIN` only adds origins that forms may
+come from.
 
 A CLI mirrors the main actions. Like the UI, it queues orders that the service executes, so two actions never run
 into each other.
