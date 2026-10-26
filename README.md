@@ -34,6 +34,8 @@ also spend an API key with a monthly budget, or a local model at the hours you c
 - 📦 **Upgrades dependencies, if you want.** The upgrades that need more than a new version number: a known
   vulnerability, a deprecated package, a major version behind. It changes the code that the new version breaks, and
   your tests check it.
+- 🚨 **Reads your errors, if you want.** Connect Sentry or GlitchTip: the audits look for the cause of the most
+  frequent errors first, and projects with errors in the last day go first.
 - 🏷️ **Takes requests.** Label an issue `lastcall`, and a coming burst works on it: a pull request that closes the
   issue, or a comment on it that says what is missing. lastcall adds the label to your active repositories.
 - 👀 **Merges and watches, if you want.** It merges the pull requests you approve once their checks pass, and it
@@ -81,6 +83,8 @@ flowchart LR
 - 🙈 Your subscription login stays in the official CLI's own storage. lastcall never reads it.
 - 💳 An API key stays in lastcall's secret store, only the steps of its account get it, and its monthly budget caps
   what they cost. The local model server has no way out to the internet.
+- 🚨 What comes from production reaches the models masked: an error's type, its message without emails, addresses,
+  tokens or long numbers, and the lines of your code. Never variables, requests or user data.
 - 🧑‍⚖️ Nothing is merged without your approval, and a revert is only ever proposed.
 
 ## 🔌 Engines
@@ -173,7 +177,9 @@ docker compose run --rm cli account add local --engine opencode --provider ollam
   --model qwen3-coder --policy schedule --schedule "* 1-6 * * *"   # every night, 01:00 to 06:59 UTC
 docker compose run --rm cli quota claude-max
 docker compose run --rm cli github repos
-docker compose run --rm cli project add <owner/name>
+docker compose run --rm cli project add <owner/name> --signals <its project in Sentry or GlitchTip>
+docker compose run --rm cli signals connect --url https://sentry.io --org <slug>     # asks for the token
+docker compose run --rm cli signals show <owner/name>                                # its errors, as audits read them
 docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
 docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
 docker compose run --rm cli improve <owner/name> --account claude-max                # a plan; then the ideas you tick
@@ -228,6 +234,17 @@ both, in turn with its audits: an audit, then tests, then upgrades, then an audi
 "Upgrade dependencies now" start one at once. The upgrades read your dependencies with osv-scanner and ask
 [deps.dev](https://deps.dev) for their latest versions, so the names of your dependencies go to those services.
 
+**Errors in production.** If your apps send their errors to [Sentry](https://sentry.io) or
+[GlitchTip](https://glitchtip.com), lastcall can read them:
+1. Create a token that can only read (`project:read` and `event:read`). In GlitchTip: your profile › Auth Tokens.
+2. On the Settings page, under *Errors in production*, give the tracker's address, the organization and the token.
+   lastcall reads one error to check them, and saves them only if that works.
+3. On the Projects page, give each project the name of its project in the tracker.
+
+The audits and the tests then get the most frequent unresolved errors of the last 14 days, with the lines of your
+code where they happen, and the reviewers look for their causes first. Projects with errors in the last day go
+first. The messages are masked before they reach a model.
+
 **After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
 in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
 - **Merge after my approval.** On GitHub, approving a pull request does not merge it. With this on, when you, a
@@ -277,6 +294,7 @@ advice.
   - ✅ The `issues` recipe: label an issue `lastcall`, and it becomes a pull request.
   - ✅ The `tests` recipe: tests for what no test checks, in pull requests that change only tests.
   - ✅ The `deps` recipe: dependency upgrades that need more than a new version number.
+  - ✅ Signals: errors in production from Sentry or GlitchTip.
   - GitLab and Forgejo.
 
 ## 🧑‍💻 Development

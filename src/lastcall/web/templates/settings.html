@@ -22,6 +22,47 @@
   </form>
 </section>
 
+<section class="card" aria-labelledby="signals-title" id="signals">
+  <h2 id="signals-title">{{ t("web.signals.title") }}</h2>
+  <p>{{ t("web.signals.intro") }}</p>
+  {%- if v.tracker %}
+  <p class="done">{{ t("web.signals.connected", url=v.tracker.url, org=v.tracker.org) }}</p>
+  {%- endif %}
+  {%- if signals_error %}
+  <p class="card notice error" role="alert">{{ signals_error }}</p>
+  {%- endif %}
+  <ol class="steps">
+    <li>{{ t("web.signals.step1") }} <a href="{{ sentry_tokens }}">{{ t("web.signals.sentry_tokens") }}</a></li>
+    <li>{{ t("web.signals.step2") }}</li>
+    <li>{{ t("web.signals.step3") }}</li>
+  </ol>
+  <form method="post" action="{{ url_for('connect_signals') }}#signals" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div>
+      <label for="signals-url">{{ t("web.signals.url") }}</label>
+      <input id="signals-url" name="url" type="url" value="{{ v.signals_url }}" placeholder="https://sentry.io" autocomplete="off" spellcheck="false" required aria-describedby="signals-url-hint">
+      <p id="signals-url-hint" class="hint muted">{{ t("web.signals.url_hint") }}</p>
+    </div>
+    <div>
+      <label for="signals-org">{{ t("web.signals.org") }}</label>
+      <input id="signals-org" name="org" type="text" value="{{ v.signals_org }}" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}" autocomplete="off" spellcheck="false" required aria-describedby="signals-org-hint">
+      <p id="signals-org-hint" class="hint muted">{{ t("web.signals.org_hint") }}</p>
+    </div>
+    <div>
+      <label for="signals-token">{{ t("web.signals.token") }}</label>
+      <input id="signals-token" name="token" type="password" autocomplete="off" spellcheck="false"{% if not v.tracker %} required{% endif %} aria-describedby="signals-token-hint">
+      <p id="signals-token-hint" class="hint muted">{{ t("web.signals.token_keep") if v.tracker else t("web.signals.token_hint") }}</p>
+    </div>
+    <button>{{ t("web.signals.save") }}</button>
+  </form>
+  {%- if v.tracker %}
+  <form method="post" action="{{ url_for('disconnect_signals') }}#signals">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="secondary">{{ t("web.signals.remove") }}</button>
+  </form>
+  {%- endif %}
+</section>
+
 <section class="card" aria-labelledby="notify-title">
   <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
   <p>{{ t("web.notify.intro") }}</p>

@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS projects (
     repo TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 0, weight REAL NOT NULL DEFAULT 1, language TEXT,
     max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL, merge_on_approve INTEGER NOT NULL DEFAULT 0,
     watch INTEGER NOT NULL DEFAULT 0, health_url TEXT, tests INTEGER NOT NULL DEFAULT 0,
-    deps INTEGER NOT NULL DEFAULT 0);
+    deps INTEGER NOT NULL DEFAULT 0, signals TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS readings (
     account TEXT NOT NULL, taken_at REAL NOT NULL, windows TEXT NOT NULL, paid INTEGER NOT NULL,
     fidelity TEXT NOT NULL);
@@ -140,6 +140,7 @@ class ProjectRow:
     health_url: str | None = None
     tests: bool = False  # bursts also write tests for it, in turn with the audits
     deps: bool = False  # bursts also upgrade its dependencies, in turn with the audits
+    signals: str = ""  # its project in the owner's error tracker (Sentry or GlitchTip), by slug
 
 
 class Store:
@@ -152,7 +153,7 @@ class Store:
         self.db.executescript(SCHEMA)
         # crew came in v0.3; recipe, the projects' merge and watch settings and the pull requests' watch in v0.4;
         # accounts on API keys and local models, with their models, policies, budgets and schedules, and the
-        # projects' tests and deps settings, in v0.5
+        # projects' tests, deps and signals settings, in v0.5
         self._add_columns(
             "accounts",
             {
@@ -173,6 +174,7 @@ class Store:
                 "health_url": "TEXT",
                 "tests": "INTEGER NOT NULL DEFAULT 0",
                 "deps": "INTEGER NOT NULL DEFAULT 0",
+                "signals": "TEXT NOT NULL DEFAULT ''",
             },
         )
         self._add_columns(
@@ -320,6 +322,7 @@ class Store:
                 r["health_url"],
                 bool(r["tests"]),
                 bool(r["deps"]),
+                r["signals"],
             )
             for r in rows
         ]
@@ -340,10 +343,11 @@ class Store:
         health_url: str | None = None,
         tests: bool = False,
         deps: bool = False,
+        signals: str = "",
     ) -> None:
         self.x(
             "UPDATE projects SET active = ?, weight = ?, language = ?, max_prs = ?, merge_on_approve = ?, watch = ?, "
-            "health_url = ?, tests = ?, deps = ? WHERE repo = ?",
+            "health_url = ?, tests = ?, deps = ?, signals = ? WHERE repo = ?",
             (
                 int(active),
                 weight,
@@ -354,9 +358,14 @@ class Store:
                 health_url,
                 int(tests),
                 int(deps),
+                signals,
                 repo,
             ),
         )
+
+    def set_signals(self, repo: str, project: str) -> None:
+        """The project's project in the owner's error tracker; "" for none."""
+        self.x("UPDATE projects SET signals = ? WHERE repo = ?", (project, repo))
 
     def pause_project(self, repo: str) -> None:
         """After a revert: no more bursts on the project until the owner activates it again."""

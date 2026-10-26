@@ -1,6 +1,7 @@
 import html
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
@@ -757,6 +758,62 @@ def test_dependency_upgrades_from_the_web(github_web: Web) -> None:
     assert response.headers["Location"] == "/projects?done=deps"
     assert [(o["kind"], o["account"]) for o in web.store.orders()] == [("deps", None)]
     assert "Upgrades queued: they start" in web.client.get("/projects?done=deps").get_data(as_text=True)
+
+
+def test_errors_in_production_from_the_web(tmp_path: Path) -> None:
+    from lastcall import signals
+
+    asked: list[str] = []
+
+    def tracker(url: str, headers: Mapping[str, str]) -> Any:
+        asked.append(url)
+        if headers["Authorization"] != "Bearer good-token":
+            raise signals.SignalsError("the token is not valid: https://glitchtip.example.com/api/0/organizations/")
+        return []
+
+    web = Web(tmp_path, signals_fetch=tracker)
+    web.set_up()
+    csrf = web.csrf()
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "Errors in production" in page
+    assert 'href="https://sentry.io/settings/account/api/auth-tokens/"' in page  # where to create a token
+
+    def connect(**form: str) -> Any:
+        return web.client.post("/settings/signals", data={"csrf": csrf, **form}, headers=SITE)
+
+    form = {"url": "https://glitchtip.example.com/", "org": "acme", "token": "bad"}
+    response = connect(**form)
+    page = response.get_data(as_text=True)
+    assert response.status_code == 400 and "The tracker did not answer as expected: the token is not valid" in page
+    assert 'value="https://glitchtip.example.com"' in page and 'value="acme"' in page  # what was written stays
+    assert web.secrets.get("signals") is None  # saved only when it works
+    assert connect(**{**form, "url": "ftp://glitchtip.example.com"}).status_code == 400
+    assert connect(**{**form, "org": "a/b"}).status_code == 400
+    response = connect(**{**form, "token": "good-token"})
+    assert response.headers["Location"] == "/settings?done=signals#signals"
+    assert asked[-1] == "https://glitchtip.example.com/api/0/organizations/acme/issues/?limit=1"
+    page = web.client.get("/settings?done=signals").get_data(as_text=True)
+    assert "Connected to https://glitchtip.example.com, organization acme." in page and "good-token" not in page
+    assert connect(url="https://glitchtip.example.com", org="acme", token="").status_code == 302  # keeps the token
+    assert signals.Tracker.load(web.secrets) == signals.Tracker("https://glitchtip.example.com", "acme", "good-token")
+
+    web.store.add_project("acme/shop")
+    assert 'name="signals"' in web.client.get("/projects").get_data(as_text=True)
+    settings = {"csrf": csrf, "weight": "1", "language": "", "max_prs": "3", "active": "1"}
+    assert (
+        web.client.post("/projects/acme/shop", data={**settings, "signals": "shop"}, headers=SITE).status_code == 302
+    )
+    assert web.store.projects()[0].signals == "shop"
+    assert web.client.post("/projects/acme/shop", data=settings, headers=SITE).status_code == 302
+    assert web.store.projects()[0].signals == "shop"  # a form without the field keeps it
+    assert (
+        web.client.post("/projects/acme/shop", data={**settings, "signals": "a b"}, headers=SITE).status_code == 400
+    )
+
+    response = web.client.post("/settings/signals/remove", data={"csrf": csrf}, headers=SITE)
+    assert response.headers["Location"] == "/settings?done=signals_removed#signals"
+    assert web.secrets.get("signals") is None
+    assert 'name="signals"' not in web.client.get("/projects").get_data(as_text=True)
 
 
 def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:

@@ -48,6 +48,13 @@
         <label class="check plain"><input type="checkbox" name="watch" value="1"{% if p.watch %} checked{% endif %}> {{ t("web.project.watch") }}</label>
         <label class="check plain"><input type="checkbox" name="tests" value="1"{% if p.tests %} checked{% endif %}> {{ t("web.project.tests") }}</label>
         <label class="check plain"><input type="checkbox" name="deps" value="1"{% if p.deps %} checked{% endif %}> {{ t("web.project.deps") }}</label>
+        {%- if v.tracker %}
+        <div>
+          <label for="signals-{{ n }}">{{ t("web.project.signals") }}</label>
+          <input id="signals-{{ n }}" name="signals" type="text" value="{{ p.signals }}" pattern="[A-Za-z0-9._\-]{0,100}" autocomplete="off" spellcheck="false" aria-describedby="signals-hint-{{ n }}">
+          <p class="muted" id="signals-hint-{{ n }}">{{ t("web.project.signals_hint") }}</p>
+        </div>
+        {%- endif %}
         <div>
           <label for="health-{{ n }}">{{ t("web.project.health_url") }}</label>
           <input id="health-{{ n }}" name="health_url" type="url" value="{{ p.health_url }}" placeholder="https://example.com/health" autocomplete="off" spellcheck="false" aria-describedby="health-hint-{{ n }}">

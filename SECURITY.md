@@ -20,6 +20,7 @@ Security fixes go into the latest release.
 - the scope of the GitHub App;
 - the secret store, with the GitHub App key and the API keys, and the monthly budget of each key;
 - the local model server, which has no way out;
+- the masking of what lastcall reads from production before it reaches a model;
 - the protections of the web UI.
 
 A report that breaks one of these is especially welcome.

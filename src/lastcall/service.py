@@ -7,6 +7,8 @@ Every minute it ticks:
   lastcall's own ledger, by its policy: its monthly budget at the pace of the month, or its schedule;
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
 - every 6 hours it refreshes the suggestions for the installed repositories;
+- every 30 minutes, when the owner connected an error tracker, it counts each project's errors in production in the
+  last day: projects with errors rank higher;
 - the owner's orders ("audit this project now" or "improve it now", from the web UI) start on a free account; an
   audit can start on all of them together (fan-out);
 - with fan-out on, accounts that burst at the same time review one project together, with one judge;
@@ -29,7 +31,7 @@ import traceback
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from lastcall import i18n, projects
+from lastcall import i18n, projects, signals
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, account_rate, plan
@@ -49,6 +51,7 @@ from lastcall.store import AccountRow
 from lastcall.sync import sync
 
 READ_EVERY = 15 * 60.0
+SIGNALS_EVERY = 30 * 60.0
 SYNC_EVERY = 10 * 60.0
 TICK = 60.0
 RATE_WINDOW = 14 * 86_400.0  # readings used to learn the burst rate
@@ -82,7 +85,8 @@ class Service:
         self.running: dict[str, str] = {}  # account id -> repository
         self.plans: dict[str, Plan] = {}
         self.alerts: set[tuple[str, str]] = set()  # (account, "quota" or "paid") already told to the owner
-        self.last_read = self.last_sync = self.last_refresh = 0.0
+        self.last_read = self.last_sync = self.last_refresh = self.last_signals = 0.0
+        self.errors: dict[str, int] = {}  # repository -> errors in production in the last day
         self.lock = threading.Lock()
 
     # the loop
@@ -109,6 +113,9 @@ class Service:
                 sync(self.inst.store, self.inst.client, self.log, self.inst.notify)
             except (GitHubError, OSError) as e:
                 self.log(f"sync: {e}")
+        if now - self.last_signals >= SIGNALS_EVERY:
+            self.last_signals = now
+            self.read_signals(now)
         if now - self.last_refresh >= projects.REFRESH_EVERY:
             self.last_refresh = now
             try:
@@ -186,6 +193,21 @@ class Service:
                 leftover=i18n.percent(lang, max(0.0, current.leftover_pct)),
                 span=i18n.span(lang, (current.hours_to_reset or 0) * 3600),
             )
+
+    def read_signals(self, now: float) -> None:
+        """How many errors each active project had in production in the last day, from the owner's error tracker."""
+        tracker = signals.Tracker.load(self.inst.secrets) if self.inst.secrets is not None else None
+        counts: dict[str, int] = {}
+        for p in self.inst.store.projects(active_only=True) if tracker else []:
+            if not p.signals or tracker is None:
+                continue
+            try:
+                found = signals.errors(tracker, p.signals, (), now, self.inst.fetch, days=1, limit=100, frames=False)
+            except signals.SignalsError as e:
+                self.log(f"{p.repo}: the errors in production were not read: {e}")
+                continue
+            counts[p.repo] = len(found)
+        self.errors = counts
 
     def alert(self, account: str, event: str, on: bool, **values: str) -> None:
         """Tell the owner when a problem starts, once; forget it when it ends, so the next one is told again."""
@@ -268,6 +290,7 @@ class Service:
             pending=store.pending_count,
             new_commits=self.new_commits,
             wanted=lambda repo: store.wanted_count(repo) + store.waiting_count(repo),
+            errors=lambda repo: self.errors.get(repo, 0),
             busy=busy,
             now=now,
         )

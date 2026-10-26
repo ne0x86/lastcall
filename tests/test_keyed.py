@@ -255,3 +255,9 @@ def test_models_of_a_subscription(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert row is not None and row.account().tiers()["deep"] == ("sonnet", "high")
     models: Mapping[str, str] = row.models
     assert set(models) == {"fast", "balanced", "deep"}
+
+
+def test_a_project_names_its_project_in_the_error_tracker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    assert run_cli(monkeypatch, tmp_path, "project", "add", "acme/shop", "--signals", "shop") == 0
+    project = Store(tmp_path / "state" / "lastcall.db").project("acme/shop")
+    assert project is not None and project.signals == "shop"
