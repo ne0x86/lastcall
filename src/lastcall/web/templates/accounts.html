@@ -33,7 +33,9 @@
   <article class="card account edge-{{ a.engine_key or 'other' }}{% if not row.enabled %} is-off{% endif %}" id="account-{{ a.id }}">
     {{ card.head(hb, a, "h2", held) }}
     {{ card.details_line(hb, a, row.keyed) }}
+    {%- if not (c.error and a.plan_code == 'no-key') %}
     {{ card.plan(hb, a, held) }}
+    {%- endif %}
     {{ card.meters(hb, a, n) }}
     {{ card.lines(hb, a, row.keyed) }}
     {%- if c.error %}<div class="line line-bad"><p>{% if row.keyed %}{{ c.error }}{% else %}{{ t("web.accounts.error", error=c.error) }}{% endif %}</p></div>{% endif %}

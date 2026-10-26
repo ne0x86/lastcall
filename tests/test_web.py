@@ -1698,7 +1698,8 @@ def test_a_reading_from_before_its_reset_never_says_a_burst_is_on(web: Web) -> N
     web.store.set_setting("heartbeat", str(NOW))
     for path in ("/", "/accounts"):
         page = web.client.get(path).get_data(as_text=True)
-        assert "reset passed, waiting for a new reading" in page
+        assert "reset passed" in page and "reset passed, waiting" not in page
+        assert 'class="plan is-held"' in page  # a plan that says nothing bursts is muted, like a held one
         assert "Burst in progress" not in page and ">Bursting</span>" not in page and "is-live" not in page
         assert "No burst: the window has reset since this reading, and what it had left is gone." in page
     web.client.get("/language/es")
@@ -1716,10 +1717,15 @@ def test_a_key_account_without_its_key_cannot_spend_on_either_page(web: Web) -> 
     web.store.set_setting("heartbeat", str(NOW))
     web.set_up()
     missing = "Its API key is missing: this account spends nothing, not even on runs you start, until you give"
+    once = "This account has no API key, so it spends nothing, not even on runs you start: give it one below."
     for path in ("/", "/accounts"):
         page = web.client.get(path).get_data(as_text=True)
         assert ">Needs a key</span>" in page and ">Bursting</span>" not in page, path
-        assert "Burst in progress" not in page and "is-live" not in page and missing in page, path
+        assert "Burst in progress" not in page and "is-live" not in page, path
+    page = web.client.get("/").get_data(as_text=True)
+    assert missing in page and once not in page
+    page = web.client.get("/accounts").get_data(as_text=True)  # one message, with its pointer to the field below
+    assert once in page and missing not in page and 'class="plan' not in page
     web.secrets.set("key-zen", "sk-or-test")
     for path in ("/", "/accounts"):
         page = web.client.get(path).get_data(as_text=True)

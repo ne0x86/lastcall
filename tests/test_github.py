@@ -5,6 +5,7 @@ import json
 import re
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
@@ -19,6 +20,7 @@ from lastcall import cli, github
 from lastcall.github import App, GitHub, GitHubError, Response, app_jwt
 from lastcall.github_setup import SetupServer, clean_owner, form_action, manifest, owner_kind, run_setup
 from lastcall.secretstore import SecretStore
+from lastcall.store import Store
 
 NOW = 1_800_000_000.0
 
@@ -473,3 +475,23 @@ def test_github_setup_accepts_the_owner_as_the_web_page_does(monkeypatch: pytest
 )
 def test_the_log_says_where_docker_publishes_the_web_ui(published: str, shown: str | None) -> None:
     assert cli.published_address(published) == shown
+
+
+def test_the_log_sends_a_docker_user_to_the_web_ui_before_the_command_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Stop(Exception):
+        pass
+
+    def stop(seconds: float) -> None:
+        raise Stop
+
+    monkeypatch.setattr(time, "sleep", stop)
+    st = Store(tmp_path / "state.db")
+    with pytest.raises(Stop):
+        cli.schedule(st, SecretStore(tmp_path / "secrets"))
+    line = capsys.readouterr().out
+    assert line.startswith(
+        "Waiting for the GitHub App: sign in to the web UI and open GitHub App, from Getting started"
+    )
+    assert "or from Settings" in line and line.index("web UI") < line.index("`lastcall github setup --owner <login>`")

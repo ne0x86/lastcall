@@ -770,7 +770,10 @@ def schedule(st: Store, secrets: SecretStore) -> None:
     """The service, as soon as the GitHub App exists. Until then only the web UI works, and the heartbeat says the
     service is alive."""
     if App.load(secrets) is None:
-        log("Waiting for the GitHub App: create it with `lastcall github setup --owner <login>`")
+        log(
+            "Waiting for the GitHub App: sign in to the web UI and open GitHub App, from Getting started on the "
+            "dashboard or from Settings. Outside Docker, `lastcall github setup --owner <login>` does the same."
+        )
     while (app := App.load(secrets)) is None:
         st.set_setting("heartbeat", f"{time.time():.0f}")
         time.sleep(60)

@@ -31,7 +31,8 @@
 
 {#- The plan sentence, the card's main line, with the bubble that explains it. `held` mutes it while nothing bursts, and
     then a plan that says "burst in progress" or "next burst" is replaced by what is true: the account waits. The same
-    accounts get the "On hold" chip (state_chip), so the two never contradict each other. A paused account whose run is
+    accounts get the "On hold" chip (state_chip), so the two never contradict each other. A plan that has passed is muted like a held one: nothing bursts
+    until a new reading. A paused account whose run is
     still going says so: the run finishes, then nothing bursts. A burst that waits for a run the owner started is due,
     not live. -#}
 {% macro plan(hb, a, held="") -%}
@@ -39,7 +40,7 @@
 {%- set waits = held and a.enabled and not a.paid and (bursty or (held == "down" and a.working)) -%}
 {%- set held_key = "paused_working" if held == "paused" and a.working else held -%}
 {%- if a.plan %}
-<div class="plan{% if held or a.plan_code == 'no-key' %} is-held{% elif a.plan_code in ('now', 'pace', 'schedule') and a.trigger in ('', 'burst') %} is-live{% endif %}">
+<div class="plan{% if held or a.plan_code in ('no-key', 'passed') %} is-held{% elif a.plan_code in ('now', 'pace', 'schedule') and a.trigger in ('', 'burst') %} is-live{% endif %}">
   <p>{% if waits %}{{ t("web.plan.held." ~ held_key) }}{% else %}{{ a.plan }}{% endif %}</p>
   {%- if waits or a.plan_code in ("now", "later", "small") %}{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}
   {%- elif a.plan_code == "model" %}{{ help(hb, "common-window_model", t("web.help.common.window_model.title"), ["common.window_model"]) }}
