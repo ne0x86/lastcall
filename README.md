@@ -86,7 +86,7 @@ flowchart LR
   what they cost. The local model server has no way out to the internet.
 - 🚨 What comes from production reaches the models masked: an error's type, its message without emails, addresses,
   tokens or long numbers, and the lines of your code. Never variables, requests or user data. lastcall reads the logs
-  of a container only when you label it for a project.
+  of a container only after you give it a project.
 - 🧑‍⚖️ Nothing is merged without your approval, and a revert is only ever proposed.
 
 ## 🔌 Engines
@@ -182,7 +182,8 @@ docker compose run --rm cli github repos
 docker compose run --rm cli project add <owner/name> --signals <its project in Sentry or GlitchTip>
 docker compose run --rm cli signals connect --url https://sentry.io --org <slug>     # asks for the token
 docker compose run --rm cli signals show <owner/name>                                # its errors, as audits read them
-docker compose run --rm cli logs on                                                  # read the labelled containers
+docker compose run --rm cli logs list                                                # containers, with suggestions
+docker compose run --rm cli logs set <container> <owner/name>                        # read it for that project
 docker compose run --rm cli logs show <owner/name>                                   # the errors in their logs
 docker compose run --rm cli audit <owner/name> --account claude-max --report-only   # findings only
 docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
@@ -251,22 +252,25 @@ code where they happen, and the reviewers look for their causes first. Projects 
 first. The messages are masked before they reach a model.
 
 **Container logs.** If your apps run in Docker on the same machine as lastcall, it can read their logs instead, with
-no change to their code:
-1. In each app's compose file, label the containers of a project with the project's name, as the Projects page
-   writes it, and run `docker compose up -d` for that app:
-   ```yaml
-   services:
-     web:
-       labels:
-         lastcall.project: owner/name
-   ```
-2. On the Settings page, under *Container logs*, turn them on (or `lastcall logs on`).
+no change to their code. On the Settings page, under *Container logs*, choose the project of each container to read,
+and save. lastcall lists the machine's containers and suggests a project for each from its image
+(`ghcr.io/owner/name`), its Compose project or its name. It reads none until you save, and it remembers when you
+say no to a suggestion. In the terminal: `lastcall logs list`, then `lastcall logs set <container> <owner/name>`.
+
+To keep the choice with the app instead, label its containers with the project's name, as the Projects page writes
+it, and run `docker compose up -d` for that app. A labelled container is read with no choice on the Settings page:
+```yaml
+services:
+  web:
+    labels:
+      lastcall.project: owner/name
+```
 
 lastcall then reads the last 24 hours of those containers, every 30 minutes and before each run: the errors, grouped
 by kind (a Python traceback by its exception and the place in your code, a stack of Node.js or Java, a line with an
 error level such as `ERROR` or `level=error`), and the restarts, such as the kernel killing a container for lack of
-memory. It reads only the containers that carry the label, only their logs and state, and masks the lines before
-they reach a model.
+memory. It reads only the containers that have a project, only their logs and state, and masks the lines before they
+reach a model.
 
 **After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
 in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
@@ -319,7 +323,8 @@ advice.
   - The `deps` recipe: dependency upgrades that need more than a new version number.
   - Signals: errors in production from Sentry or GlitchTip.
 - 🔜 **v0.6, closer to your apps.**
-  - ✅ Container logs as signals: the errors and restarts of your apps' containers on the same machine.
+  - ✅ Container logs as signals: the errors and restarts of your apps' containers on the same machine, chosen on
+    the Settings page with suggestions, or by a label.
 - 🔭 **Next, as people ask for it** ([open an issue](https://github.com/ne0x86/lastcall/issues/new/choose)).
   - GitLab and Forgejo, next to GitHub.
   - Container logs on other machines.

@@ -8,8 +8,7 @@ Every minute it ticks:
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
 - every 6 hours it refreshes the suggestions for the installed repositories;
 - every 30 minutes it counts each project's errors in production in the last day, from the owner's error tracker
-  and from the logs of the project's labelled containers when the owner turned them on: projects with errors rank
-  higher;
+  and from the logs of the project's containers: projects with errors rank higher;
 - the owner's orders ("audit this project now" or "improve it now", from the web UI) start on a free account; an
   audit can start on all of them together (fan-out);
 - with fan-out on, accounts that burst at the same time review one project together, with one judge;
@@ -197,9 +196,13 @@ class Service:
 
     def read_signals(self, now: float) -> None:
         """How many errors each active project had in production in the last day: from the owner's error tracker,
-        and kinds of errors in the logs of its labelled containers."""
+        and kinds of errors in the logs of its containers."""
         tracker = signals.Tracker.load(self.inst.secrets) if self.inst.secrets is not None else None
-        read_logs = self.inst.store.setting(logs.SETTING) == "yes"
+        choices, listed = logs.chosen(self.inst.store), list[dict[str, Any]]()
+        try:
+            listed = self.inst.box.containers() if self.inst.box is not None else []
+        except SandboxError as e:
+            self.log(f"the containers were not listed: {e}")
         counts: dict[str, int] = {}
         for p in self.inst.store.projects(active_only=True):
             if tracker is not None and p.signals:
@@ -208,9 +211,10 @@ class Service:
                     counts[p.repo] = counts.get(p.repo, 0) + len(found)
                 except signals.SignalsError as e:
                     self.log(f"{p.repo}: the errors in production were not read: {e}")
-            if read_logs:
+            names = logs.names_for(p.repo, listed, choices)
+            if names:
                 try:
-                    kinds = logs.errors(self.inst.box.logs(p.repo, logs.HOURS * 3600))[1]
+                    kinds = logs.errors(self.inst.box.logs(names, logs.HOURS * 3600))[1]
                     counts[p.repo] = counts.get(p.repo, 0) + len(kinds)
                 except SandboxError as e:
                     self.log(f"{p.repo}: the container logs were not read: {e}")

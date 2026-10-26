@@ -267,8 +267,8 @@ def audit_repo(
 
 def production_errors(inst: Instance, repo: str, clone: Path, log: Log = print) -> dict[str, str]:
     """The pack's sections on errors in production: from the owner's error tracker, when it is connected and the
-    project has its project there; and from the logs of the project's labelled containers, when the owner lets
-    lastcall read them. A source that cannot be read leaves a note, never a failed run."""
+    project has its project there; and from the logs of the project's containers, those that the owner chose for it
+    or labelled. A source that cannot be read leaves a note, never a failed run."""
     out: dict[str, str] = {}
     project = inst.store.project(repo)
     tracker = signals.Tracker.load(inst.secrets) if inst.secrets is not None else None
@@ -280,9 +280,9 @@ def production_errors(inst: Instance, repo: str, clone: Path, log: Log = print) 
         except signals.SignalsError as e:
             log(f"{repo}: the errors in production were not read: {e}")
             out[signals.TITLE] = f"Not read: {e}"
-    if inst.store.setting(logs.SETTING) == "yes":
+    if inst.box is not None:  # a container may carry its label, with no choice of the owner
         try:
-            containers, kinds = logs.errors(inst.box.logs(repo, logs.HOURS * 3600), git.files(clone))
+            containers, kinds = logs.read(inst.box, inst.store, repo, git.files(clone))
         except SandboxError as e:
             log(f"{repo}: the container logs were not read: {e}")
             containers, kinds = [], []

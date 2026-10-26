@@ -5,7 +5,7 @@ from __future__ import annotations
 import http.client
 import json
 import socket
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -113,13 +113,18 @@ class Sandbox:
             conn.close()
         return Outcome(int(final.get("exit", -1)), bool(final.get("timed_out")), str(final.get("stderr") or ""))
 
-    def logs(self, project: str, since: int) -> list[dict[str, Any]]:
-        """The containers of this host labelled for the project, with their state and recent log lines
-        (`lastcall.supervisor.read_logs`)."""
+    def containers(self) -> list[dict[str, Any]]:
+        """The containers of this host (`lastcall.supervisor.list_containers`)."""
+        return self._ask("/containers", {})
+
+    def logs(self, names: Sequence[str], since: int) -> list[dict[str, Any]]:
+        """The state and recent log lines of the named containers (`lastcall.supervisor.read_logs`)."""
+        return self._ask("/logs", {"names": list(names), "since": int(since)})
+
+    def _ask(self, path: str, body: Mapping[str, Any]) -> list[dict[str, Any]]:
         conn = _UnixConnection(str(self.socket_path), 180.0)
         try:
-            body = json.dumps({"project": project, "since": int(since)})
-            conn.request("POST", "/logs", body, {"Content-Type": "application/json"})
+            conn.request("POST", path, json.dumps(body), {"Content-Type": "application/json"})
             resp = conn.getresponse()
             raw = resp.read()
         except OSError as e:

@@ -1,6 +1,8 @@
-"""Errors in the logs of a project's containers (DESIGN.md, section 8): the containers on lastcall's own Docker host
-that the owner labels `lastcall.project=<owner/name>`, read by the supervisor (`lastcall.supervisor.read_logs`) when
-the owner turns it on.
+"""Errors in the logs of a project's containers (DESIGN.md, section 8), for apps that run in Docker on lastcall's own
+host, with no change to their code. The owner chooses the project of each container on the settings page, where
+lastcall suggests one from the container's image (`ghcr.io/<owner>/<name>`), its Compose project or its name; or
+labels it `lastcall.project=<owner/name>` in its compose file. lastcall reads no container until then. The supervisor
+lists the containers and reads their logs (`lastcall.supervisor`).
 
 This module turns their lines into errors grouped by kind: a Python traceback by its exception and the place in the
 code where it happened, a stack of Node.js or Java by its first line and frames, and any other line with an error
@@ -13,17 +15,23 @@ how often and when, and the file and line of its frames.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lastcall.signals import mask, repo_path
 
+if TYPE_CHECKING:
+    from lastcall.sandbox import Sandbox
+    from lastcall.store import Store
+
 LABEL = "lastcall.project"
-SETTING = "container_logs"  # "yes" when the owner lets lastcall read the logs of the labelled containers
+CHOSEN = "container_projects"  # the owner's choices: container name -> owner/name, as JSON
 HOURS = 24
+MAX_CONTAINERS = 10  # per project
 TITLE = f"Errors in the container logs (last {HOURS} hours)"
 MAX_KINDS = 8
 MAX_FRAMES = 6
@@ -43,6 +51,56 @@ STRUCTURED = re.compile(
 PREFIX = re.compile(
     r"^\[?(?:\d{4}[-/]\d{2}[-/]\d{2}[T ]?)?(?:\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\]?\s+"
 )
+
+
+def chosen(store: Store) -> dict[str, str]:
+    """The project of each container, as the owner chose it: "" for a container that the owner said no to, so that
+    lastcall stops suggesting one for it."""
+    try:
+        found = json.loads(store.setting(CHOSEN) or "{}")
+    except ValueError:
+        return {}
+    return {str(k): str(v) for k, v in found.items()} if isinstance(found, dict) else {}
+
+
+def choose(store: Store, choices: Mapping[str, str]) -> None:
+    store.set_setting(CHOSEN, json.dumps(dict(sorted(choices.items()))))
+
+
+def project_of(container: Mapping[str, Any], choices: Mapping[str, str]) -> str:
+    """The project of a container: its label, or else the owner's choice; "" for none."""
+    return str(container.get("label") or "") or choices.get(str(container.get("name") or ""), "")
+
+
+def names_for(repo: str, listed: Iterable[Mapping[str, Any]], choices: Mapping[str, str]) -> list[str]:
+    """The containers of a project, by name."""
+    return [str(c["name"]) for c in listed if project_of(c, choices).lower() == repo.lower()][:MAX_CONTAINERS]
+
+
+def suggest(container: Mapping[str, Any], repos: Iterable[str]) -> str:
+    """The project that a container seems to belong to: by its image (`ghcr.io/<owner>/<name>:tag`), else its Compose
+    project, else its name (`<name>-web-1`). "" when none fits, or when more than one does at the same step."""
+    image = str(container.get("image") or "").lower().split("@")[0]
+    if ":" in image.rsplit("/", 1)[-1]:  # a tag, not a registry's port
+        image = image.rsplit(":", 1)[0]
+    compose = str(container.get("compose_project") or "").lower()
+    name = str(container.get("name") or "").lower()
+    candidates = [(r, r.lower(), r.lower().split("/")[-1]) for r in repos]
+    steps = (
+        [repo for repo, full, _ in candidates if image == full or image.endswith("/" + full)],
+        [repo for repo, _, short in candidates if compose == short],
+        [repo for repo, _, short in candidates if name == short or name.startswith((short + "-", short + "_"))],
+    )
+    for found in steps:
+        if found:
+            return found[0] if len(found) == 1 else ""
+    return ""
+
+
+def read(box: Sandbox, store: Store, repo: str, files: Iterable[str] = ()) -> tuple[list[Container], list[Kind]]:
+    """The containers of a project, and the kinds of error in their logs of the last day."""
+    names = names_for(repo, box.containers(), chosen(store))
+    return errors(box.logs(names, HOURS * 3600), files) if names else ([], [])
 
 
 @dataclass(frozen=True)
@@ -79,8 +137,9 @@ def errors(found: Iterable[Mapping[str, Any]], files: Iterable[str] = ()) -> tup
                 code if isinstance(code, int) else None,
             )
         )
-        for when, key, sample, frames in events([str(line) for line in c.get("lines") or []], known):
-            groups.setdefault((name, key), []).append((when, sample, frames))
+        for stream in ("stdout", "stderr"):  # each in its own order: a traceback never spans the two
+            for when, key, sample, frames in events([str(line) for line in c.get(stream) or []], known):
+                groups.setdefault((name, key), []).append((when, sample, frames))
     kinds = []
     for (name, _), seen in groups.items():
         times = [t for t, _, _ in seen if t is not None]
