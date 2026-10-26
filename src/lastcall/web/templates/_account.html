@@ -1,0 +1,72 @@
+{#- The parts of an account card that the dashboard and the Accounts page share. Import with context, after
+    _help.html's help macro: each macro takes the page's help namespace `hb`. -#}
+{% from "_help.html" import help with context %}
+
+{#- The state chip: one word for what the account is doing. -#}
+{% macro state_chip(a, error="", held=false) -%}
+{%- if not a.enabled %}{% set key = "off" %}
+{%- elif error %}{% set key = "signin" %}
+{%- elif a.paid %}{% set key = "paid" %}
+{%- elif a.working and a.reviewing %}{% set key = "reviewing" %}
+{%- elif a.working %}{% set key = "spending" %}
+{%- elif held and a.plan_code in ("now", "pace", "schedule", "later", "ahead", "window") %}{% set key = "held" %}
+{%- elif a.plan_code in ("now", "pace", "schedule") %}{% set key = "bursting" %}
+{%- elif a.plan_code in ("later", "ahead", "window") %}{% set key = "planned" %}
+{%- elif a.plan_code == "manual" %}{% set key = "manual" %}
+{%- else %}{% set key = "resting" %}{% endif -%}
+<span class="chip state state-{{ key }}">{{ t("web.chip." ~ key) }}</span>
+{%- endmacro %}
+
+{#- The header: name, engine chip and its help, state chip. `level` is h2 on the Accounts page, h3 on the dashboard. -#}
+{% macro head(hb, a, level="h3", error="", held=false) -%}
+<header class="account-head">
+  <{{ level }} class="account-name">{{ a.id }}</{{ level }}>
+  <span class="chips"><span class="chip engine engine-{{ a.engine_key or 'other' }}">{{ a.engine }}</span>{{ help(hb, "common-engine", t("web.help.common.engine.title"), ["common.engine"]) }}{{ state_chip(a, error, held) }}</span>
+</header>
+{%- endmacro %}
+
+{#- The plan sentence, the card's main line, with the bubble that explains it. `held` mutes it while nothing bursts. -#}
+{% macro plan(hb, a, held=false) -%}
+{%- if a.plan %}
+<div class="plan{% if held %} is-held{% endif %}{% if a.plan_code in ('now', 'pace', 'schedule') %} is-live{% endif %}">
+  <p>{{ a.plan }}</p>
+  {%- if a.plan_code in ("now", "later", "small") %}{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}
+  {%- elif a.plan_code == "model" %}{{ help(hb, "common-window_model", t("web.help.common.burst.title"), ["common.window_model"]) }}
+  {%- elif a.plan_code in ("pace", "ahead", "spent", "no-budget") %}{{ help(hb, "common-budget", t("web.window.budget"), ["common.budget"]) }}
+  {%- elif a.plan_code in ("schedule", "window", "never", "bad-schedule") %}{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}
+  {%- elif a.plan_code == "paid" %}{{ help(hb, "common-paid", t("web.help.common.paid.title"), ["common.paid"]) }}
+  {%- endif %}
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{#- One meter per window, coloured by its role, with the reserve drawn as a mark. -#}
+{% macro meters(hb, a, n) -%}
+{%- for w in a.windows %}
+{%- set id = "window-" ~ n ~ "-" ~ loop.index %}
+{%- if w.role == "throttle" %}{% set limit = 90 %}{% elif w.role == "budget" %}{% set limit = 100 %}{% else %}{% set limit = 100 - w.reserve %}{% endif %}
+<div class="window">
+  <p class="window-label"><span class="window-name"><span id="{{ id }}">{{ w.label }}</span>
+    {%- if w.role == "throttle" %}{{ help(hb, "common-window_throttle", w.label, ["common.window_throttle"]) }}
+    {%- elif w.role == "budget" %}{{ help(hb, "common-budget", w.label, ["common.budget"]) }}
+    {%- elif w.model %}{{ help(hb, "common-window_model", w.label, ["common.window_model"]) }}
+    {%- else %}{{ help(hb, "common-window_expiring", w.label, ["common.window_expiring"]) }}{% endif -%}
+  </span> <span class="window-used">{{ w.used_text }}{% if w.resets %} · {{ w.resets }}{% endif %}</span></p>
+  <div class="bar reserve-{{ w.reserve }}">
+    <meter class="role-{{ w.role }}" aria-labelledby="{{ id }}" min="0" max="100" low="{{ limit }}" high="{{ limit }}" optimum="0" value="{{ w.used }}">{{ w.used_text }}</meter>
+  </div>
+</div>
+{%- endfor %}
+{%- endmacro %}
+
+{#- The lines under the meters: paid usage, what it works on, when its quota was read. -#}
+{% macro lines(hb, a, keyed) -%}
+{%- if a.paid %}<div class="line line-bad"><p>{{ t("web.accounts.paid") }}</p>{{ help(hb, "common-paid", t("web.help.common.paid.title"), ["common.paid"]) }}</div>{% endif %}
+{%- if a.working %}<div class="line line-working"><p>{{ a.working }}</p>{% if a.reviewing %}{{ help(hb, "common-reviewing", t("web.help.common.reviewing.title"), ["common.reviewing"]) }}{% endif %}</div>{% endif %}
+{%- if a.read %}<div class="line line-read"><p>{{ a.read }}</p>{% if not keyed %}{{ help(hb, "common-read", t("web.help.common.read.title"), ["common.read"]) }}{% endif %}</div>{% endif %}
+{%- endmacro %}
+
+{#- The details line ("Writes in Spanish · reserve 10%"), one text node, with the reserve's bubble after it. -#}
+{% macro details_line(hb, a, keyed) -%}
+<div class="details-line"><p>{{ a.details }}</p>{% if not keyed %}{{ help(hb, "common-reserve", t("web.help.common.reserve.title"), ["common.reserve"]) }}{% endif %}</div>
+{%- endmacro %}

@@ -1,135 +1,153 @@
 {% extends "base.html" %}
 {% block title %}{{ t("web.nav.accounts") }}{% endblock %}
 {% block main %}
-<h1>{{ t("web.nav.accounts") }}</h1>
+{%- from "_help.html" import help, bubbles with context %}
+{%- import "_account.html" as card with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+{#- The "When it spends" bubble holds one paragraph per option that this page offers. #}
+{%- set pol = namespace(kinds=[]) %}
+{%- for c in cards %}{% for kind, label in c.policies %}{% if kind not in pol.kinds %}{% set pol.kinds = pol.kinds + [kind] %}{% endif %}{% endfor %}{% endfor %}
+{%- if keys %}{% set pol.kinds = pol.kinds + ["budget", "schedule", "manual"] %}{% endif %}
+{%- if local %}{% set pol.kinds = pol.kinds + ["schedule", "manual"] %}{% endif %}
+{%- set pol.keys = [] %}
+{%- for kind in ("before-reset", "budget", "schedule", "manual") %}{% if kind in pol.kinds %}{% set pol.keys = pol.keys + ["accounts.policy." ~ kind] %}{% endif %}{% endfor %}
+{%- set policy_keys = pol.keys %}
+<header class="page-head">
+  <h1>{{ t("web.nav.accounts") }}</h1>
+  <p class="lede">{{ t("web.accounts.intro") }}</p>
+  {%- if cards %}<p class="jump"><a href="#add">{{ t("web.accounts.add_jump") }}</a></p>{% endif %}
+</header>
 
-{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
-{% if error %}<p class="card notice error" role="alert">{{ error }}</p>{% endif %}
+{% if done %}<p class="notice done" role="status">{{ done }}</p>{% endif %}
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
 
 {% if cards %}
-<div class="grid">
+<div class="grid accounts">
   {%- for c in cards %}
   {%- set n = loop.index %}
   {%- set a = c.view %}
   {%- set row = c.row %}
-  <article class="card" id="account-{{ a.id }}">
-    <h2>{{ a.id }} <span class="badge">{{ a.engine }}</span></h2>
-    {%- if row.keyed %}<p class="muted">{{ a.details }}</p>{% endif %}
-    {%- for w in a.windows %}
-    <div class="window">
-      <p class="window-label"><span id="window-{{ n }}-{{ loop.index }}">{{ w.label }}</span> <span>{{ w.used_text }}{% if w.resets %} · {{ w.resets }}{% endif %}</span></p>
-      <meter aria-labelledby="window-{{ n }}-{{ loop.index }}" min="0" max="100" low="70" high="90" optimum="0" value="{{ w.used }}">{{ w.used_text }}</meter>
-    </div>
-    {%- endfor %}
-    {%- if a.paid %}<p class="error">{{ t("web.accounts.paid") }}</p>{% endif %}
-    {%- if a.plan %}<p>{{ a.plan }}</p>{% endif %}
-    {%- if a.working %}<p class="working">{{ a.working }}</p>{% endif %}
-    {%- if a.read %}<p class="muted small">{{ a.read }}</p>{% endif %}
-    {%- if c.error %}<p class="error small">{% if row.keyed %}{{ c.error }}{% else %}{{ t("web.accounts.error", error=c.error) }}{% endif %}</p>{% endif %}
+  <article class="card account{% if not row.enabled %} is-off{% endif %}" id="account-{{ a.id }}">
+    {{ card.head(hb, a, "h2", c.error) }}
+    {{ card.details_line(hb, a, row.keyed) }}
+    {{ card.plan(hb, a) }}
+    {{ card.meters(hb, a, n) }}
+    {{ card.lines(hb, a, row.keyed) }}
+    {%- if c.error %}<div class="line line-bad"><p>{% if row.keyed %}{{ c.error }}{% else %}{{ t("web.accounts.error", error=c.error) }}{% endif %}</p></div>{% endif %}
     {%- if not row.keyed %}
     {%- if can_read %}
-    <form method="post" action="{{ url_for('read_account_quota', account_id=a.id) }}">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button class="secondary">{{ t("web.accounts.check") }}</button>
-    </form>
+    <div class="card-actions">
+      <form method="post" action="{{ url_for('read_account_quota', account_id=a.id) }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="secondary">{{ t("web.accounts.check") }}</button>
+      </form>
+      {{- help(hb, "accounts-check", t("web.help.accounts.check.title"), ["accounts.check"]) }}
+    </div>
     {%- endif %}
-    <details>
+    <details class="fold">
       <summary>{{ t("web.accounts.login_title") }}</summary>
-      <p class="small">{{ t("web.accounts.login") }}</p>
-      <pre><code>{{ c.login }}</code></pre>
-      <p class="small">{{ t("web.accounts.login_ps") }}</p>
-      <pre><code>{{ c.login_ps }}</code></pre>
+      <div class="fold-body">
+        <div class="line"><p class="small">{{ t("web.accounts.login") }}</p>{{ help(hb, "accounts-login", t("web.accounts.login_title"), ["accounts.login"]) }}</div>
+        <pre><code>{{ c.login }}</code></pre>
+        <p class="small">{{ t("web.accounts.login_ps") }}</p>
+        <pre><code>{{ c.login_ps }}</code></pre>
+        <div class="line caption"><p class="small muted">{{ t("web.help.common.terminal") }}</p></div>
+      </div>
     </details>
     {%- endif %}
-    <form method="post" action="{{ url_for('account_settings', account_id=a.id) }}" class="settings">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label class="check"><input type="checkbox" name="enabled" value="1"{% if row.enabled %} checked{% endif %}> {{ t("web.accounts.enabled") }}</label>
-      <div class="fields">
-        <div>
-          <label for="language-{{ n }}">{{ t("web.accounts.language_label") }}</label>
-          <select id="language-{{ n }}" name="language">
-            {%- for name, label in writing %}<option value="{{ name }}"{% if name == row.language %} selected{% endif %}>{{ label }}</option>{% endfor %}
-            {%- if row.language not in known %}<option value="{{ row.language }}" selected>{{ row.language }}</option>{% endif %}
+    <details class="fold">
+      <summary>{{ t("web.project.settings_summary") }}</summary>
+      <form method="post" action="{{ url_for('account_settings', account_id=a.id) }}" class="fold-body stack account-settings">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <div class="check-row"><label class="check"><input type="checkbox" name="enabled" value="1"{% if row.enabled %} checked{% endif %}> {{ t("web.accounts.enabled") }}</label>{{ help(hb, "accounts-enabled", t("web.accounts.enabled"), ["accounts.enabled"]) }}</div>
+        <div class="fields">
+          <div class="field">
+            <div class="label-row"><label for="language-{{ n }}">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
+            <select id="language-{{ n }}" name="language">
+              {%- for name, label in writing %}<option value="{{ name }}"{% if name == row.language %} selected{% endif %}>{{ label }}</option>{% endfor %}
+              {%- if row.language not in known %}<option value="{{ row.language }}" selected>{{ row.language }}</option>{% endif %}
+            </select>
+          </div>
+          {%- if not row.keyed %}
+          <div class="field">
+            <div class="label-row"><label for="reserve-{{ n }}">{{ t("web.accounts.reserve_label") }}</label>{{ help(hb, "common-reserve", t("web.help.common.reserve.title"), ["common.reserve"]) }}</div>
+            <input id="reserve-{{ n }}" name="reserve" type="number" min="0" max="90" step="1" value="{{ '%g'|format(row.reserve_pct) }}" required>
+          </div>
+          {%- endif %}
+        </div>
+        {%- if c.policies %}
+        <div class="field">
+          <div class="label-row"><label for="policy-{{ n }}">{{ t("web.accounts.policy_label") }}</label>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys) }}</div>
+          <select id="policy-{{ n }}" name="policy">
+            {%- for kind, label in c.policies %}<option value="{{ kind }}"{% if kind == row.policy %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
         </div>
-        {%- if not row.keyed %}
-        <div>
-          <label for="reserve-{{ n }}">{{ t("web.accounts.reserve_label") }}</label>
-          <input id="reserve-{{ n }}" name="reserve" type="number" min="0" max="90" step="1" value="{{ '%g'|format(row.reserve_pct) }}" required>
-        </div>
         {%- endif %}
-      </div>
-      {%- if c.policies %}
-      <div>
-        <label for="policy-{{ n }}">{{ t("web.accounts.policy_label") }}</label>
-        <select id="policy-{{ n }}" name="policy">
-          {%- for kind, label in c.policies %}<option value="{{ kind }}"{% if kind == row.policy %} selected{% endif %}>{{ label }}</option>{% endfor %}
-        </select>
-      </div>
-      {%- endif %}
-      {%- if row.keyed %}
-      <div class="fields wide">
+        {%- if row.keyed %}
         {%- if c.needs_key %}
-        <div>
+        <div class="field">
           <label for="budget-{{ n }}">{{ t("web.accounts.budget_label") }}</label>
-          <input id="budget-{{ n }}" name="budget" type="number" min="0.01" step="0.01" value="{{ '%g'|format(row.budget_usd) if row.budget_usd else '' }}" required>
+          <input id="budget-{{ n }}" name="budget" type="number" min="0.01" step="0.01" value="{{ '%g'|format(row.budget_usd) if row.budget_usd else '' }}" required aria-describedby="budget-{{ n }}-hint">
+          <p id="budget-{{ n }}-hint" class="hint">{{ t("web.accounts.budget_hint") }}</p>
         </div>
         {%- endif %}
-        <div>
-          <label for="schedule-{{ n }}">{{ t("web.accounts.schedule_label") }}</label>
+        <div class="field field-schedule">
+          <div class="label-row"><label for="schedule-{{ n }}">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}</div>
           <input id="schedule-{{ n }}" name="schedule" type="text" value="{{ row.schedule }}" placeholder="* 1-6 * * *" autocomplete="off" spellcheck="false" aria-describedby="schedule-{{ n }}-hint">
-          <p id="schedule-{{ n }}-hint" class="hint muted">{{ t("web.accounts.schedule_short") }}</p>
+          <p id="schedule-{{ n }}-hint" class="hint">{{ t("web.accounts.schedule_short") }}</p>
         </div>
-      </div>
-      {%- if c.needs_key %}
-      <div>
-        <label for="key-{{ n }}">{{ t("web.accounts.new_key") }}</label>
-        <input id="key-{{ n }}" name="key" type="password" autocomplete="off" spellcheck="false" aria-describedby="key-{{ n }}-hint">
-        <p id="key-{{ n }}-hint" class="hint muted">{{ t("web.accounts.new_key_hint") }}</p>
-      </div>
-      {%- endif %}
-      {%- endif %}
-      <button class="secondary">{{ t("web.accounts.save") }}</button>
-    </form>
-    <details>
-      <summary>{{ t("web.tiers.title") }}</summary>
-      <p class="small">{{ t("web.tiers.intro") }}</p>
-      <form method="post" action="{{ url_for('account_tiers', account_id=a.id) }}" class="stack">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        {%- for tr in c.tiers %}
-        <fieldset>
-          <legend>{{ t("web.tiers." ~ tr.tier) }}</legend>
-          <p class="hint muted">{{ t("web.tiers." ~ tr.tier ~ "_hint") }}</p>
-          <div class="fields">
-            <div>
-              <label for="model-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.model") }}</label>
-              <input id="model-{{ n }}-{{ tr.tier }}" name="model-{{ tr.tier }}" type="text" value="{{ tr.model }}" placeholder="{{ tr.default_model }}" maxlength="100" autocomplete="off" spellcheck="false"{% if not tr.default_model %} required{% endif %}>
-            </div>
-            <div>
-              <label for="effort-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.effort") }}</label>
-              <select id="effort-{{ n }}-{{ tr.tier }}" name="effort-{{ tr.tier }}">
-                <option value="">{{ t("web.tiers.default", effort=tr.default_effort or t("web.tiers.model_own")) }}</option>
-                {%- for level in c.levels %}<option value="{{ level }}"{% if level == tr.effort %} selected{% endif %}>{{ level }}</option>{% endfor %}
-              </select>
-            </div>
-          </div>
-        </fieldset>
-        {%- endfor %}
-        <p class="hint muted">{{ t("web.tiers.keyed_hint") if row.keyed else t("web.tiers.default_hint") }}</p>
-        <button class="secondary">{{ t("web.tiers.save") }}</button>
+        {%- if c.needs_key %}
+        <div class="field">
+          <label for="key-{{ n }}">{{ t("web.accounts.new_key") }}</label>
+          <input id="key-{{ n }}" name="key" type="password" autocomplete="off" spellcheck="false" aria-describedby="key-{{ n }}-hint">
+          <p id="key-{{ n }}-hint" class="hint">{{ t("web.accounts.new_key_hint") }}</p>
+        </div>
+        {%- endif %}
+        {%- endif %}
+        <button class="secondary">{{ t("web.accounts.save") }}</button>
       </form>
+    </details>
+    <details class="fold">
+      <summary>{{ t("web.tiers.title") }}</summary>
+      <div class="fold-body">
+        <div class="line"><p class="small">{{ t("web.tiers.intro") }}</p>{{ help(hb, "accounts-tiers", t("web.tiers.title"), ["accounts.tiers"]) }}</div>
+        <form method="post" action="{{ url_for('account_tiers', account_id=a.id) }}" class="stack">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          {%- for tr in c.tiers %}
+          <fieldset class="tier">
+            <legend>{{ t("web.tiers." ~ tr.tier) }}</legend>
+            <p class="hint">{{ t("web.tiers." ~ tr.tier ~ "_hint") }}</p>
+            <div class="fields">
+              <div class="field">
+                <label for="model-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.model") }}</label>
+                <input id="model-{{ n }}-{{ tr.tier }}" name="model-{{ tr.tier }}" type="text" value="{{ tr.model }}" placeholder="{{ tr.default_model }}" maxlength="100" autocomplete="off" spellcheck="false"{% if not tr.default_model %} required{% endif %}>
+              </div>
+              <div class="field">
+                <div class="label-row"><label for="effort-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.effort") }}</label>{% if loop.first %}{{ help(hb, "accounts-effort", t("web.tiers.effort"), ["accounts.effort"]) }}{% endif %}</div>
+                <select id="effort-{{ n }}-{{ tr.tier }}" name="effort-{{ tr.tier }}">
+                  <option value="">{{ t("web.tiers.default", effort=tr.default_effort or t("web.tiers.model_own")) }}</option>
+                  {%- for level in c.levels %}<option value="{{ level }}"{% if level == tr.effort %} selected{% endif %}>{{ level }}</option>{% endfor %}
+                </select>
+              </div>
+            </div>
+          </fieldset>
+          {%- endfor %}
+          <p class="hint">{{ t("web.tiers.keyed_hint") if row.keyed else t("web.tiers.default_hint") }}</p>
+          <button class="secondary">{{ t("web.tiers.save") }}</button>
+        </form>
+      </div>
     </details>
   </article>
   {%- endfor %}
 </div>
 {% else %}
-<p class="muted">{{ t("web.accounts.none") }}</p>
+<p class="empty">{{ t("web.accounts.empty") }}</p>
 {% endif %}
 
-<section class="card" aria-labelledby="add-title" id="add">
+<section class="card add-card" aria-labelledby="add-title" id="add">
   <h2 id="add-title">{{ t("web.accounts.add") }}</h2>
   <div class="picker-wrap">
-    <label for="kind">{{ t("web.accounts.kind") }}</label>
+    <div class="label-row"><label for="kind">{{ t("web.accounts.kind") }}</label>{{ help(hb, "accounts-kind", t("web.accounts.kind"), ["accounts.kind"]) }}</div>
     <select id="kind" class="picker">
       <option value="">{{ t("web.accounts.kind.choose") }}</option>
       <option value="subscription"{% if chosen == "subscription" %} selected{% endif %}>{{ t("web.accounts.kind.subscription") }}</option>
@@ -144,28 +162,28 @@
         <li>{{ t("web.accounts.sub.step1") }}</li>
         <li>{{ t("web.accounts.sub.step2") }}</li>
       </ol>
-      <form method="post" action="{{ url_for('add_account') }}#add" class="settings">
+      <form method="post" action="{{ url_for('add_account') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <div class="fields">
-          <div>
-            <label for="id">{{ t("web.accounts.id") }}</label>
+          <div class="field">
+            <div class="label-row"><label for="id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"]) }}</div>
             <input id="id" name="id" type="text" pattern="[a-z0-9][a-z0-9-]{0,39}" value="{{ filled.id if chosen == 'subscription' else '' }}" placeholder="claude-max" autocomplete="off" spellcheck="false" required aria-describedby="id-hint">
-            <p id="id-hint" class="muted hint">{{ t("web.accounts.id_hint") }}</p>
+            <p id="id-hint" class="hint">{{ t("web.accounts.id_hint") }}</p>
           </div>
-          <div>
-            <label for="engine">{{ t("web.accounts.engine") }}</label>
+          <div class="field">
+            <div class="label-row"><label for="engine">{{ t("web.accounts.engine") }}</label>{{ help(hb, "accounts-engine", t("web.accounts.engine"), ["accounts.engine_field"]) }}</div>
             <select id="engine" name="engine">
               {%- for name, label in engines %}<option value="{{ name }}">{{ label }}</option>{% endfor %}
             </select>
           </div>
-          <div>
-            <label for="language">{{ t("web.accounts.language_label") }}</label>
+          <div class="field">
+            <div class="label-row"><label for="language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
             <select id="language" name="language">
               {%- for name, label in writing %}<option value="{{ name }}"{% if (lang == 'es') == (name == 'Spanish') %} selected{% endif %}>{{ label }}</option>{% endfor %}
             </select>
           </div>
-          <div>
-            <label for="reserve">{{ t("web.accounts.reserve_label") }}</label>
+          <div class="field">
+            <div class="label-row"><label for="reserve">{{ t("web.accounts.reserve_label") }}</label>{{ help(hb, "common-reserve", t("web.help.common.reserve.title"), ["common.reserve"]) }}</div>
             <input id="reserve" name="reserve" type="number" min="0" max="90" step="1" value="10" required>
           </div>
         </div>
@@ -187,50 +205,50 @@
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="kind" value="key">
         {%- set f = filled if chosen == "key" else {} %}
-        <div>
-          <label for="key-id">{{ t("web.accounts.id") }}</label>
+        <div class="field">
+          <div class="label-row"><label for="key-id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"]) }}</div>
           <input id="key-id" name="id" type="text" pattern="[a-z0-9][a-z0-9-]{0,39}" value="{{ f.id or '' }}" placeholder="openrouter" autocomplete="off" spellcheck="false" required aria-describedby="key-id-hint">
-          <p id="key-id-hint" class="muted hint">{{ t("web.accounts.id_hint") }}</p>
+          <p id="key-id-hint" class="hint">{{ t("web.accounts.id_hint") }}</p>
         </div>
-        <div>
+        <div class="field">
           <label for="key-source">{{ t("web.accounts.provider") }}</label>
           <select id="key-source" name="source">
             {%- for source, p in keys %}<option value="{{ source }}"{% if f.source == source %} selected{% endif %}>{{ p.title }}</option>{% endfor %}
           </select>
         </div>
-        <div>
+        <div class="field">
           <label for="key-key">{{ t("web.accounts.key") }}</label>
           <input id="key-key" name="key" type="password" autocomplete="off" spellcheck="false" required aria-describedby="key-key-hint">
-          <p id="key-key-hint" class="muted hint">{{ t("web.accounts.key_hint") }}</p>
+          <p id="key-key-hint" class="hint">{{ t("web.accounts.key_hint") }}</p>
         </div>
-        <div>
+        <div class="field">
           <label for="key-model">{{ t("web.accounts.model_label") }}</label>
           <input id="key-model" name="model" type="text" value="{{ f.model or '' }}" autocomplete="off" spellcheck="false" required aria-describedby="key-model-hint">
-          <p id="key-model-hint" class="muted hint">{{ t("web.accounts.model_hint") }}</p>
+          <p id="key-model-hint" class="hint">{{ t("web.accounts.model_hint") }}</p>
         </div>
-        <div>
-          <label for="key-review">{{ t("web.accounts.review_label") }}</label>
+        <div class="field">
+          <div class="label-row"><label for="key-review">{{ t("web.accounts.review_label") }}</label>{{ help(hb, "accounts-review", t("web.accounts.review_label"), ["accounts.review_model"]) }}</div>
           <input id="key-review" name="review_model" type="text" value="{{ f.review_model or '' }}" autocomplete="off" spellcheck="false" aria-describedby="key-review-hint">
-          <p id="key-review-hint" class="muted hint">{{ t("web.accounts.review_hint") }}</p>
+          <p id="key-review-hint" class="hint">{{ t("web.accounts.review_hint") }}</p>
         </div>
-        <div>
+        <div class="field">
           <label for="key-budget">{{ t("web.accounts.budget_label") }}</label>
           <input id="key-budget" name="budget" type="number" min="0.01" step="0.01" value="{{ f.budget or '' }}" placeholder="20" required aria-describedby="key-budget-hint">
-          <p id="key-budget-hint" class="muted hint">{{ t("web.accounts.budget_hint") }}</p>
+          <p id="key-budget-hint" class="hint">{{ t("web.accounts.budget_hint") }}</p>
         </div>
         <fieldset>
-          <legend>{{ t("web.accounts.policy_label") }}</legend>
+          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys) }}</div>
           {%- for kind in ("budget", "schedule", "manual") %}
           <label class="check plain"><input type="radio" name="policy" value="{{ kind }}"{% if (f.policy or "budget") == kind %} checked{% endif %}> {{ t("web.spend." ~ kind) }}</label>
           {%- endfor %}
         </fieldset>
-        <div>
-          <label for="key-schedule">{{ t("web.accounts.schedule_label") }}</label>
+        <div class="field field-schedule">
+          <div class="label-row"><label for="key-schedule">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}</div>
           <input id="key-schedule" name="schedule" type="text" value="{{ f.schedule or '' }}" placeholder="* 1-6 * * *" autocomplete="off" spellcheck="false" aria-describedby="key-schedule-hint">
-          <p id="key-schedule-hint" class="muted hint">{{ t("web.accounts.schedule_hint") }} <a href="{{ cron_help }}">crontab.guru</a></p>
+          <p id="key-schedule-hint" class="hint">{{ t("web.accounts.schedule_hint") }} <a href="{{ cron_help }}">crontab.guru</a></p>
         </div>
-        <div>
-          <label for="key-language">{{ t("web.accounts.language_label") }}</label>
+        <div class="field">
+          <div class="label-row"><label for="key-language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
           <select id="key-language" name="language">
             {%- for name, label in writing %}<option value="{{ name }}"{% if (lang == 'es') == (name == 'Spanish') %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
@@ -249,34 +267,35 @@
         <li>{{ t("web.accounts.local.step2") }} <a href="{{ p.models }}">{{ t("web.accounts.local.library") }}</a><pre><code>docker compose --profile local run --rm ollama-pull qwen3-coder</code></pre></li>
         <li>{{ t("web.accounts.local.step3") }}</li>
       </ol>
+      <div class="line caption"><p class="small muted">{{ t("web.help.common.terminal") }}</p></div>
       <form method="post" action="{{ url_for('add_keyed_account') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="kind" value="local">
         <input type="hidden" name="source" value="{{ source }}">
         {%- set f = filled if chosen == "local" else {} %}
-        <div>
-          <label for="local-id">{{ t("web.accounts.id") }}</label>
+        <div class="field">
+          <div class="label-row"><label for="local-id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"]) }}</div>
           <input id="local-id" name="id" type="text" pattern="[a-z0-9][a-z0-9-]{0,39}" value="{{ f.id or '' }}" placeholder="local" autocomplete="off" spellcheck="false" required aria-describedby="local-id-hint">
-          <p id="local-id-hint" class="muted hint">{{ t("web.accounts.id_hint") }}</p>
+          <p id="local-id-hint" class="hint">{{ t("web.accounts.id_hint") }}</p>
         </div>
-        <div>
+        <div class="field">
           <label for="local-model">{{ t("web.accounts.model_label") }}</label>
           <input id="local-model" name="model" type="text" value="{{ f.model or '' }}" placeholder="qwen3-coder" autocomplete="off" spellcheck="false" required aria-describedby="local-model-hint">
-          <p id="local-model-hint" class="muted hint">{{ t("web.accounts.local.model_hint") }}</p>
+          <p id="local-model-hint" class="hint">{{ t("web.accounts.local.model_hint") }}</p>
         </div>
         <fieldset>
-          <legend>{{ t("web.accounts.policy_label") }}</legend>
+          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys) }}</div>
           {%- for kind in ("schedule", "manual") %}
           <label class="check plain"><input type="radio" name="policy" value="{{ kind }}"{% if (f.policy or "schedule") == kind %} checked{% endif %}> {{ t("web.spend." ~ kind) }}</label>
           {%- endfor %}
         </fieldset>
-        <div>
-          <label for="local-schedule">{{ t("web.accounts.schedule_label") }}</label>
+        <div class="field field-schedule">
+          <div class="label-row"><label for="local-schedule">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}</div>
           <input id="local-schedule" name="schedule" type="text" value="{{ f.schedule or '* 1-6 * * *' }}" autocomplete="off" spellcheck="false" aria-describedby="local-schedule-hint">
-          <p id="local-schedule-hint" class="muted hint">{{ t("web.accounts.schedule_hint") }} <a href="{{ cron_help }}">crontab.guru</a></p>
+          <p id="local-schedule-hint" class="hint">{{ t("web.accounts.schedule_hint") }} <a href="{{ cron_help }}">crontab.guru</a></p>
         </div>
-        <div>
-          <label for="local-language">{{ t("web.accounts.language_label") }}</label>
+        <div class="field">
+          <div class="label-row"><label for="local-language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
           <select id="local-language" name="language">
             {%- for name, label in writing %}<option value="{{ name }}"{% if (lang == 'es') == (name == 'Spanish') %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
@@ -287,4 +306,5 @@
     {%- endif %}
   </div>
 </section>
+{{ bubbles(hb) }}
 {% endblock %}

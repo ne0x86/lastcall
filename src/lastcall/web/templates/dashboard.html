@@ -1,96 +1,116 @@
 {% extends "base.html" %}
 {% block title %}{{ t("web.dashboard.title") }}{% endblock %}
 {% block main %}
-<h1>{{ t("web.dashboard.title") }}</h1>
+{%- from "_help.html" import help, bubbles with context %}
+{%- import "_account.html" as card with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+<header class="page-head">
+  <h1>{{ t("web.dashboard.title") }}</h1>
+  <p class="lede">{{ t("web.dashboard.lede") }}</p>
+</header>
 
-{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
+{% if done %}<p class="notice done" role="status">{{ done }}</p>{% endif %}
 
-<section class="card status" aria-label="{{ t('web.service.title') }}">
-  <p>{{ v.service }}</p>
-  <form method="post" action="{{ url_for('service', action='resume' if v.paused else 'pause') }}">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="secondary">{{ t("web.service.resume") if v.paused else t("web.service.pause") }}</button>
-  </form>
+{%- set state = "down" if v.down else ("paused" if v.paused else "on") %}
+<section class="hero hero-{{ state }}" aria-labelledby="service-title">
+  <div class="hero-main">
+    <div class="hero-head">
+      <span class="dot" aria-hidden="true"></span>
+      <h2 id="service-title">{{ t("web.service.state." ~ state) }}</h2>
+      {%- if v.down %}{{ help(hb, "dashboard-service", t("web.service.title"), ["dashboard.service"]) }}{% endif %}
+    </div>
+    {%- if v.down %}
+    <p class="hero-text">{{ t("web.service.down") }}</p>
+    {%- if v.seen %}<p class="hero-seen">{{ v.seen }}</p>{% endif %}
+    <p class="hero-text">{{ t("web.service.start") }}</p>
+    <div class="command"><pre><code>docker compose restart lastcall</code></pre>{{ help(hb, "common-terminal", t("web.help.common.terminal.title"), ["common.terminal"]) }}</div>
+    {%- if v.paused %}<p class="hero-seen">{{ v.service }}</p>{% endif %}
+    {%- else %}
+    <div class="hero-line"><p class="hero-text">{{ v.service }}</p>{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}</div>
+    {%- endif %}
+  </div>
+  <div class="hero-actions">
+    <form method="post" action="{{ url_for('service', action='resume' if v.paused else 'pause') }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="{{ 'primary' if v.paused else 'secondary' }}">{{ t("web.service.resume") if v.paused else t("web.service.pause") }}</button>
+    </form>
+    {{- help(hb, "dashboard-pause", t("web.service.pause"), ["dashboard.pause"]) }}
+  </div>
 </section>
-
-{% if v.down %}
-<section class="card notice">
-  <p>{{ t("web.service.down") }}{% if v.seen %} {{ v.seen }}{% endif %}</p>
-  <pre><code>docker compose --profile service up -d</code></pre>
-</section>
-{% endif %}
 
 {% if v.start %}
-<section class="card notice" aria-labelledby="start-title">
+<section class="welcome" aria-labelledby="start-title">
   <h2 id="start-title">{{ t("web.start.title") }}</h2>
+  <p class="lede">{{ t("web.start.intro") }}</p>
   <ol class="steps">
     {%- for step in v.start %}
-    <li><p>{{ step.text }} <a href="{{ url_for(step.link) }}">{{ step.label }}</a></p></li>
+    <li{% if step.done %} class="is-done"{% endif %}><p>{{ step.text }} <a href="{{ url_for(step.link) }}">{{ step.label }}</a></p>{% if step.done %}<span class="visually-hidden">{{ t("web.start.done") }}</span>{% endif %}</li>
     {%- endfor %}
   </ol>
 </section>
 {% endif %}
 
+<section class="card waiting" aria-labelledby="review-title">
+  <h2 id="review-title">{{ t("web.review.title") }}</h2>
+  {%- if not v.prs and not v.decisions and not v.plans %}
+  <p class="empty">{{ t("web.review.none") }}</p>
+  {%- endif %}
+  <div class="waiting-groups">
+  {%- if v.prs %}
+  <div class="waiting-group kind-prs">
+    <div class="section-head"><h3>{{ t("web.review.prs") }}</h3>{{ help(hb, "dashboard-prs", t("web.review.prs"), ["dashboard.prs"]) }}</div>
+    <ul class="actions">
+      {%- for pr in v.prs %}
+      <li><a href="{{ pr.url }}">{{ pr.text }}</a> <span class="note">{{ pr.note }}</span></li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+  {%- if v.decisions %}
+  <div class="waiting-group kind-decisions">
+    <div class="section-head"><h3>{{ t("web.review.decisions") }}</h3>{{ help(hb, "dashboard-decisions", t("web.review.decisions"), ["dashboard.decisions"]) }}</div>
+    <ul class="actions">
+      {%- for d in v.decisions %}
+      <li><a href="{{ d.url }}">{{ d.text }}</a></li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+  {%- if v.plans %}
+  <div class="waiting-group kind-plans">
+    <div class="section-head"><h3>{{ t("web.review.plans") }}</h3>{{ help(hb, "dashboard-plans", t("web.review.plans"), ["dashboard.plans"]) }}</div>
+    <ul class="actions">
+      {%- for p in v.plans %}
+      <li><a href="{{ p.url }}">{{ p.text }}</a></li>
+      {%- endfor %}
+    </ul>
+  </div>
+  {%- endif %}
+  </div>
+</section>
+
 {% if v.accounts %}
 <section aria-labelledby="accounts-title">
-  <h2 id="accounts-title">{{ t("web.accounts.title") }}</h2>
+  <div class="section-head section-title"><h2 id="accounts-title">{{ t("web.accounts.title") }}</h2></div>
   <div class="grid">
     {%- for a in v.accounts %}
-    {%- set account = loop.index %}
-    <article class="card">
-      <h3>{{ a.id }} <span class="badge">{{ a.engine }}</span></h3>
-      <p class="muted">{{ a.details }}</p>
-      {%- for w in a.windows %}
-      <div class="window">
-        <p class="window-label"><span id="window-{{ account }}-{{ loop.index }}">{{ w.label }}</span> <span>{{ w.used_text }}{% if w.resets %} · {{ w.resets }}{% endif %}</span></p>
-        <meter aria-labelledby="window-{{ account }}-{{ loop.index }}" min="0" max="100" low="70" high="90" optimum="0" value="{{ w.used }}">{{ w.used_text }}</meter>
-      </div>
-      {%- endfor %}
-      {%- if a.paid %}<p class="error">{{ t("web.accounts.paid") }}</p>{% endif %}
-      {%- if a.plan %}<p>{{ a.plan }}</p>{% endif %}
-      {%- if a.working %}<p class="working">{{ a.working }}</p>{% endif %}
-      {%- if a.read %}<p class="muted small">{{ a.read }}</p>{% endif %}
+    {%- set keyed = a.engine_key == "opencode" %}
+    <article class="card account{% if not a.enabled %} is-off{% endif %}">
+      {{ card.head(hb, a, "h3", "", v.down or v.paused) }}
+      {{ card.details_line(hb, a, keyed) }}
+      {{ card.plan(hb, a, v.down or v.paused) }}
+      {{ card.meters(hb, a, loop.index) }}
+      {{ card.lines(hb, a, keyed) }}
     </article>
     {%- endfor %}
   </div>
 </section>
 {% endif %}
 
-<section class="card" aria-labelledby="review-title">
-  <h2 id="review-title">{{ t("web.review.title") }}</h2>
-  {%- if not v.prs and not v.decisions and not v.plans %}
-  <p class="muted">{{ t("web.review.none") }}</p>
-  {%- endif %}
-  {%- if v.prs %}
-  <h3>{{ t("web.review.prs") }}</h3>
-  <ul class="plain">
-    {%- for pr in v.prs %}
-    <li><a href="{{ pr.url }}">{{ pr.text }}</a> <span class="muted">{{ pr.note }}</span></li>
-    {%- endfor %}
-  </ul>
-  {%- endif %}
-  {%- if v.decisions %}
-  <h3>{{ t("web.review.decisions") }}</h3>
-  <ul class="plain">
-    {%- for d in v.decisions %}
-    <li><a href="{{ d.url }}">{{ d.text }}</a></li>
-    {%- endfor %}
-  </ul>
-  {%- endif %}
-  {%- if v.plans %}
-  <h3>{{ t("web.review.plans") }}</h3>
-  <ul class="plain">
-    {%- for p in v.plans %}
-    <li><a href="{{ p.url }}">{{ p.text }}</a></li>
-    {%- endfor %}
-  </ul>
-  {%- endif %}
-</section>
-
 <section class="card" aria-labelledby="projects-title">
-  <h2 id="projects-title">{{ t("web.projects.title") }}</h2>
+  <div class="section-head"><h2 id="projects-title">{{ t("web.projects.title") }}</h2>{{ help(hb, "dashboard-projects", t("web.help.common.table.title"), ["dashboard.state", "common.findings", "dashboard.prs"]) }}</div>
   {%- if v.projects %}
-  <div class="table">
+  <div class="table projects-table">
     <table>
       <thead><tr>
         <th scope="col">{{ t("web.projects.project") }}</th>
@@ -103,8 +123,8 @@
         {%- for p in v.projects %}
         <tr>
           <th scope="row">{{ p.repo }}</th>
-          <td data-label="{{ t('web.projects.state') }}">{{ p.state }}</td>
-          <td data-label="{{ t('web.projects.last') }}">{{ p.last }}{% if p.last_status %} · {{ p.last_status }}{% endif %}</td>
+          <td data-label="{{ t('web.projects.state') }}"><span class="chip {{ 'state-active' if p.active else 'state-off' }}">{{ p.state }}</span></td>
+          <td data-label="{{ t('web.projects.last') }}">{{ p.last }}{% if p.last_status %} · <span class="run run-{{ p.last_key }}">{{ p.last_status }}</span>{% endif %}</td>
           <td data-label="{{ t('web.projects.findings') }}">{{ p.findings }}</td>
           <td data-label="{{ t('web.projects.prs') }}" class="number">{{ p.prs }}</td>
         </tr>
@@ -113,14 +133,14 @@
     </table>
   </div>
   {%- else %}
-  <p class="muted">{{ t("web.projects.none") }}</p>
+  <p class="empty">{{ t("web.projects.none") }} <a href="{{ url_for('projects_page') }}">{{ t("web.nav.projects") }}</a></p>
   {%- endif %}
 </section>
 
 <section class="card" aria-labelledby="runs-title">
-  <h2 id="runs-title">{{ t("web.runs.title") }}</h2>
+  <div class="section-head"><h2 id="runs-title">{{ t("web.runs.title") }}</h2>{{ help(hb, "dashboard-runs", t("web.help.common.table.title"), ["dashboard.trigger", "dashboard.status"]) }}</div>
   {%- if v.runs %}
-  <div class="table">
+  <div class="table runs-table">
     <table>
       <thead><tr>
         <th scope="col">{{ t("web.runs.started") }}</th>
@@ -137,7 +157,7 @@
           <td data-label="{{ t('web.runs.project') }}">{{ r.repo }}</td>
           <td data-label="{{ t('web.runs.account') }}">{{ r.account }}</td>
           <td data-label="{{ t('web.runs.trigger') }}">{{ r.trigger }}</td>
-          <td data-label="{{ t('web.runs.status') }}" class="state-{{ r.status_key }}">{{ r.status }}</td>
+          <td data-label="{{ t('web.runs.status') }}" class="state-{{ r.status_key }}"><span class="run run-{{ r.status_key }}">{{ r.status }}</span></td>
           <td data-label="{{ t('web.runs.duration') }}">{{ r.duration }}</td>
         </tr>
         {%- endfor %}
@@ -145,7 +165,8 @@
     </table>
   </div>
   {%- else %}
-  <p class="muted">{{ t("web.runs.none") }}</p>
+  <p class="empty">{{ t("web.runs.none") }}</p>
   {%- endif %}
 </section>
+{{ bubbles(hb) }}
 {% endblock %}

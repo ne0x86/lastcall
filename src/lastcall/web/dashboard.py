@@ -17,7 +17,7 @@ from lastcall.store import AccountRow, Store
 
 HOUR = 3600.0
 SERVICE_GONE = 5 * 60.0  # the service writes its heartbeat every minute
-FINDING_ORDER = ("in_pr", "pending", "decide", "merged", "resolved", "rejected", "dismissed", "discarded")
+FINDING_ORDER = ("in_pr", "pending", "decide", "merged", "reverted", "resolved", "rejected", "dismissed", "discarded")
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,7 @@ class Step:
     text: str
     link: str  # the page of the web UI that does it, by endpoint
     label: str
+    done: bool = False
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,9 @@ class WindowView:
     used: float
     used_text: str
     resets: str
+    role: str = "expiring"  # expiring, throttle or budget: picks the meter's colours and its help bubble
+    model: bool = False  # the window limits one model only
+    reserve: int = 0  # the owner's reserve, rounded to 5, for the marker on an expiring window
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,10 @@ class AccountView:
     plan: str
     paid: bool
     working: str
+    engine_key: str = ""  # claude-code, codex, opencode: the engine's colour
+    enabled: bool = True
+    plan_code: str = ""  # the plan's code, for the account's state chip
+    reviewing: bool = False  # busy as a reviewer of another account's run
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,8 @@ class ProjectView:
     last_status: str
     findings: str
     prs: int
+    active: bool = False
+    last_key: str = ""  # the last run's status: ok, failed... for its colour
 
 
 @dataclass(frozen=True)
@@ -103,12 +113,18 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
     )
     accounts = store.accounts()
     projects = store.projects()
-    if not github_ready:
-        view.start.append(Step(text(lang, "web.start.github"), "github_page", text(lang, "web.github.title")))
-    if not accounts:
-        view.start.append(Step(text(lang, "web.start.accounts"), "accounts_page", text(lang, "web.nav.accounts")))
-    if not any(p.active for p in projects):
-        view.start.append(Step(text(lang, "web.start.projects"), "projects_page", text(lang, "web.nav.projects")))
+    steps = [
+        Step(text(lang, "web.start.github"), "github_page", text(lang, "web.github.title"), github_ready),
+        Step(text(lang, "web.start.accounts"), "accounts_page", text(lang, "web.nav.accounts"), bool(accounts)),
+        Step(
+            text(lang, "web.start.projects"),
+            "projects_page",
+            text(lang, "web.nav.projects"),
+            any(p.active for p in projects),
+        ),
+    ]
+    if not all(step.done for step in steps):
+        view.start = steps
     working = working_on(store.running())
     view.accounts = [account_view(store, a, lang, now, working.get(a.id)) for a in accounts]
     view.prs = [
@@ -149,9 +165,10 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
     line = " · ".join(details)
     line = line[:1].upper() + line[1:]
     reading = ledger(store, row, now) if row.keyed else store.last_reading(row.id)
-    windows, read, plan_text, paid = [], text(lang, "web.accounts.never"), "", False
+    windows, read, plan_text, paid, code = [], text(lang, "web.accounts.never"), "", False, ""
     if reading:
-        windows = [window_view(lang, w, now, row.budget_usd) for w in reading.windows]
+        reserve = 0.0 if row.keyed else row.reserve_pct
+        windows = [window_view(lang, w, now, row.budget_usd, reserve) for w in reading.windows]
         if row.keyed:
             read = "" if row.budget_usd else text(lang, "web.accounts.free")
         else:
@@ -163,17 +180,21 @@ def account_view(store: Store, row: AccountRow, lang: str, now: float, run: dict
             models = audit_models(row.account())
         except ValueError:  # an account that this version cannot run
             models = []
-        plan_text = describe_plan(lang, plan(reading, policy, rate, now, models), now, row.budget_usd, row.schedule)
+        planned = plan(reading, policy, rate, now, models)
+        plan_text, code = describe_plan(lang, planned, now, row.budget_usd, row.schedule), planned.code
         paid = reading.paid_usage
-    working = ""
+    working, reviewing = "", False
     if run is not None:
         when = ago(lang, run["started"], now)
         if run["account"] == row.id:
             working = text(lang, "web.accounts.working", repo=run["repo"], when=when)
         else:  # a peer of someone else's run
             working = text(lang, "web.accounts.reviewing", repo=run["repo"], lead=run["account"], when=when)
+            reviewing = True
     title = engines.BUILTIN[row.engine]().title if row.engine in engines.BUILTIN else row.engine
-    return AccountView(row.id, title, line, windows, read, plan_text, paid, working)
+    return AccountView(
+        row.id, title, line, windows, read, plan_text, paid, working, row.engine, row.enabled, code, reviewing
+    )
 
 
 def ledger(store: Store, row: AccountRow, now: float) -> Reading:
@@ -181,14 +202,23 @@ def ledger(store: Store, row: AccountRow, now: float) -> Reading:
     return ledger_reading(row.id, row.budget_usd, store.spent(row.id, month(now)[0]), now)
 
 
-def window_view(lang: str, w: Window, now: float, budget_usd: float | None = None) -> WindowView:
-    resets = text(lang, "web.window.resets", when=until(lang, w.resets_at, now)) if w.resets_at else ""
+def window_view(
+    lang: str, w: Window, now: float, budget_usd: float | None = None, reserve_pct: float = 0.0
+) -> WindowView:
+    if not w.resets_at:
+        resets = ""
+    elif w.resets_at < now:
+        resets = text(lang, "web.window.reset_passed")
+    else:
+        resets = text(lang, "web.window.resets", when=until(lang, w.resets_at, now))
+    used_pct = min(100.0, w.used_pct)
     if w.name == BUDGET and budget_usd:
         spent = money(lang, w.used_pct * budget_usd / 100)
         used = text(lang, "web.window.spent", spent=spent, budget=money(lang, budget_usd))
-        return WindowView(text(lang, "web.window.budget"), min(100.0, w.used_pct), used, resets)
+        return WindowView(text(lang, "web.window.budget"), used_pct, used, resets, "budget")
     used = text(lang, "web.window.used", pct=percent(lang, w.used_pct))
-    return WindowView(window_label(lang, w.name, w.model), min(100.0, w.used_pct), used, resets)
+    reserve = 0 if w.role == "throttle" else min(90, round(reserve_pct / 5) * 5)
+    return WindowView(window_label(lang, w.name, w.model), used_pct, used, resets, w.role, bool(w.model), reserve)
 
 
 def provider_title(row: AccountRow) -> str:
@@ -250,6 +280,8 @@ def project_view(
         label(lang, "web.run", last["status"]) if last else "",
         findings or text(lang, "web.projects.no_findings"),
         len(store.open_prs(repo)),
+        active,
+        last["status"] if last else "",
     )
 
 

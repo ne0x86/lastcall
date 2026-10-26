@@ -1,0 +1,26 @@
+{#- Help bubbles: a "?" button that opens a popover, with no script.
+    A page makes `{% set hb = namespace(items=[], seen=[]) %}`, calls help(hb, ...) next to whatever needs it, and
+    bubbles(hb) once, at the end of main. Each popover renders once per page, and only when one of its "?" did.
+    `keys` are catalog keys under web.help.*; their paragraphs make the popover's text. -#}
+{% macro help(hb, id, title, keys) -%}
+{%- set target = "help-" ~ id -%}
+<button type="button" class="help" popovertarget="{{ target }}" aria-label="{{ t('web.help.label', topic=title) }}">?</button>
+{%- if target not in hb.seen %}{% set hb.seen = hb.seen + [target] %}{% set hb.items = hb.items + [(target, title, keys)] %}{% endif -%}
+{%- endmacro %}
+
+{% macro bubbles(hb) -%}
+{%- if hb.items %}
+<div class="bubbles">
+  <h2 class="bubbles-title">{{ t("web.help.glossary") }}</h2>
+  {%- for target, title, keys in hb.items %}
+  <div id="{{ target }}" popover class="bubble" role="note" aria-labelledby="{{ target }}-title">
+    <h3 id="{{ target }}-title">{{ title }}</h3>
+    {%- for key in keys %}
+    <p>{{ t("web.help." ~ key) }}</p>
+    {%- endfor %}
+    <button type="button" class="bubble-close" popovertarget="{{ target }}" popovertargetaction="hide">{{ t("web.help.close") }}</button>
+  </div>
+  {%- endfor %}
+</div>
+{%- endif %}
+{%- endmacro %}

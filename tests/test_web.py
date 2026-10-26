@@ -170,7 +170,7 @@ def test_pause_and_resume_need_the_csrf_token(web: Web) -> None:
     assert response.headers["Location"] == "/?done=paused"
     assert web.store.setting("paused") == "yes"
     page = web.client.get("/?done=paused").get_data(as_text=True)
-    assert "Paused. No new runs start." in page and "New runs: paused." in page
+    assert "Paused. No burst starts until you resume." in page and "Bursts: paused." in page
     web.client.post("/service/resume", data={"csrf": web.csrf()}, headers=SITE)
     assert web.store.setting("paused") == "no"
 
@@ -531,8 +531,9 @@ def test_accounts_page(tmp_path: Path) -> None:
     web.set_up()
     csrf = web.csrf()
     assert '<a href="/accounts">Accounts</a>' in web.client.get("/").get_data(as_text=True)
-    header = web.client.get("/accounts").get_data(as_text=True)
-    assert 'hreflang="es">Español</a>' in header  # the page's own lists never replace the header's
+    assert 'hreflang="es">Español</a>' not in web.client.get("/accounts").get_data(as_text=True)
+    settings = web.client.get("/settings").get_data(as_text=True)
+    assert 'hreflang="es">Español</a>' in settings  # the language is a setting
 
     def add(**form: str) -> tuple[int, str]:
         response = web.client.post("/accounts/add", data={"csrf": csrf, **form}, headers=SITE)
