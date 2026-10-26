@@ -597,7 +597,9 @@ def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
     assert "five cron fields" in add(**{**key, "policy": "schedule", "schedule": "nightly"})[1]
     assert add(**{**key, "policy": "before-reset"})[0] == 400  # only a forged form
     assert add(**{**key, "source": "claude-code/openrouter"})[0] == 400
-    assert add(**key)[0] == 302
+    response = web.client.post("/accounts/add-key", data={"csrf": csrf, **key}, headers=SITE)
+    assert response.headers["Location"] == "/accounts?done=key_added"
+    assert "It needs no login" in web.client.get(response.headers["Location"]).get_data(as_text=True)
     assert web.secrets.get("key-openrouter") == "sk-or-test"
     row = web.store.account("openrouter")
     assert row is not None

@@ -412,6 +412,7 @@
   "web.spend.schedule": "En las horas de su horario",
   "web.spend.manual": "Solo lo que lances tú",
   "web.done.account_added": "Cuenta añadida. Inicia sesión en ella y después lee su cuota.",
+  "web.done.key_added": "Cuenta añadida. No necesita login: lastcall la gasta según su política, y su tarjeta muestra cómo.",
   "web.done.reading": "Leyendo la cuota en el sandbox. Recarga esta página en un minuto.",
 
   "web.dest.title": "Añadir un destino",

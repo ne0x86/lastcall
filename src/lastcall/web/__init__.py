@@ -541,7 +541,7 @@ def create_app(
         now = clock()
         working = dashboard.working_on(store.running())
         done = request.args.get("done", "")
-        known = ("saved", "account_added", "reading")
+        known = ("saved", "account_added", "key_added", "reading")
         message = t(f"web.done.{done}") if done in known and not error else ""
         all_engines = [engines.get(name) for name in sorted(engines.BUILTIN)]
         sources = [(e, p) for e in all_engines if isinstance(e, Keyed) for p in e.providers]
@@ -642,7 +642,7 @@ def create_app(
             schedule=schedule,
         )
         log(f"Web UI: account {account.id} ({account.engine} on {account.provider}) added")
-        return redirect(url_for("accounts_page", done="account_added"))
+        return redirect(url_for("accounts_page", done="key_added"))
 
     def spending(
         form: Mapping[str, str], row: AccountRow | None, engine: str, provider: str, account_id: str

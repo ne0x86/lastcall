@@ -412,6 +412,7 @@
   "web.spend.schedule": "At the hours of its schedule",
   "web.spend.manual": "Only the runs you start",
   "web.done.account_added": "Account added. Sign it in, then read its quota.",
+  "web.done.key_added": "Account added. It needs no login: lastcall spends it by its policy, and its card shows how.",
   "web.done.reading": "Reading the quota in the sandbox. Reload this page in a minute.",
 
   "web.dest.title": "Add a destination",
