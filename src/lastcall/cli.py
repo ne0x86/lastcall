@@ -6,6 +6,8 @@ lastcall account add <account> --engine opencode --provider openrouter --model <
 lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive] [--signals <tracker project>]
 lastcall signals connect --url https://sentry.io --org <slug>   # the error tracker, Sentry or GlitchTip
 lastcall signals show <owner/name>                # the errors in production that the audits read
+lastcall logs on | off                            # read the logs of the containers labelled lastcall.project
+lastcall logs show <owner/name>                   # the errors in those logs, as the audits read them
 lastcall quota <account>                        # read an account's quota through the supervisor
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
 lastcall github repos                           # installed repositories, with lastcall's suggestions
@@ -38,7 +40,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines, projects, signals, web
+from lastcall import engines, logs, projects, signals, web
 from lastcall.accounts import (
     Account,
     check_spending,
@@ -144,6 +146,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     sig_show = sig.add_parser("show", help="the errors in production of a project, as the audits read them")
     sig_show.add_argument("repo", help="owner/name of a project with its project in the tracker")
+    logs_cmd = commands.add_parser(
+        "logs", help="errors in the logs of the containers labelled lastcall.project=<owner/name> on this host"
+    ).add_subparsers(dest="action", required=True)
+    logs_cmd.add_parser("on", help="let lastcall read them, for the audits, the tests and the ranking")
+    logs_cmd.add_parser("off", help="stop reading them")
+    logs_show = logs_cmd.add_parser("show", help="the errors in the logs of a project's containers")
+    logs_show.add_argument("repo", help="owner/name, as the label writes it")
     quota_cmd = commands.add_parser("quota", help="read an account's quota through the supervisor")
     quota_cmd.add_argument("account")
 
@@ -245,6 +254,16 @@ def dispatch(args: argparse.Namespace) -> int:
                 st.set_signals(args.repo, args.signals.strip())
             print(f"Project {args.repo}: {'inactive' if args.inactive else 'active'}, weight {args.weight:g}.")
             return 0
+        case "logs", "on" | "off":
+            store().set_setting(logs.SETTING, "yes" if args.action == "on" else "no")
+            print(
+                "lastcall reads the logs of the containers labelled lastcall.project."
+                if args.action == "on"
+                else "lastcall no longer reads the container logs."
+            )
+            return 0
+        case "logs", "show":
+            return show_logs(args.repo)
         case "signals", "connect":
             return connect_signals(args.url, args.org, args.token_file)
         case "signals", "show":
@@ -359,6 +378,19 @@ def connect_signals(url: str, org: str, token_file: str | None) -> int:
         return 1
     tracker.save(secret_store())
     print(f"Connected to {url}, organization {tracker.org}. Give each project its project there with `project add`.")
+    return 0
+
+
+def show_logs(repo: str) -> int:
+    try:
+        containers, kinds = logs.errors(sandbox().logs(repo, logs.HOURS * 3600))
+    except SandboxError as e:
+        print(e, file=sys.stderr)
+        return 1
+    if not containers:
+        print(f"No container on this host carries the label {logs.LABEL}={repo}.", file=sys.stderr)
+        return 1
+    print(logs.section(containers, kinds))
     return 0
 
 

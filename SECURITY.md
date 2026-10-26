@@ -21,6 +21,7 @@ Security fixes go into the latest release.
 - the secret store, with the GitHub App key and the API keys, and the monthly budget of each key;
 - the local model server, which has no way out;
 - the masking of what lastcall reads from production before it reaches a model;
+- the supervisor's reading of container logs: only the containers that the owner labels for a project;
 - the protections of the web UI.
 
 A report that breaks one of these is especially welcome.

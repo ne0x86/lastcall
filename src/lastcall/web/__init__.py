@@ -30,7 +30,7 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, cron, destinations, engines, i18n, projects, signals
+from lastcall import __version__, cron, destinations, engines, i18n, logs, projects, signals
 from lastcall.accounts import ACCOUNT_ID, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
@@ -433,11 +433,12 @@ def create_app(
             "chats": list(chats),
             "fanout": store.setting("fanout") == "yes",
             "tracker": tracker,
+            "logs": store.setting(logs.SETTING) == "yes",
             "signals_url": (tried or {}).get("url") or (tracker.url if tracker else "https://sentry.io"),
             "signals_org": (tried or {}).get("org") or (tracker.org if tracker else ""),
         }
         done = request.args.get("done", "")
-        known = ("saved", "notify_added", "notify_removed", "notify_sent", "signals", "signals_removed")
+        known = ("saved", "notify_added", "notify_removed", "notify_sent", "signals", "signals_removed", "logs")
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page(
             "settings.html",
@@ -471,6 +472,14 @@ def create_app(
         tracker.save(secrets)
         log(f"Web UI: errors in production read from {url}, organization {org}")
         return redirect(url_for("settings_page", done="signals") + "#signals")
+
+    @app.post("/settings/logs")
+    @signed_in
+    def logs_settings() -> ResponseReturnValue:
+        on = request.form.get("logs") == "1"
+        store.set_setting(logs.SETTING, "yes" if on else "no")
+        log(f"Web UI: container logs {'on' if on else 'off'}")
+        return redirect(url_for("settings_page", done="logs" if on else "saved") + "#logs")
 
     @app.post("/settings/signals/remove")
     @signed_in

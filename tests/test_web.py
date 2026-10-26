@@ -816,6 +816,20 @@ def test_errors_in_production_from_the_web(tmp_path: Path) -> None:
     assert 'name="signals"' not in web.client.get("/projects").get_data(as_text=True)
 
 
+def test_container_logs_from_the_web(web: Web) -> None:
+    web.set_up()
+    csrf = web.csrf()
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "Container logs" in page and "lastcall.project: owner/name" in page
+    assert 'name="logs" value="1"> Read the logs of the labelled containers' in page
+    response = web.client.post("/settings/logs", data={"csrf": csrf, "logs": "1"}, headers=SITE)
+    assert response.headers["Location"] == "/settings?done=logs#logs"
+    assert web.store.setting("container_logs") == "yes"
+    assert 'name="logs" value="1" checked>' in web.client.get("/settings").get_data(as_text=True)
+    web.client.post("/settings/logs", data={"csrf": csrf}, headers=SITE)
+    assert web.store.setting("container_logs") == "no"
+
+
 def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:
     from lastcall.recipes.improve import ImproveReport
 

@@ -113,6 +113,24 @@ class Sandbox:
             conn.close()
         return Outcome(int(final.get("exit", -1)), bool(final.get("timed_out")), str(final.get("stderr") or ""))
 
+    def logs(self, project: str, since: int) -> list[dict[str, Any]]:
+        """The containers of this host labelled for the project, with their state and recent log lines
+        (`lastcall.supervisor.read_logs`)."""
+        conn = _UnixConnection(str(self.socket_path), 180.0)
+        try:
+            body = json.dumps({"project": project, "since": int(since)})
+            conn.request("POST", "/logs", body, {"Content-Type": "application/json"})
+            resp = conn.getresponse()
+            raw = resp.read()
+        except OSError as e:
+            raise SandboxError(f"supervisor unreachable at {self.socket_path}: {e}") from e
+        finally:
+            conn.close()
+        if resp.status != 200:
+            raise SandboxError(_error(raw))
+        found = json.loads(raw).get("containers")
+        return [c for c in found if isinstance(c, dict)] if isinstance(found, list) else []
+
     def _relative(self, path: Path) -> str:
         try:
             return path.resolve().relative_to(self.data_root.resolve()).as_posix()

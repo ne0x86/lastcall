@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lastcall import environment, git, i18n, pack, scanners, signals
+from lastcall import environment, git, i18n, logs, pack, scanners, signals
 from lastcall.accounts import Account, engine_for, read_quota
 from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
 from lastcall.environment import TOOL_ENV, Environment
@@ -266,19 +266,30 @@ def audit_repo(
 
 
 def production_errors(inst: Instance, repo: str, clone: Path, log: Log = print) -> dict[str, str]:
-    """The pack's section on errors in production, when the owner connected an error tracker and gave the project
-    its project there. A tracker that cannot be read leaves a note, never a failed run."""
+    """The pack's sections on errors in production: from the owner's error tracker, when it is connected and the
+    project has its project there; and from the logs of the project's labelled containers, when the owner lets
+    lastcall read them. A source that cannot be read leaves a note, never a failed run."""
+    out: dict[str, str] = {}
     project = inst.store.project(repo)
     tracker = signals.Tracker.load(inst.secrets) if inst.secrets is not None else None
-    if tracker is None or project is None or not project.signals:
-        return {}
-    log(f"Reading the errors of {repo} in production, from {tracker.url}.")
-    try:
-        found = signals.errors(tracker, project.signals, git.files(clone), time.time(), inst.fetch)
-    except signals.SignalsError as e:
-        log(f"{repo}: the errors in production were not read: {e}")
-        return {signals.TITLE: f"Not read: {e}"}
-    return {signals.TITLE: signals.section(found)}
+    if tracker is not None and project is not None and project.signals:
+        log(f"Reading the errors of {repo} in production, from {tracker.url}.")
+        try:
+            found = signals.errors(tracker, project.signals, git.files(clone), time.time(), inst.fetch)
+            out[signals.TITLE] = signals.section(found)
+        except signals.SignalsError as e:
+            log(f"{repo}: the errors in production were not read: {e}")
+            out[signals.TITLE] = f"Not read: {e}"
+    if inst.store.setting(logs.SETTING) == "yes":
+        try:
+            containers, kinds = logs.errors(inst.box.logs(repo, logs.HOURS * 3600), git.files(clone))
+        except SandboxError as e:
+            log(f"{repo}: the container logs were not read: {e}")
+            containers, kinds = [], []
+        if containers:
+            log(f"Read the logs of {len(containers)} container(s) of {repo}: {len(kinds)} kinds of errors.")
+            out[logs.TITLE] = logs.section(containers, kinds)
+    return out
 
 
 def tests_repo(

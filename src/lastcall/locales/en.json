@@ -364,6 +364,7 @@
   "web.done.notify_sent": "Test notification sent.",
   "web.done.signals": "Connected. Give each project its project in the tracker on the Projects page.",
   "web.done.signals_removed": "Disconnected: lastcall no longer reads the errors in production.",
+  "web.done.logs": "On. lastcall reads the logs of the containers labelled lastcall.project.",
 
   "web.nav.accounts": "Accounts",
   "web.github.title": "GitHub App",
@@ -515,6 +516,12 @@
   "web.signals.remove": "Disconnect",
   "web.signals.bad": "Give an address (http or https), the organization's slug and the token.",
   "web.signals.failed": "The tracker did not answer as expected: {error}",
+  "web.logs.title": "Container logs",
+  "web.logs.intro": "If your apps run in Docker on this same machine, lastcall can read the logs of their containers, with no change to their code: the errors there, grouped by kind, and the restarts. The audits look for their causes first, the tests cover them, and projects with errors in the last day go first. Lines with personal data and secrets are masked before they reach a model.",
+  "web.logs.step1": "In each app's compose file, give the containers of a project the label lastcall.project with the project's name, as the Projects page writes it, then run docker compose up -d for that app:",
+  "web.logs.step2": "lastcall reads only the containers that carry that label, and only their logs and state: never another container.",
+  "web.logs.step3": "Turn it on here. lastcall reads the last 24 hours of each one, every 30 minutes and before each run.",
+  "web.logs.on": "Read the logs of the labelled containers",
 
   "web.time.now": "just now",
   "web.time.ago": "{span} ago",

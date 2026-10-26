@@ -63,6 +63,24 @@
   {%- endif %}
 </section>
 
+<section class="card" aria-labelledby="logs-title" id="logs">
+  <h2 id="logs-title">{{ t("web.logs.title") }}</h2>
+  <p>{{ t("web.logs.intro") }}</p>
+  <ol class="steps">
+    <li>{{ t("web.logs.step1") }}<pre><code>services:
+  your-app:
+    labels:
+      lastcall.project: owner/name</code></pre></li>
+    <li>{{ t("web.logs.step2") }}</li>
+    <li>{{ t("web.logs.step3") }}</li>
+  </ol>
+  <form method="post" action="{{ url_for('logs_settings') }}#logs" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="check plain"><input type="checkbox" name="logs" value="1"{% if v.logs %} checked{% endif %}> {{ t("web.logs.on") }}</label>
+    <button class="secondary">{{ t("web.project.save") }}</button>
+  </form>
+</section>
+
 <section class="card" aria-labelledby="notify-title">
   <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
   <p>{{ t("web.notify.intro") }}</p>

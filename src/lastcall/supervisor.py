@@ -11,6 +11,10 @@ files; `steps/<id>/ctx/` is written here for one step and mounted read-only at /
 
 Response: newline-delimited JSON, `{"out": line}` for each line the CLI prints, then
 `{"exit": code, "timed_out": bool, "stderr": tail}`.
+
+`POST /logs` reads the recent logs of the containers on this host that the owner labelled `lastcall.project=<owner/
+name>`, for the signals of that project: only containers with that label, only their logs and state, only within the
+last 7 days, and capped in lines and bytes. It never starts, stops or changes a container.
 """
 
 from __future__ import annotations
@@ -42,6 +46,12 @@ MAX_TIMEOUT = 2 * 3600.0
 SAFE_PATH = re.compile(r"[A-Za-z0-9._/-]+")  # no commas: paths end up in --mount specs
 ACCOUNT_VOLUME = re.compile(r"lastcall-account-[a-z0-9][a-z0-9-]{0,39}")
 ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+LOG_LABEL = "lastcall.project"  # the label that lets lastcall read a container's logs, set by the owner
+PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,38}/[A-Za-z0-9_.-]{1,100}")
+MAX_LOG_SECONDS = 7 * 86_400
+MAX_LOG_CONTAINERS = 10
+MAX_LOG_LINES = 5000  # per container
+MAX_LOG_BYTES = 2 * 1024 * 1024  # per container and stream
 RESERVED_ENV = {"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"}
 NO_PROXY = "localhost,127.0.0.1,ollama"  # the local model server lives on the sandbox network, not behind the proxy
 
@@ -180,6 +190,68 @@ def _data_path(config: Config, rel: str, directory: bool) -> Path:
     return full
 
 
+@dataclass(frozen=True)
+class LogRequest:
+    project: str  # owner/name, as the label writes it (case does not matter)
+    since: int  # how far back, in seconds
+
+    @classmethod
+    def parse(cls, body: Mapping[str, Any]) -> LogRequest:
+        project, since = body.get("project"), body.get("since", 86_400)
+        if not isinstance(project, str) or not PROJECT.fullmatch(project):
+            raise Invalid(f"not a project: {project!r}")
+        if isinstance(since, bool) or not isinstance(since, int) or not 0 < since <= MAX_LOG_SECONDS:
+            raise Invalid(f"since must be between 1 and {MAX_LOG_SECONDS} seconds")
+        return cls(project, since)
+
+
+Run = Callable[[list[str]], "subprocess.CompletedProcess[bytes]"]
+
+
+def docker(argv: list[str], timeout: float = 60.0) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(["docker", *argv], capture_output=True, check=False, timeout=timeout)
+
+
+def read_logs(req: LogRequest, run: Run = docker) -> dict[str, Any]:
+    """The containers labelled for the project, with their state and the lines of their recent logs, the oldest
+    first (each with Docker's timestamp)."""
+    listed = run(["ps", "-a", "--no-trunc", "--filter", f"label={LOG_LABEL}", "--format", "{{.ID}}\t{{.Labels}}"])
+    ids = []
+    for line in listed.stdout.decode(errors="replace").splitlines():
+        cid, _, labels = line.partition("\t")
+        values = dict(item.partition("=")[::2] for item in labels.split(","))
+        if values.get(LOG_LABEL, "").lower() == req.project.lower() and re.fullmatch(r"[0-9a-f]{12,64}", cid):
+            ids.append(cid)
+    containers = []
+    for cid in ids[:MAX_LOG_CONTAINERS]:
+        found = run(["inspect", cid])
+        try:
+            info = json.loads(found.stdout)[0]
+        except (ValueError, IndexError):
+            continue
+        state = info.get("State") or {}
+        logs = run(["logs", "--since", f"{req.since}s", "--timestamps", "--tail", str(MAX_LOG_LINES), cid])
+        lines = [
+            line
+            for stream in (logs.stdout, logs.stderr)
+            for line in stream[-MAX_LOG_BYTES:].decode(errors="replace").splitlines()
+        ]
+        # Docker's timestamp leads each line: a stable sort on it merges the two streams, and keeps the order of
+        # the lines that one write gave the same time, such as those of a traceback
+        lines.sort(key=lambda line: line.split(" ", 1)[0])
+        containers.append(
+            {
+                "name": str(info.get("Name") or cid[:12]).lstrip("/"),
+                "status": str(state.get("Status") or ""),
+                "restarts": int(info.get("RestartCount") or 0),
+                "oom_killed": bool(state.get("OOMKilled")),
+                "exit_code": state.get("ExitCode"),
+                "lines": lines[-MAX_LOG_LINES:],
+            }
+        )
+    return {"containers": containers}
+
+
 def docker_argv(req: StepRequest, step_id: str, config: Config) -> list[str]:
     """The `docker run` command for one step. Isolation comes from here, never from the request."""
     argv = ["docker", "run", "--rm", "-i", "--name", container_name(step_id), "--network", config.network]
@@ -236,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
     config: Config  # set by make_server
 
     def do_POST(self) -> None:
-        if self.path != "/steps":
+        if self.path not in ("/steps", "/logs"):
             self._reply(404, {"error": "not found"})
             return
         length = int(self.headers.get("Content-Length") or 0)
@@ -247,6 +319,11 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
             if not isinstance(body, dict):
                 raise Invalid("the body must be a JSON object")
+            if self.path == "/logs":
+                found = read_logs(LogRequest.parse(body))
+                self._reply(200, found)
+                log.info("logs project=%s containers=%d", body.get("project"), len(found["containers"]))
+                return
             req = StepRequest.parse(body, self.config)
         except ValueError as e:  # Invalid, or JSON that does not parse
             self._reply(400, {"error": str(e)})
