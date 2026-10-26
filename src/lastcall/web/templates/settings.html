@@ -14,7 +14,10 @@
   <h2 id="runs-title">{{ t("web.runs.settings") }}</h2>
   <form method="post" action="{{ url_for('run_settings') }}" class="stack">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="check plain"><input type="checkbox" name="fanout" value="1"{% if v.fanout %} checked{% endif %}> {{ t("web.runs.fanout") }}</label>
+    <div>
+      <label class="check plain"><input type="checkbox" name="fanout" value="1"{% if v.fanout %} checked{% endif %} aria-describedby="fanout-hint"> {{ t("web.runs.fanout") }}</label>
+      <p id="fanout-hint" class="hint muted">{{ t("web.runs.fanout_hint") }}</p>
+    </div>
     <button class="secondary">{{ t("web.project.save") }}</button>
   </form>
 </section>

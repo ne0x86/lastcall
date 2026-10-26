@@ -230,8 +230,9 @@ both, in turn with its audits: an audit, then tests, then upgrades, then an audi
 
 **After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
 in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
-- **Merge after my approval.** When you, a member or a collaborator approves the latest commit of a lastcall pull
-  request on GitHub, and no check fails or is still running, lastcall merges it. If it no longer merges cleanly,
+- **Merge after my approval.** On GitHub, approving a pull request does not merge it. With this on, when you, a
+  member or a collaborator approves the latest commit of a lastcall pull request, and no check fails or is still
+  running, lastcall merges it. If it no longer merges cleanly,
   lastcall closes it, and the change comes back in a later run, on the current code.
 - **Watch after the merge.** For a day after a merge, lastcall looks at the checks of the merged commit and, if you
   give one, at a health address every 10 minutes. When the checks fail where they passed before, or the address

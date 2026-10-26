@@ -670,10 +670,12 @@ def test_fan_out_from_the_web(github_web: Web) -> None:
     web.client.post("/projects/acme/api/audit", data={"csrf": csrf, "account": "*"}, headers=SITE)
     assert [o["account"] for o in web.store.orders()] == ["*"]
 
-    assert "checked> When several accounts burst" not in web.client.get("/settings").get_data(as_text=True)
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert 'aria-describedby="fanout-hint"> When several accounts burst' in page
+    assert "two that reset on different days rarely meet" in page
     web.client.post("/settings/runs", data={"csrf": csrf, "fanout": "1"}, headers=SITE)
     assert web.store.setting("fanout") == "yes"
-    assert "checked> When several accounts burst" in web.client.get("/settings").get_data(as_text=True)
+    assert 'checked aria-describedby="fanout-hint">' in web.client.get("/settings").get_data(as_text=True)
     web.client.post("/settings/runs", data={"csrf": csrf}, headers=SITE)
     assert web.store.setting("fanout") == "no"
 
