@@ -8,9 +8,9 @@
   <h1>{{ t("web.dashboard.title") }}</h1>
   <p class="lede">{{ t("web.dashboard.lede") }}</p>
   <ul class="readout">
-    <li><a href="{{ '#accounts' if v.accounts else url_for('accounts_page') }}"><span class="readout-n">{{ v.accounts|length }}</span> <span class="readout-l">{{ t("web.accounts.title") }}</span></a></li>
-    <li><a href="#waiting"><span class="readout-n">{{ v.prs|length + v.decisions|length + v.plans|length }}</span> <span class="readout-l">{{ t("web.review.title") }}</span></a></li>
-    <li><a href="#projects"><span class="readout-n">{{ v.projects|length }}</span> <span class="readout-l">{{ t("web.projects.title") }}</span></a></li>
+    <li><a href="{{ '#accounts' if v.accounts else url_for('accounts_page') }}"><span class="readout-n">{{ v.accounts|length }}</span> <span class="readout-l">{{ tn("web.readout.accounts", v.accounts|length) }}</span></a></li>
+    <li><a href="#waiting"><span class="readout-n">{{ v.waiting }}</span> <span class="readout-l">{{ tn("web.readout.waiting", v.waiting) }}</span></a></li>
+    <li><a href="#projects"><span class="readout-n">{{ v.projects|length }}</span> <span class="readout-l">{{ tn("web.readout.projects", v.projects|length) }}</span></a></li>
   </ul>
 </header>
 

@@ -316,6 +316,10 @@ def create_app(
             later(work)
         return redirect(url_for("projects_page", done="refreshing"))
 
+    def project_anchor(repo: str) -> str:
+        """The card of a project on the Projects page: GitHub logins cannot hold two dashes in a row."""
+        return "#project-" + repo.replace("/", "--", 1)
+
     @app.post("/projects/<owner>/<name>")
     @signed_in
     def project_settings(owner: str, name: str) -> ResponseReturnValue:
@@ -350,7 +354,7 @@ def create_app(
             deps=form.get("deps") == "1",
             signals=tracked,
         )
-        return redirect(url_for("projects_page", done="saved"))
+        return redirect(url_for("projects_page", done="saved") + project_anchor(project.repo))
 
     @app.post("/projects/<owner>/<name>/audit")
     @signed_in
@@ -364,7 +368,7 @@ def create_app(
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
             store.add_order("audit", project.repo, account or None, clock())
             log(f"Web UI: audit of {project.repo} ordered")
-        return redirect(url_for("projects_page", done="queued"))
+        return redirect(url_for("projects_page", done="queued") + project_anchor(project.repo))
 
     @app.post("/projects/<owner>/<name>/improve")
     @signed_in
@@ -378,7 +382,7 @@ def create_app(
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
             store.add_order("improve", project.repo, None if account in ("", "*") else account, clock())
             log(f"Web UI: improvement of {project.repo} ordered")
-        return redirect(url_for("projects_page", done="improve"))
+        return redirect(url_for("projects_page", done="improve") + project_anchor(project.repo))
 
     @app.post("/projects/<owner>/<name>/tests")
     @signed_in
@@ -401,7 +405,7 @@ def create_app(
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
             store.add_order(kind, project.repo, None if account in ("", "*") else account, clock())
             log(f"Web UI: {kind} of {project.repo} ordered")
-        return redirect(url_for("projects_page", done=kind))
+        return redirect(url_for("projects_page", done=kind) + project_anchor(project.repo))
 
     @app.get("/settings")
     @signed_in

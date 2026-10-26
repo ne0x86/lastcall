@@ -4,8 +4,9 @@
 {%- from "_help.html" import help, bubbles with context %}
 {%- import "_account.html" as card with context %}
 {%- set hb = namespace(items=[], seen=[]) %}
-{#- The "?" of a field shows once per page, on its first card or form. The local form repeats the ones of the key form
-    that it shares (When it spends, Schedule), because the picker shows one form at a time. -#}
+{#- The "?" of what a card always shows (header, plan, meters, lines, the quota check) shows once per page, on its first
+    card. Every "?" inside a fold or a form of the add picker repeats (`true`): a closed fold or a hidden form adds no
+    clutter, and each one must reach its help. -#}
 {#- The "When it spends" bubble holds one paragraph per option that this page offers. #}
 {%- set pol = namespace(kinds=[]) %}
 {%- for c in cards %}{% for kind, label in c.policies %}{% if kind not in pol.kinds %}{% set pol.kinds = pol.kinds + [kind] %}{% endif %}{% endfor %}{% endfor %}
@@ -49,7 +50,7 @@
     <details class="fold">
       <summary>{{ t("web.accounts.login_title") }}</summary>
       <div class="fold-body">
-        <div class="line"><p class="small">{{ t("web.accounts.login") }}</p>{{ help(hb, "accounts-login", t("web.accounts.login_title"), ["accounts.login"]) }}</div>
+        <div class="line"><p class="small">{{ t("web.accounts.login") }}</p>{{ help(hb, "accounts-login", t("web.accounts.login_title"), ["accounts.login"], true) }}</div>
         <pre><code>{{ c.login }}</code></pre>
         <p class="small">{{ t("web.accounts.login_ps") }}</p>
         <pre><code>{{ c.login_ps }}</code></pre>
@@ -61,10 +62,10 @@
       <summary>{{ t("web.project.settings_summary") }}</summary>
       <form method="post" action="{{ url_for('account_settings', account_id=a.id) }}" class="fold-body stack account-settings">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <div class="check-row"><label class="check"><input type="checkbox" name="enabled" value="1"{% if row.enabled %} checked{% endif %}> {{ t("web.accounts.enabled") }}</label>{{ help(hb, "accounts-enabled", t("web.accounts.enabled"), ["accounts.enabled"]) }}</div>
+        <div class="check-row"><label class="check"><input type="checkbox" name="enabled" value="1"{% if row.enabled %} checked{% endif %}> {{ t("web.accounts.enabled") }}</label>{{ help(hb, "accounts-enabled", t("web.accounts.enabled"), ["accounts.enabled"], true) }}</div>
         <div class="fields">
           <div class="field">
-            <div class="label-row"><label for="language-{{ n }}">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
+            <div class="label-row"><label for="language-{{ n }}">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"], true) }}</div>
             <select id="language-{{ n }}" name="language">
               {%- for name, label in writing %}<option value="{{ name }}"{% if name == row.language %} selected{% endif %}>{{ label }}</option>{% endfor %}
               {%- if row.language not in known %}<option value="{{ row.language }}" selected>{{ row.language }}</option>{% endif %}
@@ -72,14 +73,14 @@
           </div>
           {%- if not row.keyed %}
           <div class="field">
-            <div class="label-row"><label for="reserve-{{ n }}">{{ t("web.accounts.reserve_label") }}</label>{{ help(hb, "common-reserve", t("web.help.common.reserve.title"), ["common.reserve"]) }}</div>
+            <div class="label-row"><label for="reserve-{{ n }}">{{ t("web.accounts.reserve_label") }}</label>{{ help(hb, "common-reserve", t("web.help.common.reserve.title"), ["common.reserve"], true) }}</div>
             <input id="reserve-{{ n }}" name="reserve" type="number" min="0" max="90" step="1" value="{{ '%g'|format(row.reserve_pct) }}" required>
           </div>
           {%- endif %}
         </div>
         {%- if c.policies %}
         <div class="field">
-          <div class="label-row"><label for="policy-{{ n }}">{{ t("web.accounts.policy_label") }}</label>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys) }}</div>
+          <div class="label-row"><label for="policy-{{ n }}">{{ t("web.accounts.policy_label") }}</label>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys, true) }}</div>
           <select id="policy-{{ n }}" name="policy">
             {%- for kind, label in c.policies %}<option value="{{ kind }}"{% if kind == row.policy %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
@@ -94,7 +95,7 @@
         </div>
         {%- endif %}
         <div class="field field-schedule">
-          <div class="label-row"><label for="schedule-{{ n }}">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}</div>
+          <div class="label-row"><label for="schedule-{{ n }}">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"], true) }}</div>
           <input id="schedule-{{ n }}" name="schedule" type="text" value="{{ row.schedule }}" placeholder="* 1-6 * * *" autocomplete="off" spellcheck="false" aria-describedby="schedule-{{ n }}-hint">
           <p id="schedule-{{ n }}-hint" class="hint">{{ t("web.accounts.schedule_short") }}</p>
         </div>
@@ -112,7 +113,7 @@
     <details class="fold">
       <summary>{{ t("web.tiers.title") }}</summary>
       <div class="fold-body">
-        <div class="line"><p class="small">{{ t("web.tiers.intro") }}</p>{{ help(hb, "accounts-tiers", t("web.tiers.title"), ["accounts.tiers"]) }}</div>
+        <div class="line"><p class="small">{{ t("web.tiers.intro") }}</p>{{ help(hb, "accounts-tiers", t("web.tiers.title"), ["accounts.tiers"], true) }}</div>
         <form method="post" action="{{ url_for('account_tiers', account_id=a.id) }}" class="stack">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           {%- for tr in c.tiers %}
@@ -125,7 +126,7 @@
                 <input id="model-{{ n }}-{{ tr.tier }}" name="model-{{ tr.tier }}" type="text" value="{{ tr.model }}" placeholder="{{ tr.default_model }}" maxlength="100" autocomplete="off" spellcheck="false"{% if not tr.default_model %} required{% endif %}>
               </div>
               <div class="field">
-                <div class="label-row"><label for="effort-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.effort") }}</label>{% if loop.first %}{{ help(hb, "accounts-effort", t("web.tiers.effort"), ["accounts.effort"]) }}{% endif %}</div>
+                <div class="label-row"><label for="effort-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.effort") }}</label>{% if loop.first %}{{ help(hb, "accounts-effort", t("web.tiers.effort"), ["accounts.effort"], true) }}{% endif %}</div>
                 <select id="effort-{{ n }}-{{ tr.tier }}" name="effort-{{ tr.tier }}">
                   <option value="">{{ t("web.tiers.default", effort=tr.default_effort or t("web.tiers.model_own")) }}</option>
                   {%- for level in c.levels %}<option value="{{ level }}"{% if level == tr.effort %} selected{% endif %}>{{ level }}</option>{% endfor %}
@@ -168,24 +169,24 @@
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <div class="fields">
           <div class="field">
-            <div class="label-row"><label for="id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"]) }}</div>
+            <div class="label-row"><label for="id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"], true) }}</div>
             <input id="id" name="id" type="text" pattern="[a-z0-9][a-z0-9-]{0,39}" value="{{ filled.id if chosen == 'subscription' else '' }}" placeholder="claude-max" autocomplete="off" spellcheck="false" required aria-describedby="id-hint">
             <p id="id-hint" class="hint">{{ t("web.accounts.id_hint") }}</p>
           </div>
           <div class="field">
-            <div class="label-row"><label for="engine">{{ t("web.accounts.engine") }}</label>{{ help(hb, "accounts-engine", t("web.accounts.engine"), ["accounts.engine_field"]) }}</div>
+            <div class="label-row"><label for="engine">{{ t("web.accounts.engine") }}</label>{{ help(hb, "accounts-engine", t("web.accounts.engine"), ["accounts.engine_field"], true) }}</div>
             <select id="engine" name="engine">
               {%- for name, label in engines %}<option value="{{ name }}">{{ label }}</option>{% endfor %}
             </select>
           </div>
           <div class="field">
-            <div class="label-row"><label for="language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
+            <div class="label-row"><label for="language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"], true) }}</div>
             <select id="language" name="language">
               {%- for name, label in writing %}<option value="{{ name }}"{% if (lang == 'es') == (name == 'Spanish') %} selected{% endif %}>{{ label }}</option>{% endfor %}
             </select>
           </div>
           <div class="field">
-            <div class="label-row"><label for="reserve">{{ t("web.accounts.reserve_label") }}</label>{{ help(hb, "common-reserve", t("web.help.common.reserve.title"), ["common.reserve"]) }}</div>
+            <div class="label-row"><label for="reserve">{{ t("web.accounts.reserve_label") }}</label>{{ help(hb, "common-reserve", t("web.help.common.reserve.title"), ["common.reserve"], true) }}</div>
             <input id="reserve" name="reserve" type="number" min="0" max="90" step="1" value="10" required>
           </div>
         </div>
@@ -208,7 +209,7 @@
         <input type="hidden" name="kind" value="key">
         {%- set f = filled if chosen == "key" else {} %}
         <div class="field">
-          <div class="label-row"><label for="key-id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"]) }}</div>
+          <div class="label-row"><label for="key-id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"], true) }}</div>
           <input id="key-id" name="id" type="text" pattern="[a-z0-9][a-z0-9-]{0,39}" value="{{ f.id or '' }}" placeholder="openrouter" autocomplete="off" spellcheck="false" required aria-describedby="key-id-hint">
           <p id="key-id-hint" class="hint">{{ t("web.accounts.id_hint") }}</p>
         </div>
@@ -229,7 +230,7 @@
           <p id="key-model-hint" class="hint">{{ t("web.accounts.model_hint") }}</p>
         </div>
         <div class="field">
-          <div class="label-row"><label for="key-review">{{ t("web.accounts.review_label") }}</label>{{ help(hb, "accounts-review", t("web.accounts.review_label"), ["accounts.review_model"]) }}</div>
+          <div class="label-row"><label for="key-review">{{ t("web.accounts.review_label") }}</label>{{ help(hb, "accounts-review", t("web.accounts.review_label"), ["accounts.review_model"], true) }}</div>
           <input id="key-review" name="review_model" type="text" value="{{ f.review_model or '' }}" autocomplete="off" spellcheck="false" aria-describedby="key-review-hint">
           <p id="key-review-hint" class="hint">{{ t("web.accounts.review_hint") }}</p>
         </div>
@@ -239,18 +240,18 @@
           <p id="key-budget-hint" class="hint">{{ t("web.accounts.budget_hint") }}</p>
         </div>
         <fieldset>
-          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys) }}</div>
+          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys, true) }}</div>
           {%- for kind in ("budget", "schedule", "manual") %}
           <label class="check plain"><input type="radio" name="policy" value="{{ kind }}"{% if (f.policy or "budget") == kind %} checked{% endif %}> {{ t("web.spend." ~ kind) }}</label>
           {%- endfor %}
         </fieldset>
         <div class="field field-schedule">
-          <div class="label-row"><label for="key-schedule">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}</div>
+          <div class="label-row"><label for="key-schedule">{{ t("web.accounts.schedule_label") }}</label>{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"], true) }}</div>
           <input id="key-schedule" name="schedule" type="text" value="{{ f.schedule or '' }}" placeholder="* 1-6 * * *" autocomplete="off" spellcheck="false" aria-describedby="key-schedule-hint">
           <p id="key-schedule-hint" class="hint">{{ t("web.accounts.schedule_hint") }} <a href="{{ cron_help }}">crontab.guru</a></p>
         </div>
         <div class="field">
-          <div class="label-row"><label for="key-language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
+          <div class="label-row"><label for="key-language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"], true) }}</div>
           <select id="key-language" name="language">
             {%- for name, label in writing %}<option value="{{ name }}"{% if (lang == 'es') == (name == 'Spanish') %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
@@ -276,7 +277,7 @@
         <input type="hidden" name="source" value="{{ source }}">
         {%- set f = filled if chosen == "local" else {} %}
         <div class="field">
-          <div class="label-row"><label for="local-id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"]) }}</div>
+          <div class="label-row"><label for="local-id">{{ t("web.accounts.id") }}</label>{{ help(hb, "accounts-id", t("web.accounts.id"), ["accounts.id"], true) }}</div>
           <input id="local-id" name="id" type="text" pattern="[a-z0-9][a-z0-9-]{0,39}" value="{{ f.id or '' }}" placeholder="local" autocomplete="off" spellcheck="false" required aria-describedby="local-id-hint">
           <p id="local-id-hint" class="hint">{{ t("web.accounts.id_hint") }}</p>
         </div>
@@ -297,7 +298,7 @@
           <p id="local-schedule-hint" class="hint">{{ t("web.accounts.schedule_hint") }} <a href="{{ cron_help }}">crontab.guru</a></p>
         </div>
         <div class="field">
-          <div class="label-row"><label for="local-language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"]) }}</div>
+          <div class="label-row"><label for="local-language">{{ t("web.accounts.language_label") }}</label>{{ help(hb, "accounts-language", t("web.accounts.language_label"), ["accounts.language"], true) }}</div>
           <select id="local-language" name="language">
             {%- for name, label in writing %}<option value="{{ name }}"{% if (lang == 'es') == (name == 'Spanish') %} selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>

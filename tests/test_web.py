@@ -371,7 +371,7 @@ def test_audit_now_queues_one_order(github_web: Web) -> None:
     assert wrong.status_code == 400
     for _ in range(2):
         response = web.client.post("/projects/acme/api/audit", data={"csrf": csrf, "account": ""}, headers=SITE)
-        assert response.headers["Location"] == "/projects?done=queued"
+        assert response.headers["Location"] == "/projects?done=queued#project-acme--api"
     assert [(o["repo"], o["account"]) for o in web.store.orders()] == [("acme/api", None)]
     page = web.client.get("/projects?done=queued").get_data(as_text=True)
     assert "Audit queued. It starts within a minute" in page and "Audit queued: it starts as soon as" in page
@@ -620,6 +620,7 @@ def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
     assert web.secrets.get("key-local") is None
 
     web.store.record_spend("openrouter", 5.0, "judge", at=NOW)
+    web.store.set_setting("heartbeat", str(NOW))  # the service runs: otherwise nothing bursts, and the card says so
     page = web.client.get("/accounts").get_data(as_text=True)
     assert "On OpenRouter · model qwen/qwen3-coder · writes in English" in page
     assert "Budget this month" in page and "$5.00 of $20.00" in page
@@ -746,7 +747,7 @@ def test_improve_now(github_web: Web) -> None:
     wrong = web.client.post("/projects/acme/api/improve", data={"csrf": csrf, "account": "nobody"}, headers=SITE)
     assert wrong.status_code == 400
     response = web.client.post("/projects/acme/api/improve", data={"csrf": csrf, "account": "*"}, headers=SITE)
-    assert response.headers["Location"] == "/projects?done=improve"
+    assert response.headers["Location"] == "/projects?done=improve#project-acme--api"
     assert [(o["kind"], o["repo"], o["account"]) for o in web.store.orders()] == [("improve", "acme/api", None)]
     page = web.client.get("/projects?done=improve").get_data(as_text=True)
     assert "Improvement queued. It starts within a minute" in page and "Improvement queued: it starts" in page
@@ -761,13 +762,13 @@ def test_tests_from_the_web(github_web: Web) -> None:
     web.store.add_account("claude", "claude-code")
     page = web.client.get("/projects").get_data(as_text=True)
     assert 'formaction="/projects/acme/api/tests">Write tests now</button>' in page
-    assert 'name="tests" value="1"> Tests too: in turn with the audits, bursts on this project write tests' in page
+    assert 'name="tests" value="1"> Tests too</label>' in page
     csrf = web.csrf()
     form = {"csrf": csrf, "weight": "1", "language": "", "max_prs": "3", "active": "1", "tests": "1"}
     assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
     assert web.store.projects()[0].tests
     response = web.client.post("/projects/acme/api/tests", data={"csrf": csrf, "account": "claude"}, headers=SITE)
-    assert response.headers["Location"] == "/projects?done=tests"
+    assert response.headers["Location"] == "/projects?done=tests#project-acme--api"
     assert [(o["kind"], o["repo"], o["account"]) for o in web.store.orders()] == [("tests", "acme/api", "claude")]
     page = web.client.get("/projects?done=tests").get_data(as_text=True)
     assert "Tests queued. They start within a minute" in page and "Tests queued: they start" in page
@@ -790,7 +791,7 @@ def test_dependency_upgrades_from_the_web(github_web: Web) -> None:
     assert project.deps and not project.tests
     assert 'name="deps" value="1" checked> Dependencies too' in web.client.get("/projects").get_data(as_text=True)
     response = web.client.post("/projects/acme/api/deps", data={"csrf": csrf}, headers=SITE)
-    assert response.headers["Location"] == "/projects?done=deps"
+    assert response.headers["Location"] == "/projects?done=deps#project-acme--api"
     assert [(o["kind"], o["account"]) for o in web.store.orders()] == [("deps", None)]
     assert "Upgrades queued: they start" in web.client.get("/projects?done=deps").get_data(as_text=True)
 
@@ -1041,8 +1042,127 @@ def test_no_card_says_bursting_while_the_service_is_down_or_paused(web: Web) -> 
         page = web.client.get(path).get_data(as_text=True)
         assert page.count(">On hold</span>") == 2 and "Waiting for its moment" not in page
         assert 'class="plan is-held"' in page
+        assert "Burst in progress" not in page and page.count("Bursts are paused: this account waits") == 2
     web.store.set_setting("paused", "no")
     web.store.set_setting("heartbeat", str(NOW - 3 * HOUR))  # the service is gone
     for path in ("/", "/accounts"):
         page = web.client.get(path).get_data(as_text=True)
         assert page.count(">On hold</span>") == 2 and "Bursting" not in page
+        assert "Burst in progress" not in page and page.count("The service has stopped: nothing bursts") == 2
+
+
+def test_every_field_of_the_add_forms_has_its_help(web: Web) -> None:
+    web.store.add_account("claude", "claude-code", "English", 10)  # a card above them must not take their bubbles
+    web.set_up()
+    page = web.client.get("/accounts").get_data(as_text=True)
+    forms = {
+        "dest-subscription": ("id", "language"),
+        "dest-key": ("key-id", "key-language"),
+        "dest-local": ("local-id", "local-language"),
+    }
+    for form, fields in forms.items():
+        section = page.split(f'<div class="dest {form}">')[1].split('<div class="dest ')[0]
+        for field in fields:
+            assert re.search(
+                rf'<label for="{field}">[^<]*</label><button type="button" class="help" popovertarget="help-', section
+            ), field
+    # the fields of the card's own folds reach their help too
+    card = page.split('id="account-claude"')[1].split("</article>")[0]
+    for field in ("language-1", "reserve-1"):
+        assert re.search(rf'<label for="{field}">[^<]*</label><button type="button" class="help"', card), field
+    targets = re.findall(r'popovertarget="(help-[^"]+)"(?! popovertargetaction)', page)
+    for target in set(targets):
+        assert page.count(f'id="{target}" popover') == 1, target
+
+
+def test_the_readout_counts_what_waits_and_says_one_in_the_singular(web: Web) -> None:
+    from lastcall.recipes.improve import ImproveReport
+
+    seed(web.store)
+    plan = ImproveReport("ne0x86/demo", "abc", "claude-code", "English")
+    plan.ideas = [{"id": f"I{n}", "title": "A", "kind": "feature", "change": "c"} for n in (1, 2)]
+    plan.verdicts = [{"id": "I1", "verdict": "keep"}, {"id": "I2", "verdict": "keep"}]
+    plan.plan, plan.issue_url = ["I1", "I2"], "https://github.com/ne0x86/demo/issues/3"
+    web.store.record_ideas("r1", plan)
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    readout = r'<span class="readout-n">(\d+)</span> <span class="readout-l">([^<]+)</span>'
+    page = web.client.get("/").get_data(as_text=True)
+    assert re.findall(readout, page) == [("1", "account"), ("4", "waiting for you"), ("1", "project")]
+    # one pull request, one finding for a decision and two ideas: what the lists below name
+    assert (
+        "1 decision in ne0x86/demo" in page
+        and "2 ideas for ne0x86/demo" in page
+        and "Fix &lt;b&gt;it&lt;/b&gt;" in page
+    )
+    page = web.client.get("/", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert re.findall(readout, page) == [("1", "cuenta"), ("4", "pendientes de ti"), ("1", "proyecto")]
+
+
+def test_the_projects_page_gives_each_project_a_card_with_its_help(github_web: Web) -> None:
+    from lastcall import signals
+
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_project("acme/web")
+    web.store.update_project("acme/web", active=False, weight=1, language=None, max_prs=3)
+    web.store.add_account("claude", "claude-code")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'id="project-acme--api"' in page and 'id="project-acme--web"' in page
+    assert (
+        page.count('<article class="card project') == 2
+        and 'class="card project is-off" id="project-acme--web"' in page
+    )
+    assert "<legend>Run now</legend>" in page and "<summary>Settings</summary>" in page
+    assert "All free accounts, one judge" not in page and "Errors in production" not in page
+    assert (
+        "all free accounts" not in page and 'name="signals"' not in page
+    )  # one account, no tracker: no such bubbles
+    for field in (
+        "weight-1",
+        "language-1",
+        "max-prs-1",
+        "health-1",
+        "weight-2",
+        "language-2",
+        "max-prs-2",
+        "health-2",
+    ):
+        assert re.search(rf'<label for="{field}">[^<]*</label><button type="button" class="help"', page), field
+    for name in ("merge_on_approve", "watch", "tests", "deps"):
+        assert f'name="{name}" value="1"> ' in page
+    targets = set(re.findall(r'popovertarget="(help-[^"]+)"(?! popovertargetaction)', page))
+    assert targets
+    for target in targets:
+        assert page.count(f'id="{target}" popover') == 1, target
+    assert sorted(re.findall(r'id="(help-[^"]+)" popover', page)) == sorted(targets)
+    assert page.count('class="help" popovertarget="help-projects-account"') == 1  # a card's summary part: once
+    assert page.count('class="help" popovertarget="help-projects-weight"') == 2  # a field in each closed fold
+    web.store.add_account("chatgpt", "codex")
+    signals.Tracker("https://glitchtip.example.com", "acme", "good-token").save(web.secrets)
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert "With the option for all free accounts" in page  # two accounts: the choice exists, and so does its help
+    assert 'name="signals"' in page and page.count("<legend>Errors in production</legend>") == 2
+    assert "help-projects-signals" in page
+
+
+def test_a_project_without_a_run_form_has_no_run_bubbles_and_an_empty_page_starts_with_adding(
+    github_web: Web,
+) -> None:
+    web = github_web
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert "No projects yet. Pick one of your repositories below" in page
+    assert page.index("No projects yet.") < page.index('id="add-title"') and 'href="#add-title"' not in page
+    web.store.add_project("acme/api")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'href="#add-title">Add a project</a>' in page
+    assert page.index('id="project-acme--api"') < page.index('id="add-title"')
+    assert "help-projects-run_now" not in page and "Add an AI account to audit it." in page  # no account: no Run now
+
+
+def test_saving_a_project_returns_to_its_card(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    form = {"csrf": web.csrf(), "weight": "1", "language": "", "max_prs": "3"}
+    response = web.client.post("/projects/acme/api", data=form, headers=SITE)
+    assert response.headers["Location"] == "/projects?done=saved#project-acme--api"

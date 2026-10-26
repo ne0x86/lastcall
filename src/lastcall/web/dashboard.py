@@ -60,6 +60,7 @@ class Link:
     url: str
     text: str
     note: str = ""
+    n: int = 1  # how many things it stands for: the findings of a decision issue, the ideas of a plan issue
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,11 @@ class Dashboard:
     projects: list[ProjectView] = field(default_factory=list)
     runs: list[RunView] = field(default_factory=list)
 
+    @property
+    def waiting(self) -> int:
+        """Everything that waits for the owner: pull requests, plus the findings and ideas their issues hold."""
+        return len(self.prs) + sum(d.n for d in self.decisions) + sum(p.n for p in self.plans)
+
 
 def service_state(store: Store, now: float) -> tuple[bool, bool]:
     """Whether bursts are paused and whether the service is gone (no heartbeat for a while). Either way, no card
@@ -138,11 +144,13 @@ def build(store: Store, lang: str, now: float, github_ready: bool) -> Dashboard:
         for pr in store.open_prs()
     ]
     view.decisions = [
-        Link(safe_url(d["issue_url"]), plural(lang, "web.review.decide", int(d["n"]), repo=d["repo"]))
+        Link(
+            safe_url(d["issue_url"]), plural(lang, "web.review.decide", int(d["n"]), repo=d["repo"]), "", int(d["n"])
+        )
         for d in store.decisions()
     ]
     view.plans = [
-        Link(safe_url(p["issue_url"]), plural(lang, "web.review.plan", int(p["n"]), repo=p["repo"]))
+        Link(safe_url(p["issue_url"]), plural(lang, "web.review.plan", int(p["n"]), repo=p["repo"]), "", int(p["n"]))
         for p in store.plans()
     ]
     latest = store.latest_runs()

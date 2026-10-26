@@ -691,8 +691,16 @@ tbody th { font-weight: 650; }
 
   .projects-table tr { display: grid; gap: .3rem 0; }
   .projects-table tbody th { padding-bottom: .2rem; font-size: 1.02rem; }
-  .projects-table td { display: grid; grid-template-columns: 6.25rem minmax(0, 1fr); align-items: baseline; gap: 0 var(--s2); font-size: .95rem; }
-  .projects-table td::before { content: attr(data-label); color: var(--muted); font-size: .85rem; font-weight: 600; }
+  .projects-table td { display: flow-root; padding-left: calc(6.25rem + var(--s2)); font-size: .95rem; }
+  .projects-table td::before {  /* the label floats into the padding: the value's text and chip flow side by side */
+    content: attr(data-label);
+    float: left;
+    width: 6.25rem;
+    margin-left: calc(-6.25rem - var(--s2));
+    color: var(--muted);
+    font-size: .85rem;
+    font-weight: 600;
+  }
 
   .runs-table tr { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem 0; }
   .runs-table tr::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
@@ -729,7 +737,7 @@ input[type="checkbox"], input[type="radio"] { width: 1.25rem; min-height: 1.25re
 input:focus-visible, select:focus-visible { outline-offset: 1px; }
 
 .stack { display: grid; gap: var(--s4); margin: var(--s3) 0; }
-.stack > button, .stack > .form-actions, .settings > button { justify-self: start; }
+.stack > button, .stack > .form-actions { justify-self: start; }
 .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); align-items: end; gap: var(--s3); }
 .fields.wide { grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
@@ -749,21 +757,13 @@ fieldset.tier .fields { grid-template-columns: repeat(auto-fit, minmax(min(100%,
 .check-row .check input { position: absolute; left: 0; top: .65rem; margin: 0; }
 .check-row .help { margin: 0 0 0 .3rem; }
 
-/* Older classes the Projects page still uses. */
-.settings { display: grid; gap: var(--s3); margin: 0 0 var(--s4); padding: var(--s3) 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.settings .fields { grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); }
-.settings select { width: 100%; }
+/* Rows of a field and a button, and the lists the Projects and Settings pages share. */
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .row input, .row select { flex: 1 1 12rem; width: auto; }
 .spread { justify-content: space-between; flex-wrap: nowrap; }
 .spread p { margin: 0; overflow-wrap: anywhere; }
-.facts { margin: 0 0 var(--s3); padding: 0; color: var(--muted); list-style: none; }
 .status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); }
 .status p, .status form { margin: 0; }
-.project h3 { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-bottom: var(--s3); font-size: 1.2rem; overflow-wrap: anywhere; }
-.audit { display: grid; gap: var(--s2); }
-.audit .row button { flex: 1 1 auto; }
-form + h3 { margin-top: var(--s5); }
 details { margin: var(--s2) 0 var(--s3); }
 ul.plain { margin: 0 0 var(--s4); padding: 0; list-style: none; }
 ul.plain li { padding: var(--s3) 0; border-bottom: 1px solid var(--border); }
@@ -963,6 +963,74 @@ ul.rows > li:last-child { border-bottom: 0; }
 .segmented a[aria-current] { background: var(--accent-soft); border: 2px solid var(--accent); }
 .segmented a[aria-current]::before { color: var(--on-accent); background: var(--accent); }
 .segmented a[aria-current]::after { content: "✓"; margin-left: auto; color: var(--accent); }
+
+/* ================================================================================================================
+   Projects: the page header, a card for each project, Run now, the settings fold and the Add section.
+   ================================================================================================================ */
+
+/* A project card's top edge says whether bursts may pick it: solid green when active, a muted dashed line when not. */
+.card.project { --edge: var(--good); position: relative; display: grid; gap: var(--s3); }
+.card.project.is-off { --edge: transparent; background: color-mix(in srgb, var(--surface) 60%, var(--bg)); }
+.card.project.is-off::before {  /* the dashed edge follows the card's rounded corners: the background is clipped to them */
+  content: "";
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  background: repeating-linear-gradient(90deg, var(--line) 0 .55rem, transparent .55rem .95rem) top left / 100% 3px no-repeat;
+  border-radius: inherit;
+}
+.card.add-card { --edge: var(--accent); }
+
+.project-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+.project-name { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.project-name a { color: var(--accent); text-decoration: none; }
+.project-name a:hover { text-decoration: underline; text-decoration-thickness: 2px; }
+.project-name a::after { content: "\2197"; margin-left: .25rem; color: var(--muted); font-family: var(--font-body); font-size: .8em; font-weight: 600; }
+
+/* Facts: a label and its value on each line. */
+.facts { margin: 0; padding: 0; }
+.facts > div { display: grid; grid-template-columns: 8.75rem minmax(0, 1fr); align-items: baseline; gap: 0 var(--s3); padding: .45rem 0; border-bottom: 1px solid var(--border); }
+.facts > div:first-child { border-top: 1px solid var(--border); }
+.facts dt { color: var(--muted); font-size: .88rem; font-weight: 600; }
+.facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.facts .run { margin-left: .25rem; }
+.facts .help { margin-left: .3rem; }
+
+.line.tickets, .busy { padding: var(--s2) var(--s3); background: var(--ember-soft); border-radius: var(--r-md); }
+.line.tickets p { color: var(--ember-text); font-weight: 600; }
+.line.tickets p::before, .busy::before { content: "\25CF\00a0"; color: var(--ember); }
+.busy { margin: 0; color: var(--ember-text); }
+
+/* Run now: the account, four buttons (2 by 2 on a phone, in one row when the card is wide) and what each does. */
+.run-form { container-type: inline-size; }
+fieldset.run-now { gap: var(--s3) var(--s1); padding: var(--s3); background: var(--raised); border-radius: var(--r-md); }
+fieldset.has-help { grid-template-columns: max-content max-content minmax(0, 1fr); align-items: center; }
+fieldset.has-help > * { grid-column: 1 / -1; }
+fieldset.has-help > legend, fieldset.has-help > .help { grid-column: auto; }
+fieldset.has-help > legend { margin: 0; }
+.run-now legend, .project-settings legend { float: left; padding: 0; font-family: var(--font-round); font-size: 1.02rem; font-weight: 700; }
+.project-settings legend { width: 100%; margin: 0 0 var(--s1); }
+.run-now select { background: var(--surface); }
+.run-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
+.run-buttons button { padding: .4rem .6rem; font-size: .92rem; line-height: 1.25; text-align: center; border-radius: var(--r-md); }
+.run-hints { display: grid; gap: var(--s1); margin: 0; padding: 0; list-style: none; }
+.run-hints li { display: flex; align-items: flex-start; gap: var(--s1); }
+.run-hints p { margin: 0; color: var(--muted); font-size: .88rem; }
+@container (min-width: 26rem) { .run-buttons { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+/* Settings fold: three fieldsets, each a quiet panel. */
+.project-settings fieldset { gap: var(--s3); padding: var(--s3); background: var(--surface); border-radius: var(--r-md); }
+.project-settings .check-row { min-height: 0; }
+.project-settings .check-row .hint { margin-top: 0; }
+
+/* Add a project: the manual field, then suggestions as rows. */
+.add-card .inline { margin-bottom: var(--s2); }
+.notice-link { margin-top: var(--s1); }
+.suggestions li { display: grid; gap: var(--s1); }
+.suggestion-name { font-family: var(--font-mono); font-weight: 650; }
+.suggestion-name .badge { margin-left: .25rem; color: var(--good); background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 30%, transparent); font-family: var(--font-body); }
+.suggestion-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); margin: 0; }
+.install-link { margin-top: var(--s3); }
 
 /* ---------- Sign-in pages ---------- */
 .signed-out main { display: grid; align-content: start; }

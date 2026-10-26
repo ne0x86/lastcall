@@ -45,8 +45,14 @@ class ProjectCard:
     owner: str
     name: str
     url: str
-    state: str
-    summary: list[str]
+    state: str  # "active · priority x2" or "inactive"
+    on: bool  # the state says active: bursts may pick it
+    last: str  # when it last ran: "47 h ago", or "never"
+    last_status: str  # how that run ended, in words ("" when it never ran)
+    last_key: str  # the raw status: ok, failed... for its colour
+    findings: str
+    prs: int
+    tickets: str  # "2 labelled issues wait for a burst"; "" when none wait
     active: bool
     weights: list[Option]
     languages: list[Option]
@@ -66,7 +72,8 @@ class SuggestionView:
     url: str
     suggested: bool
     score: str
-    details: str
+    language: str
+    size: str  # "about 11k tokens of code", or "" when its size is unknown
     reasons: list[str]
 
 
@@ -81,6 +88,11 @@ class ProjectsPage:
     others: list[SuggestionView] = field(default_factory=list)
     all_added: bool = False
     tracker: bool = False  # the owner connected an error tracker: each project may name its project there
+
+    @property
+    def has_all(self) -> bool:
+        """Whether the account choice offers "all free accounts": only with two or more enabled accounts."""
+        return any(o.value == "*" for o in self.accounts)
 
 
 def build(store: Store, lang: str, now: float, install_url: str, reading: bool) -> ProjectsPage:
@@ -107,13 +119,7 @@ def build(store: Store, lang: str, now: float, install_url: str, reading: bool) 
 def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any] | None, busy: str) -> ProjectCard:
     active = p.active and p.weight > 0
     view = project_view(store, p.repo, active, p.weight, lang, now, last)
-    last_run = text(lang, "web.project.last", when=view.last)
-    summary = [last_run + (f" · {view.last_status}" if view.last_status else "")]
-    summary.append(f"{text(lang, 'web.projects.findings')}: {view.findings}")
-    summary.append(plural(lang, "web.project.prs", view.prs))
     waiting = store.waiting_count(p.repo)
-    if waiting:
-        summary.append(plural(lang, "web.project.tickets", waiting))
     weights = [Option(v, text(lang, f"web.project.weight.{k}"), float(v) == p.weight) for v, k in WEIGHTS]
     if not any(o.selected for o in weights):
         custom = text(lang, "web.project.weight.custom", weight=number(lang, p.weight))
@@ -134,7 +140,13 @@ def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any
         name,
         f"https://github.com/{p.repo}",
         view.state,
-        summary,
+        active,
+        view.last,
+        view.last_status,
+        view.last_key,
+        view.findings,
+        view.prs,
+        plural(lang, "web.project.tickets", waiting) if waiting else "",
         p.active,
         weights,
         languages,
@@ -156,17 +168,18 @@ def health_address(text: str) -> bool:
 
 
 def suggestion_view(lang: str, s: Suggestion) -> SuggestionView:
-    details = [s.language] if s.language else []
+    size = ""
     if s.code_tokens:
         thousands = s.code_tokens / 1000
-        size = number(lang, thousands if thousands < 10 else round(thousands))
-        details.append(text(lang, "web.suggest.size", size=f"{size}k"))
+        shown = number(lang, thousands if thousands < 10 else round(thousands))
+        size = text(lang, "web.suggest.size", size=f"{shown}k")
     return SuggestionView(
         s.repo,
         f"https://github.com/{s.repo}",
         s.suggested,
         text(lang, "web.suggest.score", score=s.score),
-        " · ".join(details),
+        s.language or "",
+        size,
         [explain(lang, r) for r in s.why],
     )
 

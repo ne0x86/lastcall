@@ -28,12 +28,16 @@
 </header>
 {%- endmacro %}
 
-{#- The plan sentence, the card's main line, with the bubble that explains it. `held` mutes it while nothing bursts. -#}
+{#- The plan sentence, the card's main line, with the bubble that explains it. `held` mutes it while nothing bursts, and
+    then a plan that says "burst in progress" or "next burst" is replaced by what is true: the account waits. The same
+    accounts get the "On hold" chip (state_chip), so the two never contradict each other. -#}
 {% macro plan(hb, a, held="") -%}
+{%- set bursty = a.plan_code in ("now", "pace", "schedule", "later", "ahead", "window") -%}
+{%- set waits = held and a.enabled and not a.paid and ((held == "down" and (a.working or bursty)) or (not a.working and bursty)) -%}
 {%- if a.plan %}
 <div class="plan{% if held %} is-held{% elif a.plan_code in ('now', 'pace', 'schedule') %} is-live{% endif %}">
-  <p>{{ a.plan }}</p>
-  {%- if a.plan_code in ("now", "later", "small") %}{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}
+  <p>{% if waits %}{{ t("web.plan.held." ~ held) }}{% else %}{{ a.plan }}{% endif %}</p>
+  {%- if waits or a.plan_code in ("now", "later", "small") %}{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}
   {%- elif a.plan_code == "model" %}{{ help(hb, "common-window_model", t("web.help.common.burst.title"), ["common.window_model"]) }}
   {%- elif a.plan_code in ("pace", "ahead", "spent", "no-budget") %}{{ help(hb, "common-budget", t("web.window.budget"), ["common.budget"]) }}
   {%- elif a.plan_code in ("schedule", "window", "never", "bad-schedule") %}{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}
