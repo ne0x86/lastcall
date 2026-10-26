@@ -259,7 +259,7 @@ that `git pull` never conflicts. The release notes say when a version needs anyt
 - **If git stops because of your changes to `compose.yaml` or `egress/filter`**, move them out first: the address and
   the port go in `.env` (`LASTCALL_BIND`, `LASTCALL_PORT`), and anything else in a `compose.override.yaml`, which can
   also mount your own copy of the filter. Then run `git checkout -- compose.yaml egress/filter` and update again.
-- **To stay on one release**, check out its tag instead: `git fetch --tags && git checkout v0.6.2`. `git pull` then
+- **To stay on one release**, check out its tag instead: `git fetch --tags && git checkout v0.6.3`. `git pull` then
   stops until you follow releases again with `git checkout stable`.
 - **If you cloned a release by its tag, or `main`**, as earlier quickstarts did, switch once:
   `git fetch origin && git checkout stable`.
