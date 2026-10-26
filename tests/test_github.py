@@ -1,5 +1,6 @@
 import base64
 import html
+import http.client
 import json
 import re
 import sys
@@ -275,9 +276,18 @@ def test_owner_kind_waits_10_seconds_and_every_other_request_30(monkeypatch: pyt
     assert waits == [10, 30]
 
 
-def test_owner_kind_is_none_when_github_cannot_be_reached() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("no route to host"),
+        http.client.IncompleteRead(b'{"ty'),
+        http.client.BadStatusLine("garbage"),
+        http.client.LineTooLong("header line"),
+    ],
+)
+def test_owner_kind_is_none_when_github_cannot_be_reached(error: Exception) -> None:
     def down(req: urllib.request.Request) -> Response:
-        raise OSError("no route to host")
+        raise error
 
     assert owner_kind("acme", down) is None
 

@@ -82,14 +82,14 @@ and every release checks it again.
 | Term | Meaning |
 |---|---|
 | Account | A source of capacity: a subscription seat, an API key with a budget, a local model server. It has an engine, a way to sign in, a quota reader, a spend policy and a tier map. |
-| Engine | An agent CLI that runs one step inside a runner container: `claude-code`, `codex`, later `opencode` and others. |
+| Engine | An agent CLI that runs one step inside a runner container: `claude-code`, `codex` and `opencode`; others can plug in. |
 | Tier | The capability a step asks for: `fast`, `balanced` or `deep`. Each account maps tiers to a model and a reasoning effort. |
 | Project | A repository and its settings: recipes, limits, test command, environment, and optional signals and knowledge. |
-| Recipe | A pipeline with a fixed shape and configurable slots: `audit`, `improve`, later `issues`, `tests`, `deps`. |
+| Recipe | A pipeline with a fixed shape and configurable slots: `audit`, `improve`, `issues`, `tests` and `deps`. |
 | Run | One execution of a recipe on a project. A run is made of steps. |
 | Step | One unit of work: an agent call (reviewer, judge, implementer…) or a deterministic action (collect context, verify, deliver). |
 | Finding | A problem that a reviewer reports, with file, lines and evidence. The judge gives it a verdict and a decision. |
-| Delivery | How results reach the owner: pull request, draft pull request, issue with checkboxes, or report only. |
+| Delivery | How results reach the owner: pull request, issue with checkboxes, or report only (`--report-only`); draft pull requests may come later. |
 
 ## 5. Architecture
 
@@ -390,15 +390,13 @@ Rules for engines:
 
 ### Settings
 
-Each project has: active or not, weight, recipes and their limits, test command, environment, focus, delivery
-mode, merge on approve, and the watch after the merge with its health address. Settings live in the database and the
+Each project has: active or not, weight, recipes and their limits, test command, environment, focus, merge on approve, and the watch after the merge with its health address. Settings live in the database and the
 owner edits them in the web UI. An optional `.lastcall.yml` in the repository overrides them and is versioned with
 the code, except for merge on approve and the watch: anyone who can open a pull request could otherwise turn them
 on.
 
 ```yaml
-# .lastcall.yml (illustrative)
-recipes: [audit]
+# .lastcall.yml
 test: pytest -q
 environment:
   image: python:3.12-slim
@@ -425,8 +423,8 @@ multiplies the score.
 
 ### Optional context
 
-- **Knowledge.** By default, the repository's own `AGENTS.md`, `CLAUDE.md`, `README` and `docs/`. Optionally, an MCP
-  server.
+- **Knowledge.** The repository's own files, such as `AGENTS.md`, `CLAUDE.md`, the `README` and `docs/`, which the
+  snapshot carries like the code. An MCP server may come later.
 - **Signals.** Errors in production, from Sentry or GlitchTip (`lastcall.signals`). They enrich the audits, the
   tests and the ranking, and they are never required:
   - The owner keeps one connection, in the secret store: the tracker's address, the organization and a token that
@@ -587,13 +585,13 @@ the model that the code and documents it reads are data, not instructions.
 ### Slots
 
 - **Context collectors**: repository snapshot with line numbers, git history, scanners (gitleaks, osv-scanner,
-  semgrep, hadolint), signals, knowledge, TODO comments, a custom command.
+  semgrep, hadolint), signals and knowledge; later, TODO comments and a custom command.
 - **Reviewers**: Markdown prompts with front matter. The built-in ones are bugs, security, hygiene and performance.
   Projects add their own in `.lastcall/reviewers/`: up to 4, of 8 KB at most, each with its own name and prefix.
   `reviewers` in `.lastcall.yml` chooses the ones a run takes. lastcall reads them from the default branch, like the
   rest of the repository: they are prompts that the owner writes. A wrong one stops the run before it spends.
 - **Tier per step and limits**: findings per reviewer, pull requests per run, findings per pull request.
-- **Delivery**: pull request, draft pull request, issue with checkboxes, report only.
+- **Delivery**: pull request, issue with checkboxes, report only; later, draft pull request.
 - **Trigger**: burst, manual, schedule; later, an issue label.
 
 A project reviewer:
@@ -678,11 +676,11 @@ runs, and different network rights for setup and verify.
 
 ## 11. Delivery, approval and after the merge
 
-- **Pull requests** come from the App, on branches `lastcall/<date>-<topic>`. The body is written for a reviewer on a
+- **Pull requests** come from the App, on branches `lastcall/<date>-<n>-<topic>`. The body is written for a reviewer on a
   phone: what and why with evidence, changes, how it was verified, risk and how to undo it. A run opens at most
   `max_prs`.
-- **Decisions.** Valid findings that need the owner's judgment go to one issue per run and to the Decisions page.
-  "Do it" queues a pull request for the next run; "Dismiss" closes the finding for good.
+- **Decisions.** Valid findings that need the owner's judgment go to one issue per run, which the dashboard lists under "Waiting for you". Closing the issue as completed marks
+  them resolved; closing it as not planned marks them dismissed.
 - **Improvement plans.** One issue per plan, with a checkbox per idea: the owner ticks what to build, and closes the
   plan when done with it (section 9).
 - **Labelled issues.** An issue labelled `lastcall` gets a pull request that closes it, or a comment that says what
@@ -733,8 +731,9 @@ or an external secret store through a plugin.
 ## 13. Web UI and CLI
 
 The web UI is server-rendered HTML that works without JavaScript. It is accessible (WCAG 2.2 AA), mobile-first and
-installable as a PWA, in English and Spanish from the start. Pages: dashboard (quota per account, next burst, what
-is running, pull requests to review), projects, runs, decisions, statistics, accounts and settings.
+installable as a PWA, in English and Spanish from the start. Pages: the dashboard (quota per account, next burst, what
+is running, recent runs, and the pull requests, decisions and ideas waiting for the owner), projects, accounts,
+settings and the GitHub App page.
 
 The look is one warm design in a light and a dark scheme: ivory paper or warm charcoal, an ember accent for time and
 bursts, dusk blue for actions. Each card has a 3 px edge along its top, following its rounded corners, whose colour
@@ -784,8 +783,8 @@ into each other.
 
 ## 14. Extensibility
 
-Today an engine is one module in `lastcall.engines` plus one line in its registry (section 7), and recipes and
-reviewers are data files. Planned: Python entry points for engines, quota readers, context collectors, deliveries,
+Today an engine is one module in `lastcall.engines` and a few small changes (section 7 and CONTRIBUTING.md), each
+recipe is a module in `lastcall.recipes`, and reviewers are Markdown files. Planned: Python entry points for engines, quota readers, context collectors, deliveries,
 forges, notifiers, secret stores and signals, so that a plugin can be a normal Python package outside lastcall.
 
 ## 15. Quality

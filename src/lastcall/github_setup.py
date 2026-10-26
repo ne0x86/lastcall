@@ -8,6 +8,7 @@ credentials. The page needs no JavaScript.
 from __future__ import annotations
 
 import html
+import http.client
 import json
 import re
 import secrets
@@ -62,7 +63,8 @@ def clean_owner(typed: str) -> str:
 
 def owner_kind(owner: str, fetch: Fetch = urlopen) -> str | None:
     """Ask GitHub's public API, with no token, what `owner` is: "user", "org" or "missing" (no such account). None
-    when GitHub cannot say: the hourly limit of anonymous requests, no network or an answer that is not JSON."""
+    when GitHub cannot say: the hourly limit of anonymous requests, no network, a connection that drops mid-answer
+    or an answer that is not JSON."""
     req = urllib.request.Request(f"{API}/users/{urllib.parse.quote(owner, safe='')}")
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
@@ -74,7 +76,7 @@ def owner_kind(owner: str, fetch: Fetch = urlopen) -> str | None:
         if status != 200:
             return None
         kind = json.loads(raw).get("type")
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError, http.client.HTTPException):
         return None
     return {"User": "user", "Organization": "org"}.get(kind) if isinstance(kind, str) else None
 

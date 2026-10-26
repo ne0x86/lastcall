@@ -1430,7 +1430,7 @@ def test_a_connected_integration_drops_its_intro(tmp_path: Path) -> None:
 
 def github_users(kinds: Mapping[str, str]) -> Callable[[Request], Response]:
     """GitHub's public API for /users/<name>: the type of each name in `kinds`, 404 for any other, and no network
-    at all for the name `offline`."""
+    at all for the name `offline` and a connection that drops mid-answer for `dropped`."""
 
     def fetch(req: Request) -> Response:
         prefix = "https://api.github.com/users/"
@@ -1438,6 +1438,8 @@ def github_users(kinds: Mapping[str, str]) -> Callable[[Request], Response]:
         name = req.full_url.removeprefix(prefix)
         if name == "offline":
             raise OSError("no route to host")
+        if name == "dropped":
+            raise http.client.IncompleteRead(b'{"ty')
         if name == "limited":
             return 403, {}, b'{"message": "API rate limit exceeded"}'
         if name not in kinds:
@@ -1507,7 +1509,7 @@ def test_a_name_that_github_does_not_know_is_an_error_that_keeps_the_text(tmp_pa
     assert "GitHub no tiene ninguna cuenta ni organización llamada acmee" in spanish.get_data(as_text=True)
 
 
-@pytest.mark.parametrize("name", ["offline", "limited"])
+@pytest.mark.parametrize("name", ["offline", "limited", "dropped"])
 def test_when_github_cannot_say_the_owner_chooses_with_no_create_button(tmp_path: Path, name: str) -> None:
     web = Web(tmp_path, fetch=github_users(ACME))
     web.set_up()
