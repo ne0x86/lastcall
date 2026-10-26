@@ -115,7 +115,7 @@ You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and W
 **1. Start lastcall:**
 
 ```sh
-git clone --branch v0.5.0 https://github.com/ne0x86/lastcall && cd lastcall
+git clone --branch v0.6.0 https://github.com/ne0x86/lastcall && cd lastcall
 docker compose up -d
 ```
 
@@ -163,7 +163,7 @@ and set `LASTCALL_TRUST_PROXY=1`.
 To upgrade, check out the new release and pull its images; your settings and history stay in Docker volumes:
 
 ```sh
-git fetch --tags && git checkout v0.5.0      # the release you want
+git fetch --tags && git checkout v0.6.0      # the release you want
 docker compose pull && docker compose up -d
 ```
 
@@ -337,10 +337,10 @@ advice.
   - The `tests` recipe: tests for what no test checks, in pull requests that change only tests.
   - The `deps` recipe: dependency upgrades that need more than a new version number.
   - Signals: errors in production from Sentry or GlitchTip.
-- 🔜 **v0.6, closer to your apps.**
-  - ✅ Container logs as signals: the errors and restarts of your apps' containers on the same machine, chosen on
-    the Settings page with suggestions, or by a label.
-  - ✅ Logs in Loki, for apps on other machines.
+- ✅ **v0.6, closer to your apps.**
+  - Container logs as signals: the errors and restarts of your apps' containers on the same machine, chosen on the
+    Settings page with suggestions, or by a label.
+  - Logs in Loki, for apps on other machines.
 - 🔭 **Next, as people ask for it** ([open an issue](https://github.com/ne0x86/lastcall/issues/new/choose)).
   - GitLab and Forgejo, next to GitHub.
   - A lastcall agent for the containers of other machines without Loki.

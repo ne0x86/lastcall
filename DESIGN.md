@@ -1,6 +1,6 @@
 # lastcall design
 
-Status: **v0.5 released, October 2026**, open for discussion. This document describes what lastcall is and how it
+Status: **v0.6 released, October 2026**, open for discussion. This document describes what lastcall is and how it
 works. Section 17 says what is done and what comes next; open decisions are listed in section 19.
 
 ## 1. What lastcall is
@@ -821,11 +821,11 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Recipes `issues`, `tests` and `deps`, and the turn of the recipes that the owner wants for a project.
 - Signals: errors in production from Sentry or GlitchTip, in the audits, the tests and the ranking.
 
-**v0.6: closer to the owner's apps**
+**v0.6: closer to the owner's apps** (done, October 2026)
 
 - Container logs as signals, on lastcall's own host: the owner chooses the containers of each project, with
-  suggestions, or labels them (section 8). Done.
-- Logs in Loki, for apps on other hosts (section 8). Done.
+  suggestions, or labels them (section 8).
+- Logs in Loki, for apps on other hosts (section 8).
 
 **Next, as people ask for it**
 
