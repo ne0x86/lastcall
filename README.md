@@ -207,42 +207,48 @@ docker compose run --rm cli pause                                               
 ## 🌍 On a server
 
 lastcall runs the same on a server as on your computer. Its web UI listens only on the server itself
-(`127.0.0.1:8080`), so nobody else reaches it until you choose how:
+(`127.0.0.1:8080`), so nobody else reaches it until you choose how. On Linux, that needs Docker 28.3.3 or later:
+older versions can let machines on the same local network reach ports published on `127.0.0.1`.
 
 - **An SSH tunnel**, with nothing to change. From your computer, run `ssh -L 8080:127.0.0.1:8080 you@your-server`,
   then open http://127.0.0.1:8080.
 - **Your own network.** Add `LASTCALL_BIND=0.0.0.0` to a `.env` file next to `compose.yaml`, or the server's address
   on a VPN such as Tailscale, and run `docker compose up -d`. Then open http://your-server:8080. Do this only on a
   network you trust: without HTTPS the password travels in the clear, and the ports that Docker publishes go around
-  firewalls such as ufw.
+  firewalls such as ufw. A VPN's address must exist when Docker starts, or the web UI stays down after a reboot until
+  you run `docker compose up -d` again. To let the server take the address early, run
+  `echo net.ipv4.ip_nonlocal_bind=1 | sudo tee /etc/sysctl.d/99-lastcall.conf && sudo sysctl --system`.
 - **HTTPS on your domain.** Put a reverse proxy in front, such as nginx, Caddy or Traefik, and add
-  `LASTCALL_TRUST_PROXY=1` to `.env`, so that lastcall reads the client's address and scheme from the proxy's
-  `X-Forwarded-*` headers. A proxy on the server itself reaches lastcall at `127.0.0.1:8080`, and a proxy in a
-  container joins lastcall's network, `lastcall_outside`, and reaches it at `http://lastcall:8080`. With nginx:
+  `LASTCALL_TRUST_PROXY=1` to `.env`, so that lastcall reads the client's address, the scheme and the public host
+  from the proxy's `X-Forwarded-*` headers. A proxy on the server itself reaches lastcall at `127.0.0.1:8080`, and a
+  proxy in a container joins lastcall's network, `lastcall_outside`, and reaches it at `http://lastcall:8080`. Caddy
+  and Traefik send those headers on their own; nginx needs them spelled out:
 
   ```nginx
   location / {
       proxy_pass http://127.0.0.1:8080;
-      proxy_set_header Host $host;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Host $http_host;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto $scheme;
   }
   ```
 
   Keep the port reachable by the proxy only, as `127.0.0.1` does: whoever reaches it directly could pass for anyone
-  in those headers. A proxy that sends no `X-Forwarded-*` headers needs the public address in
-  `LASTCALL_WEB_ORIGIN` instead, such as `https://lastcall.example.com`.
+  in those headers. Without the headers, forms answer that they did not come from this site, the session cookie
+  loses `Secure`, and the GitHub App that you create from the web UI sends you back to an address you cannot reach.
+  `LASTCALL_WEB_ORIGIN`, such as `https://lastcall.example.com`, only adds origins that forms may come from; it does
+  not replace the headers.
 
 Sign accounts in from an SSH session on the server: the login commands of the quickstart work there too. On the same
 server as your apps, lastcall also reads their containers' logs directly.
 
 ## 🔄 Updating
 
-The quickstart cloned the `stable` branch, which always holds the latest release. To update, in the lastcall folder:
+The quickstart clones the `stable` branch, which always holds the latest release. To update, in the lastcall folder:
 
 ```sh
-git pull
-docker compose pull && docker compose up -d
+git pull --ff-only && docker compose pull && docker compose up -d
 ```
 
 `compose.yaml` pins the images of its own release, so `git pull` moves the file and its images together. Your
@@ -250,8 +256,12 @@ accounts, projects, settings and history stay in Docker volumes, and lastcall ad
 database when it starts. Keep your own changes in `.env` or in a `compose.override.yaml`, never in `compose.yaml`, so
 that `git pull` never conflicts. The release notes say when a version needs anything more.
 
-- **To stay on one release**, check out its tag instead: `git fetch --tags && git checkout v0.6.2`.
-- **If you cloned a release by its tag**, as the quickstart did before `stable` existed, switch once:
+- **If git stops because of your changes to `compose.yaml` or `egress/filter`**, move them out first: the address and
+  the port go in `.env` (`LASTCALL_BIND`, `LASTCALL_PORT`), and anything else in a `compose.override.yaml`, which can
+  also mount your own copy of the filter. Then run `git checkout -- compose.yaml egress/filter` and update again.
+- **To stay on one release**, check out its tag instead: `git fetch --tags && git checkout v0.6.2`. `git pull` then
+  stops until you follow releases again with `git checkout stable`.
+- **If you cloned a release by its tag, or `main`**, as earlier quickstarts did, switch once:
   `git fetch origin && git checkout stable`.
 
 ## ⚙️ Your project's settings
@@ -425,8 +435,8 @@ docker compose --profile test run --rm it
 ```
 
 A release sets the version in two places that a test keeps in agreement, `__version__` and the image tag in
-`compose.yaml`, and moves the `stable` branch, which the quickstart clones, to its tag. How it all fits together:
-[DESIGN.md](DESIGN.md).
+`compose.yaml`. Once its images are published, the `stable` branch, which the quickstart clones, moves to its tag.
+How it all fits together: [DESIGN.md](DESIGN.md).
 
 ## 🤝 Contributing
 

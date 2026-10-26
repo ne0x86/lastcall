@@ -728,11 +728,12 @@ def deliver_run(run: str, acc: Account, max_prs: int | None) -> int:
 def serve(host: str, port: int, scheduler: bool) -> int:
     st, secrets = store(), secret_store()
     origins = [o.strip() for o in os.environ.get("LASTCALL_WEB_ORIGIN", "").split(",") if o.strip()]
+    trust = os.environ.get("LASTCALL_TRUST_PROXY") == "1"
     app = web.create_app(
         st,
         secrets,
         log=log,
-        trust_proxy=os.environ.get("LASTCALL_TRUST_PROXY") == "1",
+        trust_proxy=trust,
         origins=origins,
         notifier=Notifier(secrets, st, log=log),
         read_quota=lambda account: read_quota(account, sandbox(), time.time(), st, secrets),
@@ -740,7 +741,7 @@ def serve(host: str, port: int, scheduler: bool) -> int:
     )
     if scheduler:
         threading.Thread(target=schedule, args=(st, secrets), name="service", daemon=True).start()
-    web.serve(app, host, port, log)
+    web.serve(app, host, port, log, trust_proxy=trust)
     return 0
 
 

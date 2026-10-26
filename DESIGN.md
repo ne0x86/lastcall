@@ -747,8 +747,9 @@ request opens, decisions or ideas wait, lastcall merges an approved pull request
 stops early, an account has paid usage on or its quota cannot be read, and, if the owner wants, a burst starts) and
 their language. A problem is told once when it starts, and a notification that fails is logged and never stops
 lastcall. The web UI listens on `127.0.0.1` unless the owner sets `LASTCALL_BIND`, such as to a VPN address. Behind
-a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address and scheme from the proxy, and
-`LASTCALL_WEB_ORIGIN` lists the public origins that forms may come from.
+a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall read the client's address, scheme and host from the proxy's
+`X-Forwarded-*` headers, which the server drops otherwise, and `LASTCALL_WEB_ORIGIN` only adds origins that forms may
+come from.
 
 A CLI mirrors the main actions. Like the UI, it queues orders that the service executes, so two actions never run
 into each other.
