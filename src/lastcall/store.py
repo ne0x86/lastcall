@@ -1,5 +1,5 @@
-"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, ideas, pull requests, the
-suggestions for the installed repositories, the owner's orders and the web UI's sessions.
+"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, ideas, labelled issues, pull
+requests, the suggestions for the installed repositories, the owner's orders and the web UI's sessions.
 
 Findings keep their story across runs, so the judge never proposes again what the owner rejected:
     pending    valid, meant for a pull request, not opened yet (it did not fit, or delivery failed)
@@ -22,6 +22,16 @@ Ideas, from improvement plans, keep theirs too:
     dismissed  its plan was closed without it
     stuck      a run tried to build it and could not
     discarded  the critic left it out of the plan
+
+Issues that the owner labels `lastcall` (tickets) too:
+    waiting    labelled and open: a run works on it
+    in_pr      in an open lastcall pull request, which closes the issue when it is merged
+    merged     its pull request was merged
+    rejected   its pull request was closed without merging; lastcall takes the label off
+    reverted   its pull request was merged, broke something, and its revert was merged
+    stuck      a run could not do it, and said why on the issue; lastcall takes the label off
+    dropped    it lost its label, or was closed, before a run did it
+A rejected or stuck issue waits again when the owner labels it again.
 """
 
 from __future__ import annotations
@@ -41,6 +51,7 @@ from lastcall.suggest import Suggestion
 if TYPE_CHECKING:
     from lastcall.recipes.audit import AuditReport
     from lastcall.recipes.improve import ImproveReport
+    from lastcall.recipes.issues import IssuesReport
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -64,6 +75,10 @@ CREATE TABLE IF NOT EXISTS findings (
 CREATE TABLE IF NOT EXISTS ideas (
     id INTEGER PRIMARY KEY, repo TEXT NOT NULL, run TEXT NOT NULL, iid TEXT NOT NULL, data TEXT NOT NULL,
     status TEXT NOT NULL, issue_url TEXT, pr_url TEXT, note TEXT, created REAL NOT NULL, UNIQUE (run, iid));
+CREATE TABLE IF NOT EXISTS tickets (
+    id INTEGER PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, url TEXT NOT NULL, title TEXT NOT NULL,
+    status TEXT NOT NULL, pr_url TEXT, note TEXT, unlabeled INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL,
+    UNIQUE (repo, number));
 CREATE TABLE IF NOT EXISTS prs (
     url TEXT PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, run TEXT NOT NULL, title TEXT NOT NULL,
     state TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL, kind TEXT NOT NULL DEFAULT 'change',
@@ -415,14 +430,14 @@ class Store:
             "UPDATE prs SET state = ?, updated = ?, merge_sha = ?, watch_until = ? WHERE url = ?",
             (state, now, merge_sha, watch_until, url),
         )
-        for table in ("findings", "ideas"):
+        for table in ("findings", "ideas", "tickets"):
             self.x(
                 f"UPDATE {table} SET status = ? WHERE pr_url = ? AND status = 'in_pr'",
                 ("merged" if merged else "rejected", url),
             )
         if merged:
             for row in self.q("SELECT url FROM prs WHERE reverted = ?", (url,)):
-                for table in ("findings", "ideas"):
+                for table in ("findings", "ideas", "tickets"):
                     sql = f"UPDATE {table} SET status = 'reverted' WHERE pr_url = ? AND status = 'merged'"
                     self.x(sql, (row["url"],))
 
@@ -432,6 +447,7 @@ class Store:
         self.x("UPDATE prs SET state = 'closed', updated = ? WHERE url = ?", (time.time(), url))
         self.x("UPDATE findings SET status = 'pending', pr_url = NULL WHERE pr_url = ? AND status = 'in_pr'", (url,))
         self.x("UPDATE ideas SET status = 'wanted', pr_url = NULL WHERE pr_url = ? AND status = 'in_pr'", (url,))
+        self.x("UPDATE tickets SET status = 'waiting', pr_url = NULL WHERE pr_url = ? AND status = 'in_pr'", (url,))
 
     def watched(self, now: float) -> list[dict[str, Any]]:
         """Merged pull requests that lastcall still watches: not reverted, and within their window."""
@@ -559,6 +575,66 @@ class Store:
                 note = f"{status}: {d.get('note') or ''}"[:800]
                 sql = "UPDATE ideas SET status = 'stuck', note = ? WHERE id = ? AND status = 'wanted'"
                 self.x(sql, (note, d["row"]))
+
+    # labelled issues
+
+    def sync_tickets(self, repo: str, found: Sequence[Mapping[str, Any]]) -> int:
+        """The issues labelled `lastcall` that are open now (`found`: number, url and title). A new one waits for a
+        run; one that lastcall gave back, stuck or rejected and with its label taken off, waits again now that the
+        owner labelled it again; one that waited and is not labelled and open any more is dropped. Returns how many
+        changed."""
+        changed, now, numbers = 0, time.time(), {int(i["number"]) for i in found}
+        for issue in found:
+            rows = self.q("SELECT * FROM tickets WHERE repo = ? AND number = ?", (repo, int(issue["number"])))
+            if not rows:
+                self.x(
+                    "INSERT INTO tickets (repo, number, url, title, status, created) "
+                    "VALUES (?, ?, ?, ?, 'waiting', ?)",
+                    (repo, int(issue["number"]), str(issue["url"]), str(issue["title"]), now),
+                )
+                changed += 1
+                continue
+            given_back = rows[0]["status"] in ("stuck", "rejected") and rows[0]["unlabeled"]
+            if rows[0]["status"] == "dropped" or given_back:
+                self.x(
+                    "UPDATE tickets SET status = 'waiting', title = ?, note = NULL, unlabeled = 0 WHERE id = ?",
+                    (str(issue["title"]), rows[0]["id"]),
+                )
+                changed += 1
+        for row in self.q("SELECT id, number FROM tickets WHERE repo = ? AND status = 'waiting'", (repo,)):
+            if row["number"] not in numbers:
+                self.x("UPDATE tickets SET status = 'dropped' WHERE id = ?", (row["id"],))
+                changed += 1
+        return changed
+
+    def waiting_tickets(self, repo: str) -> list[dict[str, Any]]:
+        """The labelled issues that wait for a run, the oldest first, with `row`, their id here."""
+        rows = self.q("SELECT * FROM tickets WHERE repo = ? AND status = 'waiting' ORDER BY id", (repo,))
+        return [{"row": r["id"], "number": r["number"], "url": r["url"], "title": r["title"]} for r in rows]
+
+    def waiting_count(self, repo: str) -> int:
+        return int(self.q("SELECT count(*) AS n FROM tickets WHERE repo = ? AND status = 'waiting'", (repo,))[0]["n"])
+
+    def record_ticket_deliveries(self, run: str, report: IssuesReport) -> None:
+        """What a run did with the labelled issues: an opened pull request makes its issue `in_pr`; an issue that
+        could not be done is `stuck`, with why. One that a gate stopped still waits."""
+        for d in report.deliveries:
+            status = d.get("status")
+            if status == "opened":
+                url = str(d["url"])
+                self._record_pr(url, report.repo, run, d["title"])
+                self.x("UPDATE tickets SET status = 'in_pr', pr_url = ? WHERE id = ?", (url, d["row"]))
+            elif status not in (None, "stopped"):
+                note = f"{status}: {d.get('note') or ''}"[:800]
+                sql = "UPDATE tickets SET status = 'stuck', note = ? WHERE id = ? AND status = 'waiting'"
+                self.x(sql, (note, d["row"]))
+
+    def to_unlabel(self) -> list[dict[str, Any]]:
+        """Issues that lastcall gave back, stuck or rejected, whose label it has not taken off yet."""
+        return self.q("SELECT * FROM tickets WHERE status IN ('stuck', 'rejected') AND unlabeled = 0 ORDER BY id")
+
+    def unlabeled(self, row: int) -> None:
+        self.x("UPDATE tickets SET unlabeled = 1 WHERE id = ?", (row,))
 
     def plans(self) -> list[dict[str, Any]]:
         """Open plans with ideas to choose from: repo, issue_url and n."""

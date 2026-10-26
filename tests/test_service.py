@@ -273,3 +273,19 @@ def test_a_burst_builds_the_ideas_the_owner_ticked(store: Store) -> None:
     for work in started:
         work()
     assert improved == [("claude", "ne0x86/b")] and audits == []
+
+
+def test_a_burst_works_on_labelled_issues_after_ticked_ideas(store: Store) -> None:
+    store.sync_tickets("ne0x86/b", [{"number": 7, "url": "https://github.com/ne0x86/b/issues/7", "title": "Crash"}])
+    started: list[Callable[[], None]] = []
+    audits: list[tuple[str, str]] = []
+    readings: dict[str, Reading | Exception] = {"claude": reading("claude", 30, 20), "chatgpt": QuotaError("x")}
+    svc = service(store, readings, audits, Clock(), started)
+    done: list[tuple[str, str]] = []
+    svc.issues = lambda repo, account, trigger: done.append(("issues", repo))
+    svc.improve = lambda repo, account, trigger: done.append(("improve", repo))
+    assert svc.recipe("ne0x86/b") == "issues" and svc.recipe("ne0x86/a") == "audit"
+    svc.tick()
+    for work in started:
+        work()
+    assert done == [("issues", "ne0x86/b")] and audits == []

@@ -33,6 +33,12 @@ class FakeGitHub:
     def repository(self, token: str, repo: str) -> dict[str, Any]:
         return {"allow_squash_merge": True}
 
+    def ensure_label(self, token: str, repo: str, label: str, description: str) -> None:
+        pass
+
+    def labelled_issues(self, token: str, repo: str, label: str) -> list[dict[str, Any]]:
+        return []
+
     def request(self, method: str, path: str, token: str, body: object = None) -> Any:
         self.calls.append((method, path, body))
         return self.answers[(method, path)]

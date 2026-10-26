@@ -672,3 +672,13 @@ def test_merge_on_approve_and_watch_settings(github_web: Web) -> None:
     assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
     project = web.store.projects()[0]
     assert (project.merge_on_approve, project.watch, project.health_url) == (False, False, None)
+
+
+def test_a_project_says_how_many_labelled_issues_wait(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    found = [{"number": n, "url": f"https://github.com/acme/api/issues/{n}", "title": "t"} for n in (3, 4)]
+    web.store.sync_tickets("acme/api", found)
+    assert "2 labelled issues wait for a burst" in web.client.get("/projects").get_data(as_text=True)
+    page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "2 issues etiquetados esperan una ráfaga" in page

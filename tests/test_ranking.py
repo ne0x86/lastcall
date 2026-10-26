@@ -72,4 +72,4 @@ def test_ideas_the_owner_chose_go_first() -> None:
         wanted=lambda r: 2 if r == "o/chosen" else 0,
     )
     assert [c.repo for c in found] == ["o/chosen", "o/other"]  # audited 2 days ago, and it still goes first
-    assert "2 ideas the owner chose" in found[0].reasons
+    assert "2 asked for by the owner" in found[0].reasons

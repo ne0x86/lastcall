@@ -7,6 +7,10 @@ and a run builds it; a closed plan dismisses the ideas that were not ticked.
 
 In a project with merge on approve, an open pull request that the owner approved is merged here
 (lastcall.approval). In a project that is watched, merged pull requests are watched here (lastcall.watch).
+
+In active projects, the open issues labelled `lastcall` wait for a run (lastcall.recipes.issues); lastcall creates
+the label once, and takes it off the issues it gave back: those it could not do, and those whose pull request the
+owner closed.
 """
 
 from __future__ import annotations
@@ -18,12 +22,14 @@ from typing import TYPE_CHECKING, Any
 from lastcall.approval import land
 from lastcall.github import GitHub, GitHubError
 from lastcall.recipes.improve import ticked
+from lastcall.recipes.issues import LABEL
 from lastcall.store import Store
 from lastcall.watch import WATCH_HOURS, watch
 
 if TYPE_CHECKING:
     from lastcall.notify import Notifier
 
+LABEL_ABOUT = "lastcall works on this issue with leftover AI quota"
 REF = re.compile(r"https://github\.com/([^/\s]+/[^/\s]+)/(?:issues|pull)/(\d+)")
 
 
@@ -35,8 +41,9 @@ def ref(url: str) -> tuple[str, int]:
 
 
 def sync(store: Store, client: GitHub, log: Callable[[str], None] = print, notify: Notifier | None = None) -> int:
-    """Read the state of every open lastcall pull request, decisions issue and improvement plan, merge what the owner
-    approved where the project asks for it, and watch what was merged. Returns how many changed."""
+    """Read the state of every open lastcall pull request, decisions issue and improvement plan, and the issues
+    labelled `lastcall`; merge what the owner approved where the project asks for it, and watch what was merged.
+    Returns how many changed."""
     tokens: dict[str, str] = {}
     changed = 0
 
@@ -101,4 +108,19 @@ def sync(store: Store, client: GitHub, log: Callable[[str], None] = print, notif
             if ticks:
                 log(f"{url}: {ticks} idea(s) ticked or unticked")
             changed += ticks
+    for project in store.projects(active_only=True):
+        try:
+            auth = token(project.repo)
+            if not store.setting(f"label {project.repo}"):
+                client.ensure_label(auth, project.repo, LABEL, LABEL_ABOUT)
+                store.set_setting(f"label {project.repo}", "yes")
+            changed += store.sync_tickets(project.repo, client.labelled_issues(auth, project.repo, LABEL))
+        except GitHubError as e:
+            log(f"labelled issues of {project.repo}: {e}")
+    for ticket in store.to_unlabel():
+        try:
+            client.unlabel(token(ticket["repo"]), ticket["repo"], int(ticket["number"]), LABEL)
+            store.unlabeled(int(ticket["id"]))
+        except GitHubError as e:
+            log(f"{ticket['url']}: {e}")
     return changed + watch(store, client, log, notify)

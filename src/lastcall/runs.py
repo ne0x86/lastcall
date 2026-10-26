@@ -1,8 +1,9 @@
-"""One run from start to end, an audit or an improvement, as the command line and the service both run it.
+"""One run from start to end, an audit, an improvement or the labelled issues, as the command line and the service
+both run it.
 
-The run's folder lives in the data volume (`runs/<repo>-<engine>-<time>`, or `<repo>-improve-<engine>-<time>`) and
+The run's folder lives in the data volume (`runs/<repo>-<engine>-<time>`, or `<repo>-<recipe>-<engine>-<time>`) and
 holds the clone, the context pack, a working copy per pull request and the report. The store keeps the run, its
-findings or ideas, and their pull requests.
+findings, ideas or issues, and their pull requests.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lastcall import engines, environment, git, pack, scanners
+from lastcall import engines, environment, git, i18n, pack, scanners
 from lastcall.accounts import Account, read_quota
 from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
 from lastcall.environment import TOOL_ENV, Environment
@@ -32,6 +33,8 @@ from lastcall.recipes.audit import (
 from lastcall.recipes.build import Verifier
 from lastcall.recipes.improve import ImproveReport, build_ideas, publish, run_improve
 from lastcall.recipes.improve import markdown as improve_markdown
+from lastcall.recipes.issues import LABEL, IssuesReport, build_issues, comments, why
+from lastcall.recipes.issues import markdown as issues_markdown
 from lastcall.recipes.steps import QuotaCheck, StepRecord, StepRunner
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.store import Store
@@ -128,14 +131,19 @@ def verifier(box: Sandbox, engine: str, env: Environment = environment.RUNNER) -
     return verify
 
 
-def save(run_dir: Path, report: AuditReport | ImproveReport) -> str:
+def save(run_dir: Path, report: AuditReport | ImproveReport | IssuesReport) -> str:
     (run_dir / "report.json").write_text(report.to_json(), encoding="utf-8")
-    text = improve_markdown(report) if isinstance(report, ImproveReport) else markdown(report)
+    if isinstance(report, ImproveReport):
+        text = improve_markdown(report)
+    elif isinstance(report, IssuesReport):
+        text = issues_markdown(report)
+    else:
+        text = markdown(report)
     (run_dir / "report.md").write_text(text, encoding="utf-8")
     return text
 
 
-def tell(inst: Instance, run: str, report: AuditReport | ImproveReport, prefix: str = "") -> None:
+def tell(inst: Instance, run: str, report: AuditReport | ImproveReport | IssuesReport, prefix: str = "") -> None:
     """Tell the owner when a run failed or stopped early, and why."""
     if inst.notify and report.status in ("failed", "partial"):
         error = next((s.error for s in reversed(report.steps) if s.error), None)
@@ -291,6 +299,79 @@ def improve_repo(
         if report.issue_url:
             inst.notify.notify("decisions", "plan", repo=repo, count=len(report.plan), url=report.issue_url)
     tell(inst, run_dir.name, report, "improve-")
+    return run_dir, report
+
+
+def issues_repo(
+    inst: Instance,
+    repo: str,
+    account: Account,
+    opts: Options,
+    on_step: Callable[[StepRecord], None] | None = None,
+    log: Log = print,
+) -> tuple[Path, IssuesReport]:
+    """Work on the issues the owner labelled `lastcall`, the oldest first, up to the project's `max_prs`: a pull
+    request that closes each one, or a comment on it that says why not, with the label taken off."""
+    token = inst.client.repository_token(repo)
+    meta = inst.client.repository(token, repo)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    run_dir = inst.box.data_root / "runs" / f"{meta['name']}-issues-{account.engine}-{stamp}"
+    run_dir.mkdir(parents=True)
+    inst.store.start_run(run_dir.name, repo, account.id, opts.trigger, recipe="issues")
+    try:
+        git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
+        forge = GitHubForge.connect(inst.client, repo)
+        tickets = []
+        for ticket in inst.store.waiting_tickets(repo)[: opts.max_prs]:
+            issue, found = forge.issue(int(ticket["number"]))
+            labels = {str(label.get("name")) for label in issue.get("labels") or []}
+            if issue.get("state") == "open" and LABEL in labels:  # still asked for: sync drops the others
+                tickets.append({**ticket, "body": issue.get("body") or "", "comments": comments(found)})
+        report = IssuesReport(repo, git.head(run_dir / "clone")[:7], account.engine, opts.language)
+        if not tickets:
+            report.notes.append(f"No issue of {repo} labelled `{LABEL}` waits.")
+            log(f"{repo}: {report.notes[-1]}")
+        else:
+            own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
+            extra = {FOCUS: own.focus} if own and own.focus else {}
+            context = pack.build(run_dir / "clone", run_dir, repo, extra=extra, exclude=own.exclude if own else ())
+            env = environment.detect(run_dir / "clone", own)
+            log(f"Working on {len(tickets)} labelled issue(s) of {repo}, checked in {env.name}.")
+            run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+            build_issues(
+                report=report,
+                tickets=tickets,
+                run_dir=run_dir,
+                shared=context.path,
+                engine=engines.get(account.engine),
+                tiers=defaults(account.engine),
+                run_step=run_step,
+                check_quota=check_quota,
+                verify=verifier(inst.box, account.engine, env),
+                forge=forge,
+                environment=env,
+                max_prs=opts.max_prs,
+                on_step=on_step,
+            )
+            inst.store.record_ticket_deliveries(run_dir.name, report)
+            for d in report.deliveries:
+                if d.get("status") not in (None, "opened", "stopped"):  # it could not be done: say why, give it back
+                    text = i18n.text(opts.language, "ticket.stuck", why=why(opts.language, d))
+                    forge.comment(int(d["number"]), text)
+                    forge.unlabel(int(d["number"]), LABEL)
+                    inst.store.unlabeled(int(d["row"]))
+        save(run_dir, report)
+    except Exception as e:
+        inst.store.finish_run(run_dir.name, "failed", None)
+        if inst.notify:
+            inst.notify.notify("failed", "issues-failed", repo=repo, reason=f"{type(e).__name__}: {e}"[:400])
+        raise
+    inst.store.finish_run(run_dir.name, report.status, report.sha)
+    if inst.notify:
+        for d in report.deliveries:
+            if d.get("status") == "opened":
+                inst.notify.notify("pr", repo=repo, title=d["title"], url=d["url"])
+    tell(inst, run_dir.name, report, "issues-")
     return run_dir, report
 
 
