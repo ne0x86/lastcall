@@ -3,8 +3,8 @@
 {% from "_help.html" import help with context %}
 
 {#- The state chip: one word for what the account is doing. `held` is "down" or "paused" when nothing bursts: then no
-    chip says that an account is bursting or spending (a run that goes on while paused is the exception, because it
-    really is still spending). -#}
+    chip says that an account is bursting. A run that goes on is "Working": the chip for any running run, manual ones
+    included, so it never claims a burst. -#}
 {% macro state_chip(a, error="", held="") -%}
 {%- if not a.enabled %}{% set key = "off" %}
 {%- elif error %}{% set key = "signin" %}
@@ -33,7 +33,7 @@
     accounts get the "On hold" chip (state_chip), so the two never contradict each other. -#}
 {% macro plan(hb, a, held="") -%}
 {%- set bursty = a.plan_code in ("now", "pace", "schedule", "later", "ahead", "window") -%}
-{%- set waits = held and a.enabled and not a.paid and ((held == "down" and (a.working or bursty)) or (not a.working and bursty)) -%}
+{%- set waits = held and a.enabled and not a.paid and (bursty or (held == "down" and a.working)) -%}
 {%- if a.plan %}
 <div class="plan{% if held %} is-held{% elif a.plan_code in ('now', 'pace', 'schedule') %} is-live{% endif %}">
   <p>{% if waits %}{{ t("web.plan.held." ~ held) }}{% else %}{{ a.plan }}{% endif %}</p>

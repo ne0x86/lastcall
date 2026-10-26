@@ -54,7 +54,7 @@ also spend an API key with a monthly budget, or a local model at the hours you c
 
 <p align="center"><img src="docs/dashboard.png" width="760"
   alt="The lastcall dashboard in English: a service card saying bursts are on, with a Pause button; a Waiting for you
-  card with two pull requests to review, a decision and an idea to choose; and the first two account cards, chatgpt
+  card with two pull requests to review, two decisions and two ideas to choose; and the first two account cards, chatgpt
   on Codex and claude-max on Claude Code, each with its 5-hour and weekly quota meters"></p>
 
 ## 🔁 How it works

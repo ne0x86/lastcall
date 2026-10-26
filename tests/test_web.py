@@ -1110,6 +1110,21 @@ def test_no_card_says_bursting_while_the_service_is_down_or_paused(web: Web) -> 
         assert "Burst in progress" not in page and page.count("The service has stopped: nothing bursts") == 2
 
 
+def test_a_run_that_goes_on_while_paused_is_work_not_a_burst(web: Web) -> None:
+    two_accounts(web)
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    web.store.set_setting("paused", "yes")
+    web.store.start_run("r1", "acme/api", "claude", "manual")
+    for path in ("/", "/accounts"):
+        page = web.client.get(path).get_data(as_text=True)
+        assert "Burst in progress" not in page and ">Bursting</span>" not in page
+        assert ">Working</span>" in page and "Working on acme/api" in page
+        assert page.count("Bursts are paused: this account spends no leftover quota on its own") == 2
+    page = web.client.get("/accounts", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert ">Trabajando</span>" in page and "En ráfaga" not in page
+
+
 def test_every_field_of_the_add_forms_has_its_help(web: Web) -> None:
     web.store.add_account("claude", "claude-code", "English", 10)  # a card above them must not take their bubbles
     web.set_up()
@@ -1236,6 +1251,15 @@ def test_settings_save_and_return_to_their_sections(web: Web) -> None:
     assert notify.headers["Location"] == "/settings?done=saved#notify"
 
 
+def test_the_optional_sources_share_one_intro(web: Web) -> None:
+    web.set_up()
+    for lang, shared in (("en", "the tests cover them"), ("es", "los tests las cubren")):
+        page = web.client.get("/settings", headers={"Accept-Language": lang}).get_data(as_text=True)
+        assert page.count(shared) == 1  # the group says it once, not each of the three sources
+        for key in ("signals", "logs", "loki"):
+            assert f'id="{key}-title"' in page
+
+
 def test_settings_say_what_the_events_wait_for_and_preselect_the_pages_language(web: Web) -> None:
     web.set_up()
     spanish = {"Accept-Language": "es"}
@@ -1260,11 +1284,11 @@ def test_a_connected_integration_drops_its_intro(tmp_path: Path) -> None:
     web.set_up()
     page = web.client.get("/settings").get_data(as_text=True)
     assert "lastcall works through your own GitHub App" not in page  # the App exists
-    assert "lastcall can read the errors that your apps send" in page  # not connected yet: the intro is there
+    assert "lastcall can read the errors your apps send" in page  # not connected yet: the intro is there
     signals.Tracker("https://glitchtip.example.com", "acme", "good-token").save(web.secrets)
     page = web.client.get("/settings").get_data(as_text=True)
     assert 'class="status-line">Connected to https://glitchtip.example.com' in page
-    assert "lastcall can read the errors that your apps send" not in page
+    assert "lastcall can read the errors your apps send" not in page
 
 
 def test_the_github_page_has_steps_a_way_back_and_its_help(tmp_path: Path) -> None:
