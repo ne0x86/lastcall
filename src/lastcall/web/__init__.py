@@ -737,6 +737,7 @@ def create_app(
                 f"web.github.{'chosen' if chosen in ('0', '1') else 'found'}.{'org' if org else 'user'}", owner=owner
             ),
             confirm=t("web.github.confirm", name=values["name"], owner=owner, permissions=permissions),
+            signin=t(f"web.github.signin.{'org' if org else 'user'}", owner=owner),
             action=form_action(owner, org, state),
             manifest=json.dumps(values),
         )

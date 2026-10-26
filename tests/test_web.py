@@ -683,8 +683,8 @@ def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
     assert "Budget this month" in page and "$5.00 of $20.00" in page
     assert "Burst in progress: $5.00 of $20.00 spent this month, behind the calendar." in page
     assert "Local models cost nothing." in page
-    # the five fields of a schedule never break across lines: they are joined by no-break spaces
-    assert "at the hours of its schedule (*\u00a01-6\u00a0*\u00a0*\u00a0*, UTC)" in page
+    # a schedule never breaks across lines: its fields are joined by no-break spaces, its ranges by no-break hyphens
+    assert "at the hours of its schedule (*\u00a01\u20116\u00a0*\u00a0*\u00a0*, UTC)" in page
     assert "ACCOUNT=openrouter" not in page  # an API key has no login
 
     form = {
@@ -1465,11 +1465,14 @@ def test_an_organization_found_by_github_leads_to_the_organizations_settings(tmp
     response = web.client.get("/github/new?owner=acme")
     page = response.get_data(as_text=True)
     assert response.status_code == 200 and "acme is an organization." in page
+    assert "You need to be an owner of acme on GitHub" in page and "Sign in to github.com as" not in page
     action = re.search(CREATE_FORM, page)
     assert action and action.group(1).startswith("https://github.com/organizations/acme/settings/apps/new?state=")
     assert "You chose it" not in page
     spanish = web.client.get("/github/new?owner=acme", headers={"Accept-Language": "es"}).get_data(as_text=True)
-    assert "acme es una organización." in spanish
+    assert "acme es una organización." in spanish and "Tienes que ser propietario de acme en GitHub" in spanish
+    personal = web.client.get("/github/new?owner=octocat", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Entra en github.com como octocat antes de continuar" in personal
 
 
 def test_a_user_found_by_github_leads_to_the_personal_settings(tmp_path: Path) -> None:
@@ -1477,6 +1480,9 @@ def test_a_user_found_by_github_leads_to_the_personal_settings(tmp_path: Path) -
     web.set_up()
     page = web.client.get("/github/new?owner=octocat").get_data(as_text=True)
     assert "octocat is a personal account." in page
+    # GitHub creates a personal App under whoever is signed in there: the page says so, and only for a person
+    assert "Sign in to github.com as octocat before you continue" in page
+    assert "You need to be an owner of" not in page
     action = re.search(CREATE_FORM, page)
     assert action and action.group(1).startswith("https://github.com/settings/apps/new?state=")
     assert "GitHub will create a private App named lastcall-octocat for octocat" in page

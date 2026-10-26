@@ -386,6 +386,8 @@
   "web.github.found.org": "{owner} es una organización.",
   "web.github.chosen.user": "Lo has elegido tú: {owner} es una cuenta personal.",
   "web.github.chosen.org": "Lo has elegido tú: {owner} es una organización.",
+  "web.github.signin.user": "Entra en github.com como {owner} antes de continuar: GitHub crea una App personal en la cuenta con la sesión iniciada.",
+  "web.github.signin.org": "Tienes que ser propietario de {owner} en GitHub, o tener permiso para gestionar sus GitHub Apps.",
   "web.github.choose.user": "Es una cuenta personal",
   "web.github.choose.user_hint": "Elige esta si {owner} es el usuario con el que entras en GitHub.",
   "web.github.choose.org": "Es una organización",

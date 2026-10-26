@@ -257,7 +257,8 @@ def working_on(running: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 def describe_plan(lang: str, p: Plan, now: float, budget_usd: float | None = None, schedule: str = "") -> str:
     leftover = percent(lang, max(0.0, p.leftover_pct))
     starts = until(lang, now + (p.starts_in_hours or 0) * HOUR, now)
-    cron = schedule.replace(" ", "\u00a0")  # the fields of a schedule never break across lines
+    # a schedule never breaks across lines: no-break spaces between its fields, no-break hyphens in its ranges
+    cron = schedule.replace(" ", "\u00a0").replace("-", "\u2011")
     if p.budget is not None and budget_usd and p.code in ("pace", "ahead", "spent"):
         spent, total = money(lang, p.budget.used_pct * budget_usd / 100), money(lang, budget_usd)
         resets = until(lang, p.budget.resets_at or now, now)

@@ -38,6 +38,7 @@
   {%- elif action %}
   <p class="found">{{ kind }}</p>
   <div class="line"><p>{{ confirm }}</p>{{ help(hb, "github-permissions", t("web.help.github.permissions.title"), ["github.permissions"]) }}</div>
+  <p class="hint">{{ signin }}</p>
   <div class="form-actions">
     <form method="post" action="{{ action }}">
       <input type="hidden" name="manifest" value="{{ manifest }}">

@@ -386,6 +386,8 @@
   "web.github.found.org": "{owner} is an organization.",
   "web.github.chosen.user": "You chose it: {owner} is a personal account.",
   "web.github.chosen.org": "You chose it: {owner} is an organization.",
+  "web.github.signin.user": "Sign in to github.com as {owner} before you continue: GitHub creates a personal App under the account that is signed in.",
+  "web.github.signin.org": "You need to be an owner of {owner} on GitHub, or be allowed to manage its GitHub Apps.",
   "web.github.choose.user": "It is a personal account",
   "web.github.choose.user_hint": "Pick this if {owner} is the username you sign in to GitHub with.",
   "web.github.choose.org": "It is an organization",
