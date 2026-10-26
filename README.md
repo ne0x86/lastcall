@@ -117,7 +117,7 @@ You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and W
 **1. Start lastcall:**
 
 ```sh
-git clone --branch v0.6.0 https://github.com/ne0x86/lastcall && cd lastcall
+git clone --branch v0.6.1 https://github.com/ne0x86/lastcall && cd lastcall
 docker compose up -d
 ```
 
@@ -167,7 +167,7 @@ address and scheme from the proxy's `X-Forwarded-*` headers, and run `docker com
 To upgrade, check out the new release and pull its images; your settings and history stay in Docker volumes:
 
 ```sh
-git fetch --tags && git checkout v0.6.0      # the release you want
+git fetch --tags && git checkout v0.6.1      # the release you want
 docker compose pull && docker compose up -d
 ```
 
