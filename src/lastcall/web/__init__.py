@@ -923,7 +923,7 @@ def create_app(
                 return t("web.accounts.need_budget")
             if not form.get("key", "").strip() and (row is None or secrets.get(account.key_name) is None):
                 return t("web.accounts.need_key")
-        policy, schedule = form.get("policy", ""), form.get("schedule", "").strip()
+        policy, schedule = form.get("policy", ""), cron.normalize(form.get("schedule", ""))
         if policy not in policies(account):
             return ""
         if policy == "schedule":

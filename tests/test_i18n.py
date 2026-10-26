@@ -1,6 +1,6 @@
 import string
 
-from lastcall.i18n import MESSAGES, code, number, plural, text
+from lastcall.i18n import MESSAGES, code, number, plural, span, text
 from lastcall.recipes.audit import AuditReport, issue_body, issue_title, pr_footer
 from lastcall.verify import describe
 
@@ -37,6 +37,18 @@ def test_published_texts_follow_the_run_language() -> None:
     body = issue_body(report, [{"id": "B4", "severity": "low", "reason": "r"}], {"B4": finding})
     assert body.startswith("Hallazgos válidos que lastcall no ha convertido en pull request")
     assert "*Arreglo propuesto:* f" in body and "*Por qué necesita tu decisión:* r" in body
+
+
+def test_a_span_keeps_its_number_and_unit_together() -> None:
+    assert span("en", 46 * 3600) == "46\u00a0h" and span("es", 46 * 3600) == "46\u00a0h"
+    assert span("en", 25 * 60) == "25\u00a0min" and span("en", 1) == "1\u00a0min"
+    assert (span("en", 3 * 86_400), span("es", 3 * 86_400), span("es", 2 * 86_400)) == (
+        "3\u00a0days",
+        "3\u00a0días",
+        "2\u00a0días",
+    )
+    assert text("es", "web.time.ago", span=span("es", 46 * 3600)) == "hace 46\u00a0h"
+    assert " " not in span("en", 5 * 86_400)
 
 
 def test_numbers_and_counts() -> None:

@@ -18,11 +18,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from lastcall.github import API, PERMISSIONS, App, Fetch, GitHubError, urlopen
+from lastcall.i18n import text
 from lastcall.secretstore import SecretStore
 
 HOMEPAGE = "https://github.com/ne0x86/lastcall"
 LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
 LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?")
+LOOKUP_SECONDS = 10  # the owner lookup sits in a page load: a slow GitHub gets 10 s, then the owner is asked
 Exchange = Callable[[str], dict[str, Any]]
 
 
@@ -64,6 +66,7 @@ def owner_kind(owner: str, fetch: Fetch = urlopen) -> str | None:
     req = urllib.request.Request(f"{API}/users/{urllib.parse.quote(owner, safe='')}")
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    req.timeout = LOOKUP_SECONDS  # read by github.urlopen; a fake fetch ignores it
     try:
         status, _, raw = fetch(req)
         if status == 404:
@@ -131,12 +134,14 @@ class _Handler(BaseHTTPRequestHandler):
         if not LOCAL_HOST.fullmatch(host):
             host = f"127.0.0.1:{srv.server_address[1]}"
         app_manifest = json.dumps(manifest(srv.owner, f"http://{host}/callback"))
+        signin = text("en", f"web.github.signin.{'org' if srv.org else 'user'}", owner=srv.owner)
         permissions = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in PERMISSIONS.items())
         return (
             f"<h1>Create lastcall's GitHub App</h1>"
             f"<p>GitHub will create a private App named <b>{html.escape(manifest(srv.owner, '')['name'])}</b> "
             f"for <b>{html.escape(srv.owner)}</b>, with these permissions: {html.escape(permissions)}. "
             f"No webhooks: lastcall asks GitHub when it needs to.</p>"
+            f"<p>{html.escape(signin)}</p>"
             f'<form method="post" action="{html.escape(form_action(srv.owner, srv.org, srv.state))}">'
             f'<input type="hidden" name="manifest" value="{html.escape(app_manifest)}">'
             f'<button style="font-size:1.1rem;padding:.6rem 1.2rem">Create the App on GitHub</button></form>'

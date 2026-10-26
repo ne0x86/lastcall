@@ -279,17 +279,17 @@ def test_dashboard_in_spanish_and_english(web: Web) -> None:
     web.store.set_setting("heartbeat", str(NOW))
     page = web.client.get("/", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert "Ventana semanal" in page and "62\u00a0% usado" in page
-    assert "se reinicia en 30 h" in page
-    assert "Próxima ráfaga en 14 h, para gastar 28\u00a0%." in page  # 28% left at 2%/h: 16 h before the reset
+    assert "se reinicia en 30\u00a0h" in page
+    assert "Próxima ráfaga en 14\u00a0h, para gastar 28\u00a0%." in page  # 28% left at 2%/h: 16 h before the reset
     assert "Fix &lt;b&gt;it&lt;/b&gt;" in page  # titles come from agents: escaped
     assert "1 decisión en ne0x86/demo" in page and 'href="https://github.com/ne0x86/demo/issues/8"' in page
     assert "1 en revisión · 1 por decidir · 1 descartado" in page
-    assert "Cuota leída hace 10 min." in page and "terminada" in page
+    assert "Cuota leída hace 10\u00a0min." in page and "terminada" in page
     assert "El servicio no está en marcha" not in page
 
     web.client.get("/language/en")
     page = web.client.get("/").get_data(as_text=True)
-    assert "Weekly window" in page and "62% used" in page and "Next burst in 14 h, to spend 28%." in page
+    assert "Weekly window" in page and "62% used" in page and "Next burst in 14\u00a0h, to spend 28%." in page
     assert "Writes in Spanish · reserve 10%" in page and "1 in review · 1 to decide · 1 discarded" in page
     assert "Getting started" in page  # no GitHub App yet
 
@@ -312,7 +312,7 @@ def test_dashboard_says_when_the_service_is_not_running(web: Web) -> None:
     assert "docker compose restart lastcall" in page and 'popovertarget="help-common-terminal"' in page
     web.store.set_setting("heartbeat", str(NOW - 3 * HOUR))
     page = web.client.get("/").get_data(as_text=True)
-    assert "Last seen 3 h ago." in page and "docker compose restart lastcall" in page
+    assert "Last seen 3\u00a0h ago." in page and "docker compose restart lastcall" in page
     web.store.set_setting("heartbeat", str(NOW - 60))
     page = web.client.get("/").get_data(as_text=True)
     assert "The service is not running" not in page and "docker compose restart lastcall" not in page
@@ -701,6 +701,12 @@ def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
     row = web.store.account("openrouter")
     assert row is not None and (row.policy, row.schedule, row.budget_usd) == ("schedule", "* 0-5 * * 1-5", 30)
     assert models is not None and row.models == models.models  # they change under Models and effort
+    # a schedule copied from a plan sentence (no-break hyphen and spaces) is accepted and stored as plain text
+    pasted = {**form, "schedule": "*\u00a01\u20116\u00a0*\u00a0*\u00a0*", "key": ""}
+    assert web.client.post("/accounts/openrouter", data=pasted, headers=SITE).status_code == 302
+    row = web.store.account("openrouter")
+    assert row is not None and row.schedule == "* 1-6 * * *"
+    assert web.client.post("/accounts/openrouter", data=form, headers=SITE).status_code == 302
     assert web.secrets.get("key-openrouter") == "sk-or-new"
     assert web.client.post("/accounts/openrouter", data={**form, "key": ""}, headers=SITE).status_code == 302
     assert web.secrets.get("key-openrouter") == "sk-or-new"  # an empty field keeps the key
@@ -1468,7 +1474,7 @@ def test_an_organization_found_by_github_leads_to_the_organizations_settings(tmp
     assert "You need to be an owner of acme on GitHub" in page and "Sign in to github.com as" not in page
     action = re.search(CREATE_FORM, page)
     assert action and action.group(1).startswith("https://github.com/organizations/acme/settings/apps/new?state=")
-    assert "You chose it" not in page
+    assert "You said" not in page
     spanish = web.client.get("/github/new?owner=acme", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert "acme es una organización." in spanish and "Tienes que ser propietario de acme en GitHub" in spanish
     personal = web.client.get("/github/new?owner=octocat", headers={"Accept-Language": "es"}).get_data(as_text=True)
@@ -1514,10 +1520,20 @@ def test_when_github_cannot_say_the_owner_chooses_with_no_create_button(tmp_path
     assert "Pick this if" in page and "Create the App on GitHub" not in page and 'name="manifest"' not in page
     assert 'role="alert"' not in page and "lastcall works through your own GitHub App" not in page
     chosen = web.client.get(f"/github/new?owner={name}&org=1").get_data(as_text=True)
-    assert f"You chose it: {name} is an organization." in chosen
+    assert f"You said {name} is an organization." in chosen
     assert f"https://github.com/organizations/{name}/settings/apps/new?state=" in chosen
     personal = web.client.get(f"/github/new?owner={name}&org=0").get_data(as_text=True)
-    assert "https://github.com/settings/apps/new?state=" in personal
+    assert (
+        "https://github.com/settings/apps/new?state=" in personal
+        and f"You said {name} is a personal account." in personal
+    )
+    in_spanish = {"Accept-Language": "es"}
+    assert f"Has indicado que {name} es una organización." in web.client.get(
+        f"/github/new?owner={name}&org=1", headers=in_spanish
+    ).get_data(as_text=True)
+    assert f"Has indicado que {name} es una cuenta personal." in web.client.get(
+        f"/github/new?owner={name}&org=0", headers=in_spanish
+    ).get_data(as_text=True)
     spanish = web.client.get(f"/github/new?owner={name}", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert "Es una cuenta personal</a>" in spanish and "Es una organización</a>" in spanish
 

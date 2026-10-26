@@ -142,7 +142,8 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 **3. Follow the dashboard.** It walks you through the rest:
 
 - 🐙 **GitHub App.** Say whose repositories they are (your username or an organization: lastcall asks GitHub
-  which), and one click creates the App, private to you. Then install it on the repositories lastcall may work on.
+  which), and one click creates the App, private to you. You must be signed in to github.com as that account, or be
+  an owner of the organization. Then install it on the repositories lastcall may work on.
 - 🤖 **Accounts.** Add each AI subscription that lastcall may use, and sign it in with its tool's own official
   login. lastcall never sees it:
 
@@ -180,7 +181,7 @@ The web UI listens only on this machine. To run lastcall on a server and reach i
 <summary>Prefer the terminal? Everything works from the command line too.</summary>
 
 ```sh
-docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-github-login>
+docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-login-or-organization>
 docker compose run --rm cli account add claude-max --engine claude-code --language English
 docker compose run --rm cli account add openrouter --engine opencode --provider openrouter \
   --model <model> --budget 20                                  # asks for the key; or --key-file - with -T

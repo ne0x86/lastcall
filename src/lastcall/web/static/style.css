@@ -703,6 +703,7 @@ tbody th { font-weight: 650; }
 
   .projects-table tr { display: grid; gap: .3rem 0; }
   .projects-table tbody th { padding-bottom: .2rem; font-size: 1.02rem; }
+  .projects-table .chip { white-space: normal; }
   .projects-table td { display: flow-root; padding-left: calc(6.25rem + var(--s2)); font-size: .95rem; }
   .projects-table td::before {  /* the label floats into the padding: the value's text and chip flow side by side */
     content: attr(data-label);
@@ -716,7 +717,7 @@ tbody th { font-weight: 650; }
 
   .runs-table tr { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem 0; }
   .runs-table tr::after { content: ""; order: 2; flex-basis: 100%; height: 0; }
-  .runs-table td:nth-of-type(1) { order: 1; flex: 1 1 0; min-width: 0; font-weight: 650; }
+  .runs-table td:nth-of-type(1) { order: 1; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-weight: 650; }  /* a chip that does not fit drops to its own line under the name */
   .runs-table td:nth-of-type(4) { order: 1; margin-left: var(--s2); }
   .runs-table tbody th, .runs-table td:nth-of-type(2), .runs-table td:nth-of-type(3), .runs-table td:nth-of-type(5) {
     order: 3; color: var(--muted); font-size: .88rem; font-weight: 400;
@@ -1004,6 +1005,7 @@ main > .notice.done { box-shadow: inset 0 3px 0 var(--edge), var(--shadow); }
   main > .notice.done { position: sticky; top: var(--s2); z-index: 3; }
   html:has(main > .notice.done) { scroll-padding-top: 6rem; }
   main:has(> .notice.done) :target { scroll-margin-top: var(--s2); }
+  main:has(> .notice.done) .toc { top: 6rem; }
 }
 
 .project-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
@@ -1299,7 +1301,6 @@ fieldset > .hint { margin: 0; }
   .destinations > li { grid-template-columns: minmax(0, 1fr) auto; }
   .settings-layout { grid-template-columns: 13.5rem minmax(0, 1fr); align-items: start; gap: var(--s5); }
   .toc { position: sticky; top: var(--s4); padding: var(--s4); }
-  main:has(> .notice.done) .toc { top: 6rem; }
   .toc ul { display: grid; gap: 2px; }
   .toc a { display: flex; min-height: 44px; padding-block: .5rem; line-height: 1.3; background: none; border: 0; border-radius: var(--r-sm); }
   .toc a:hover { background: var(--surface); }

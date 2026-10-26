@@ -8,13 +8,13 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from lastcall import cli
+from lastcall import cli, github
 from lastcall.github import App, GitHub, GitHubError, Response, app_jwt
 from lastcall.github_setup import SetupServer, clean_owner, form_action, manifest, owner_kind, run_setup
 from lastcall.secretstore import SecretStore
@@ -157,6 +157,20 @@ def get(server: SetupServer, path: str) -> tuple[int, str]:
     return status, body
 
 
+@pytest.mark.parametrize("org", [False, True])
+def test_setup_page_says_who_has_to_be_signed_in_to_github(tmp_path: Path, org: bool) -> None:
+    server = SetupServer(("127.0.0.1", 0), SecretStore(tmp_path), "acme", org)
+    try:
+        _, page = get(server, "/")
+    finally:
+        server.server_close()
+    if org:
+        assert "You need to be an owner of acme on GitHub, or be allowed to manage its GitHub Apps." in page
+        assert "Sign in to github.com" not in page
+    else:
+        assert "Sign in to github.com as acme before you continue" in page and "owner of acme" not in page
+
+
 def test_setup_page_posts_the_manifest_to_github(setup_server: SetupServer) -> None:
     status, page = get(setup_server, "/")
     assert status == 200
@@ -235,6 +249,32 @@ def test_owner_kind_reads_what_github_says(status: int, body: object, expected: 
     assert not request.has_header("Authorization")  # the public API, with no token
 
 
+def test_owner_kind_waits_10_seconds_and_every_other_request_30(monkeypatch: pytest.MonkeyPatch) -> None:
+    waits: list[float] = []
+
+    class Answer:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {}
+
+        def __enter__(self) -> "Answer":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            pass
+
+        def read(self) -> bytes:
+            return b'{"type": "User"}'
+
+    def fake_urlopen(req: urllib.request.Request, timeout: float) -> Answer:
+        waits.append(timeout)
+        return Answer()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert owner_kind("acme", github.urlopen) == "user"
+    github.urlopen(urllib.request.Request("https://api.github.com/app"))
+    assert waits == [10, 30]
+
+
 def test_owner_kind_is_none_when_github_cannot_be_reached() -> None:
     def down(req: urllib.request.Request) -> Response:
         raise OSError("no route to host")
@@ -256,9 +296,20 @@ def test_clean_owner_strips_what_people_paste_with_a_name() -> None:
     assert clean_owner("acme/api") == "acme/api"  # not a name: the pattern refuses it afterwards
 
 
-def run_github_setup(monkeypatch: pytest.MonkeyPatch, kind: str | None, *argv: str) -> tuple[int, list[bool]]:
+asked: list[str] = []  # the owners that `lastcall github setup` asked GitHub about
+
+
+def run_github_setup(
+    monkeypatch: pytest.MonkeyPatch, kind: str | None, *argv: str, owner: str = "acme"
+) -> tuple[int, list[bool]]:
     """`lastcall github setup` with GitHub answering `kind`, up to the moment that it would open the setup page."""
-    monkeypatch.setattr(cli, "owner_kind", lambda owner: kind)
+    asked.clear()
+
+    def owner_kind(owner: str) -> str | None:
+        asked.append(owner)
+        return kind
+
+    monkeypatch.setattr(cli, "owner_kind", owner_kind)
     orgs: list[bool] = []
 
     def refuse(address: tuple[str, int], store: SecretStore, owner: str, org: bool) -> None:
@@ -266,7 +317,7 @@ def run_github_setup(monkeypatch: pytest.MonkeyPatch, kind: str | None, *argv: s
         raise ValueError("stop here")
 
     monkeypatch.setattr(cli, "SetupServer", refuse)
-    code = cli.main(["github", "setup", "--owner", "acme", *argv])
+    code = cli.main(["github", "setup", f"--owner={owner}", *argv])
     return code, orgs
 
 
@@ -300,6 +351,27 @@ def test_github_setup_stops_on_a_name_that_does_not_exist(
     code, orgs = run_github_setup(monkeypatch, "missing")
     assert code == 2 and orgs == []
     assert "no account or organization called acme" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("typed", ["a b", "-acme", "acme/api", "ac_me", "x" * 40, "@", "https://github.com/"])
+def test_github_setup_checks_the_name_before_it_asks_github(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], typed: str
+) -> None:
+    code, orgs = run_github_setup(monkeypatch, "missing", owner=typed)
+    assert code == 2 and orgs == [] and asked == []  # GitHub is not asked about a name it cannot have
+    err = capsys.readouterr().err
+    assert (
+        "is not the name of a GitHub account or organization" in err
+        and "no account or organization called" not in err
+    )
+
+
+@pytest.mark.parametrize(
+    "typed", ["@acme", " acme ", "https://github.com/acme", "github.com/acme/", "www.github.com/@acme"]
+)
+def test_github_setup_accepts_the_owner_as_the_web_page_does(monkeypatch: pytest.MonkeyPatch, typed: str) -> None:
+    code, orgs = run_github_setup(monkeypatch, "org", owner=typed)
+    assert code == 2 and orgs == [True] and asked == ["acme"]  # the stub refuses the page, after the cleaned name
 
 
 @pytest.mark.parametrize(

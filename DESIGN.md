@@ -235,7 +235,8 @@ in the sandbox with the account volume mounted:
     `:free`) cost nothing, rightly.
 - `schedule`, the default for local models: a cron expression in UTC, five fields (`* 1-6 * * *` is every night
   from 01:00 to 06:59). A burst starts in the minutes that match; a run that starts inside the schedule may end
-  after it. An API key on a schedule keeps its monthly budget.
+  after it. An API key on a schedule keeps its monthly budget. The web UI writes a schedule with no-break hyphens and spaces so that it stays on one line; one
+  copied from there is stored as plain text (`lastcall.cron.normalize`), from the web form and from the CLI.
 - `manual`: only runs that the owner starts. An API key keeps its budget here too.
 
 An account on an API key keeps no reserve: its budget is the owner's limit.
@@ -368,8 +369,11 @@ Rules for engines:
    asks GitHub when it needs to). The owner installs the App on all repositories or on selected ones. The
    installation is the security boundary: lastcall cannot touch anything else. The web UI does it from its GitHub
    App page, which asks whose the repositories are and finds out from GitHub's public API whether that is a person or
-   an organization (`lastcall.github_setup.owner_kind`); `lastcall github setup` serves the same one-button page from
-   the command line, with `--org` to say it when GitHub does not answer.
+   an organization (`lastcall.github_setup.owner_kind`, which waits 10 seconds for GitHub before it asks the owner);
+   both accept a name as people paste it (`@name`, or the address of the profile) and check it before asking GitHub.
+   The confirm page says who has to be signed in on github.com: the account itself for a person, an owner of the
+   organization (or someone allowed to manage its GitHub Apps) for an organization. `lastcall github setup` serves
+   the same one-button page from the command line, with `--org` to say it when GitHub does not answer.
 2. **Suggestions.** For each installed repository, lastcall works out whether it is worth activating and says why,
    without any model call: recent activity, tests or CI, supported language, size, open issues, not a fork and not
    archived. The points are in `lastcall.suggest`. Each suggestion shows the size of the code an audit reads. Once

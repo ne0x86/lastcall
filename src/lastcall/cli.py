@@ -48,7 +48,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines, logs, loki, projects, signals, web
+from lastcall import cron, engines, logs, loki, projects, signals, web
 from lastcall.accounts import (
     MODEL,
     Account,
@@ -61,7 +61,7 @@ from lastcall.accounts import (
 )
 from lastcall.engines.base import Keyed
 from lastcall.github import App, GitHub, GitHubError
-from lastcall.github_setup import SetupServer, owner_kind, run_setup
+from lastcall.github_setup import LOGIN, SetupServer, clean_owner, owner_kind, run_setup
 from lastcall.notify import Notifier
 from lastcall.quota import KINDS, QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.recipes.audit import AuditReport
@@ -385,7 +385,7 @@ def add_account(args: argparse.Namespace) -> int:
     models = tier_models(args.model or "", args.review_model or "")
     acc = Account(args.account, args.engine, args.provider or "", args.base_url or "", models, args.budget)
     policy = args.policy or policies(acc)[0]
-    schedule = args.schedule or ""
+    schedule = cron.normalize(args.schedule or "")
     check_spending(acc, policy, schedule)
     secrets = secret_store()
     if acc.needs_key():
@@ -819,7 +819,11 @@ def status(st: Store) -> str:
     return "\n".join(lines)
 
 
-def github_setup(owner: str, org: bool, port: int) -> int:
+def github_setup(typed_owner: str, org: bool, port: int) -> int:
+    owner = clean_owner(typed_owner)  # the web page accepts "@acme" and a profile address: so does this command
+    if not LOGIN.fullmatch(owner):
+        print(f"{typed_owner!r} is not the name of a GitHub account or organization.", file=sys.stderr)
+        return 2
     if not org:
         match owner_kind(owner):
             case "missing":
