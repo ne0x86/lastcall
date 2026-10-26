@@ -783,8 +783,8 @@ read the client's address, scheme and host from the proxy's `X-Forwarded-*` head
 and `LASTCALL_WEB_ORIGIN` only adds origins that forms may come from.
 
 A CLI mirrors the main actions. Unlike the web UI, which queues orders that the service starts once an account is
-free, a CLI command such as `lastcall audit` runs the recipe at once in its own process; `pause`, `resume` and the
-settings commands only change the database.
+free, a CLI command such as `lastcall audit` runs the recipe at once in its own process. `pause` and `resume` only
+change a setting, and the `connect` commands check the connection before they save it.
 
 ## 14. Extensibility
 

@@ -168,6 +168,12 @@ def test_what_http_client_cannot_send_is_a_tracker_error_that_does_not_show_the_
         assert not signals.address(text), repr(text)
 
 
+def test_an_answer_that_is_not_the_trackers_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: io.BytesIO(b"<html>a proxy's page</html>"))
+    with pytest.raises(signals.SignalsError, match="did not answer as Sentry or GlitchTip does"):
+        signals.check(TRACKER)
+
+
 def test_the_command_line_refuses_a_tracker_token_with_a_line_break_inside(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

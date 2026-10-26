@@ -93,7 +93,7 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Any:
     request = urllib.request.Request(url, headers=dict(headers))
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            return json.load(response)
+            body = response.read()
     except urllib.error.HTTPError as e:
         why = {401: "the token is not valid", 403: "the token may not read this", 404: "not found"}
         raise SignalsError(f"{why.get(e.code, f'HTTP {e.code}')}: {url.split('?')[0]}") from None
@@ -103,6 +103,10 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Any:
         raise SignalsError(
             f"the request to {url.split('/api/')[0]} could not be sent: check the address and the token"
         ) from None
+    try:
+        return json.loads(body)
+    except ValueError:  # such as the HTML page of a proxy: it was sent, and the answer is not the tracker's
+        raise SignalsError(f"{url.split('/api/')[0]} did not answer as Sentry or GlitchTip does") from None
 
 
 def address(text: str) -> bool:
