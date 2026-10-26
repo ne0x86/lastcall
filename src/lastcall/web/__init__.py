@@ -30,7 +30,7 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, cron, destinations, engines, i18n, logs, projects, signals
+from lastcall import __version__, cron, destinations, engines, i18n, logs, loki, projects, signals
 from lastcall.accounts import ACCOUNT_ID, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
@@ -40,6 +40,7 @@ from lastcall.quota import QuotaError, Reading
 from lastcall.sandbox import SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.store import AccountRow, Store
+from lastcall.supervisor import STEP
 from lastcall.web import auth, dashboard, project_views
 
 COOKIE = "lastcall_session"
@@ -90,6 +91,7 @@ def create_app(
     fetch: Fetch = urlopen,
     signals_fetch: signals.Fetch = signals.fetch_json,
     containers: Callable[[], list[dict[str, Any]]] | None = None,
+    loki_fetch: loki.Fetch = loki.fetch_json,
 ) -> Flask:
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
@@ -414,6 +416,8 @@ def create_app(
         chats: Sequence[tuple[str, str]] = (),
         signals_error: str = "",
         tried: Mapping[str, str] | None = None,
+        loki_error: str = "",
+        loki_tried: Mapping[str, str] | None = None,
     ) -> ResponseReturnValue:
         chosen, language, filled = notifications.events(), notifications.language(), dict(values or {})
         tracker = signals.Tracker.load(secrets)
@@ -436,11 +440,15 @@ def create_app(
             "fanout": store.setting("fanout") == "yes",
             "tracker": tracker,
             "logs": containers_view(),
+            "loki": loki_view(loki_tried),
             "signals_url": (tried or {}).get("url") or (tracker.url if tracker else "https://sentry.io"),
             "signals_org": (tried or {}).get("org") or (tracker.org if tracker else ""),
         }
         done = request.args.get("done", "")
-        known = ("saved", "notify_added", "notify_removed", "notify_sent", "signals", "signals_removed", "logs")
+        known = (
+            *("saved", "notify_added", "notify_removed", "notify_sent", "signals", "signals_removed", "logs"),
+            *("loki", "loki_sources", "loki_label", "loki_removed"),
+        )
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page(
             "settings.html",
@@ -453,6 +461,7 @@ def create_app(
             services=SERVICES,
             signals_error=signals_error,
             sentry_tokens=SENTRY_TOKENS,
+            loki_error=loki_error,
         )
 
     @app.post("/settings/signals")
@@ -510,6 +519,97 @@ def create_app(
             hint = "" if c.get("label") or name in choices else logs.suggest(c, repos)
             rows.append({**c, "selected": choice or hint, "suggested": hint})
         return {"error": "", "rows": rows, "repos": repos}
+
+    @app.post("/settings/loki")
+    @signed_in
+    def connect_loki() -> ResponseReturnValue:
+        """Connect Loki, once a request with the login gets through."""
+        form = request.form
+        url, user = form.get("url", "").strip().rstrip("/"), form.get("user", "").strip()
+        token, tenant = form.get("token", "").strip(), form.get("tenant", "").strip()
+        current = loki.Loki.load(secrets)
+        if not token and current is not None and (current.url, current.user) == (url, user):
+            token = current.token  # the field is left empty to keep the saved one
+        tried = {"url": url, "user": user, "tenant": tenant}
+        if not signals.address(url) or ":" in user or len(user) > 100 or not loki.TENANT.fullmatch(tenant):
+            return show_settings(400, loki_error=t("web.loki.bad"), loki_tried=tried)
+        connection = loki.Loki(url, user, token, tenant)
+        try:
+            loki.labels(connection, clock(), loki_fetch)
+        except loki.LokiError as e:
+            return show_settings(400, loki_error=t("web.loki.failed", error=str(e)), loki_tried=tried)
+        connection.save(secrets)
+        log(f"Web UI: logs read from Loki at {url}")
+        return redirect(url_for("settings_page", done="loki") + "#loki")
+
+    @app.post("/settings/loki/label")
+    @signed_in
+    def loki_label() -> ResponseReturnValue:
+        """The label that names Loki's sources. The owner's choices named sources by another one: they start again."""
+        label = request.form.get("label", "")
+        if not loki.LABEL_NAME.fullmatch(label):
+            return problem(400, "web.error.form")
+        if label != store.setting(loki.LABEL):
+            store.set_setting(loki.LABEL, label)
+            loki.choose(store, {})
+        return redirect(url_for("settings_page", done="loki_label") + "#loki")
+
+    @app.post("/settings/loki/sources")
+    @signed_in
+    def loki_sources() -> ResponseReturnValue:
+        """The project of each source in Loki, as the owner chooses it: lastcall reads the sources that have one."""
+        form, repos = request.form, {p.repo for p in store.projects()}
+        label = form.get("label", "")
+        if not loki.LABEL_NAME.fullmatch(label):
+            return problem(400, "web.error.form")
+        choices = loki.chosen(store) if label == store.setting(loki.LABEL) else {}
+        for key, name in form.items():
+            if not key.startswith("name-"):
+                continue
+            index = key.removeprefix("name-")
+            project = form.get("project-" + index, "")
+            if not loki.SOURCE.fullmatch(name) or name.startswith(STEP) or project not in {"", *repos}:
+                return problem(400, "web.error.form")
+            if project or form.get("shown-" + index):  # a project, or a no to the one that the page showed
+                choices[name] = project
+        store.set_setting(loki.LABEL, label)
+        loki.choose(store, choices)
+        read = ", ".join(sorted(k for k, v in choices.items() if v))
+        log(f"Web UI: sources in Loki read for their projects: {read}")
+        return redirect(url_for("settings_page", done="loki_sources") + "#loki")
+
+    @app.post("/settings/loki/remove")
+    @signed_in
+    def disconnect_loki() -> ResponseReturnValue:
+        secrets.delete(loki.SECRET)
+        log("Web UI: Loki disconnected")
+        return redirect(url_for("settings_page", done="loki_removed") + "#loki")
+
+    def loki_view(tried: Mapping[str, str] | None) -> dict[str, Any]:
+        """The connection to Loki, and its sources, each with its project, or the one lastcall suggests."""
+        connection, tried = loki.Loki.load(secrets), tried or {}
+        view: dict[str, Any] = {
+            "connection": connection,
+            "url": tried.get("url") or (connection.url if connection else ""),
+            "user": tried.get("user") or (connection.user if connection else ""),
+            "tenant": tried.get("tenant") or (connection.tenant if connection else ""),
+            **{"error": "", "labels": [], "label": "", "rows": [], "repos": []},
+        }
+        if connection is None:
+            return view
+        repos, choices, now = [p.repo for p in store.projects()], loki.chosen(store), clock()
+        try:
+            names = loki.labels(connection, now, loki_fetch)
+            label = loki.label_for(store, names)
+            listed = loki.sources(connection, label, now, loki_fetch) if label else []
+        except loki.LokiError as e:
+            return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200])}
+        rows = []
+        for s in listed:
+            name = s["name"]
+            hint = "" if name in choices else logs.suggest(s, repos)
+            rows.append({**s, "selected": choices.get(name, "") or hint, "suggested": hint})
+        return {**view, "labels": names, "label": label, "rows": rows, "repos": repos}
 
     @app.post("/settings/signals/remove")
     @signed_in

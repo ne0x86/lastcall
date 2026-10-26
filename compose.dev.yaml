@@ -54,16 +54,22 @@ services:
         echo 'ERROR payment failed for maria@example.com' >&2
         exec sleep 3600
 
+  loki:  # a real Loki for the integration tests: they push lines into it and read them back as lastcall does
+    image: grafana/loki:3.7.8
+    profiles: [test]
+    networks: [loki-test]
+
   it:  # the integration tests play lastcall's part against the real supervisor, proxy and runner
     build:
       context: .
       target: test
     image: lastcall-it:dev
     profiles: [test]
-    network_mode: none
+    networks: [loki-test]  # only to reach the test Loki: the network has no way out
     environment:
       LASTCALL_SOCKET: /run/lastcall/supervisor.sock
       LASTCALL_DATA_ROOT: /data
+      LASTCALL_LOKI: http://loki:3100
     volumes:
       - data:/data
       - run:/run/lastcall
@@ -73,3 +79,9 @@ services:
         condition: service_healthy
       log-source:
         condition: service_started
+      loki:
+        condition: service_started
+
+networks:
+  loki-test:  # the integration tests and their Loki, and nothing else
+    internal: true

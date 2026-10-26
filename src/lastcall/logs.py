@@ -53,18 +53,18 @@ PREFIX = re.compile(
 )
 
 
-def chosen(store: Store) -> dict[str, str]:
+def chosen(store: Store, key: str = CHOSEN) -> dict[str, str]:
     """The project of each container, as the owner chose it: "" for a container that the owner said no to, so that
-    lastcall stops suggesting one for it."""
+    lastcall stops suggesting one for it. Loki's sources keep theirs under another key (`lastcall.loki`)."""
     try:
-        found = json.loads(store.setting(CHOSEN) or "{}")
+        found = json.loads(store.setting(key) or "{}")
     except ValueError:
         return {}
     return {str(k): str(v) for k, v in found.items()} if isinstance(found, dict) else {}
 
 
-def choose(store: Store, choices: Mapping[str, str]) -> None:
-    store.set_setting(CHOSEN, json.dumps(dict(sorted(choices.items()))))
+def choose(store: Store, choices: Mapping[str, str], key: str = CHOSEN) -> None:
+    store.set_setting(key, json.dumps(dict(sorted(choices.items()))))
 
 
 def project_of(container: Mapping[str, Any], choices: Mapping[str, str]) -> str:
@@ -79,22 +79,33 @@ def names_for(repo: str, listed: Iterable[Mapping[str, Any]], choices: Mapping[s
 
 def suggest(container: Mapping[str, Any], repos: Iterable[str]) -> str:
     """The project that a container seems to belong to: by its image (`ghcr.io/<owner>/<name>:tag`), else its Compose
-    project, else its name (`<name>-web-1`). "" when none fits, or when more than one does at the same step."""
+    project, else its name (`<name>-web-1`), else a name or a Compose project that holds the project's name between
+    other words (`web_<name>_v2`), for a name of 4 letters or more. Hyphens, underscores and dots count as one.
+    "" when none fits, or when more than one does at the same step."""
     image = str(container.get("image") or "").lower().split("@")[0]
     if ":" in image.rsplit("/", 1)[-1]:  # a tag, not a registry's port
         image = image.rsplit(":", 1)[0]
-    compose = str(container.get("compose_project") or "").lower()
-    name = str(container.get("name") or "").lower()
-    candidates = [(r, r.lower(), r.lower().split("/")[-1]) for r in repos]
+    compose, name = _words(container.get("compose_project")), _words(container.get("name"))
+    candidates = [(r, r.lower(), _words(r.split("/")[-1])) for r in repos]
     steps = (
         [repo for repo, full, _ in candidates if image == full or image.endswith("/" + full)],
         [repo for repo, _, short in candidates if compose == short],
-        [repo for repo, _, short in candidates if name == short or name.startswith((short + "-", short + "_"))],
+        [repo for repo, _, short in candidates if name == short or name.startswith(short + "-")],
+        [
+            repo
+            for repo, _, short in candidates
+            if len(short) >= 4 and (f"-{short}-" in f"-{name}-" or f"-{short}-" in f"-{compose}-")
+        ],
     )
     for found in steps:
         if found:
             return found[0] if len(found) == 1 else ""
     return ""
+
+
+def _words(text: object) -> str:
+    """A name in lower case, its words joined by hyphens: `Web_Shop.v2` is `web-shop-v2`."""
+    return "-".join(w for w in re.split(r"[-_.\s]+", str(text or "").lower()) if w)
 
 
 def read(box: Sandbox, store: Store, repo: str, files: Iterable[str] = ()) -> tuple[list[Container], list[Kind]]:
@@ -137,8 +148,10 @@ def errors(found: Iterable[Mapping[str, Any]], files: Iterable[str] = ()) -> tup
                 code if isinstance(code, int) else None,
             )
         )
-        for stream in ("stdout", "stderr"):  # each in its own order: a traceback never spans the two
-            for when, key, sample, frames in events([str(line) for line in c.get(stream) or []], known):
+        # each stream in its own order: a traceback never spans two. A container has two, stdout and stderr; a
+        # source in Loki has as many as Loki keeps for it
+        for lines in (c.get("stdout"), c.get("stderr"), *(c.get("streams") or ())):
+            for when, key, sample, frames in events([str(line) for line in lines or []], known):
                 groups.setdefault((name, key), []).append((when, sample, frames))
     kinds = []
     for (name, _), seen in groups.items():
@@ -215,13 +228,16 @@ def stamp(line: str) -> tuple[float | None, str]:
     return when, line[found.end() :]
 
 
-def section(containers: Sequence[Container], kinds: Sequence[Kind]) -> str:
-    """The pack's section: how the containers are, and the errors in their logs."""
+def section(containers: Sequence[Container], kinds: Sequence[Kind], what: str = "Containers") -> str:
+    """The pack's section: how the containers are, when lastcall knows it, and the errors in their logs."""
     if not containers:
         return ""
     states = []
     for c in containers:
-        notes = [c.status or "?"]
+        if not c.status:  # a source in Loki: only its logs are known
+            states.append(c.name)
+            continue
+        notes = [c.status]
         if c.restarts:
             notes.append(f"restarted {c.restarts} times")
         if c.oom_killed:
@@ -229,7 +245,7 @@ def section(containers: Sequence[Container], kinds: Sequence[Kind]) -> str:
         elif c.status == "exited" and c.exit_code:
             notes.append(f"exited with code {c.exit_code}")
         states.append(f"{c.name} ({'; '.join(notes)})")
-    lines = [f"Containers: {', '.join(states)}."]
+    lines = [f"{what}: {', '.join(states)}."]
     if not kinds:
         lines.append(f"No errors in their logs of the last {HOURS} hours.")
         return "\n".join(lines)

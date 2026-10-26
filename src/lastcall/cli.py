@@ -9,6 +9,10 @@ lastcall signals show <owner/name>                # the errors in production tha
 lastcall logs list                                # this host's containers, with their projects or suggestions
 lastcall logs set <container> <owner/name>        # read a container's logs for a project; - stops reading it
 lastcall logs show <owner/name>                   # the errors in its containers' logs, as the audits read them
+lastcall loki connect --url http://<host>:3100    # Grafana Loki, for apps on other machines; [--user <user>]
+lastcall loki list                                # the sources in Loki, with their projects or suggestions
+lastcall loki set <source> <owner/name>           # read a source's logs for a project; - stops reading it
+lastcall loki show <owner/name>                   # the errors in its sources' logs, as the audits read them
 lastcall quota <account>                        # read an account's quota through the supervisor
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
 lastcall github repos                           # installed repositories, with lastcall's suggestions
@@ -32,6 +36,7 @@ import argparse
 import getpass
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -41,7 +46,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines, logs, projects, signals, web
+from lastcall import engines, logs, loki, projects, signals, web
 from lastcall.accounts import (
     Account,
     check_spending,
@@ -76,7 +81,7 @@ from lastcall.service import DEFAULT_RATE as SERVICE_RATE
 from lastcall.service import RATE_WINDOW, Service
 from lastcall.store import Store, import_runs
 from lastcall.suggest import Suggestion
-from lastcall.supervisor import CONTAINER, Config
+from lastcall.supervisor import CONTAINER, STEP, Config
 from lastcall.sync import sync
 from lastcall.web import auth
 
@@ -156,6 +161,23 @@ def main(argv: list[str] | None = None) -> int:
     logs_set.add_argument("repo", help="owner/name of one of your projects, or - to stop reading the container")
     logs_show = logs_cmd.add_parser("show", help="the errors in the logs of a project's containers")
     logs_show.add_argument("repo", help="owner/name")
+    loki_cmd = commands.add_parser(
+        "loki", help="errors in the logs that Grafana Loki keeps, for apps on other machines"
+    ).add_subparsers(dest="action", required=True)
+    loki_connect = loki_cmd.add_parser("connect", help="connect Loki; with a login that can read, if it asks for one")
+    loki_connect.add_argument("--url", required=True, help="Loki's address, such as http://192.168.1.20:3100")
+    loki_connect.add_argument("--user", default="", help="the login's user: Grafana Cloud's user number, for one")
+    loki_connect.add_argument("--tenant", default="", help="its X-Scope-OrgID, for a Loki with more than one tenant")
+    loki_connect.add_argument(
+        "--token-file",
+        help="the password or token: a file that holds it, or - for standard input (asked with --user)",
+    )
+    loki_cmd.add_parser("list", help="the sources in Loki, with their projects, or the one lastcall suggests")
+    loki_set = loki_cmd.add_parser("set", help="read a source's logs for a project")
+    loki_set.add_argument("source", help="its name, as `loki list` shows it")
+    loki_set.add_argument("repo", help="owner/name of one of your projects, or - to stop reading the source")
+    loki_show = loki_cmd.add_parser("show", help="the errors in the logs of a project's sources in Loki")
+    loki_show.add_argument("repo", help="owner/name")
     quota_cmd = commands.add_parser("quota", help="read an account's quota through the supervisor")
     quota_cmd.add_argument("account")
 
@@ -270,6 +292,14 @@ def dispatch(args: argparse.Namespace) -> int:
             return 0
         case "logs", "show":
             return show_logs(args.repo)
+        case "loki", "connect":
+            return connect_loki(args.url, args.user, args.tenant, args.token_file)
+        case "loki", "list":
+            return list_sources()
+        case "loki", "set":
+            return set_source(args.source, args.repo)
+        case "loki", "show":
+            return show_loki(args.repo)
         case "signals", "connect":
             return connect_signals(args.url, args.org, args.token_file)
         case "signals", "show":
@@ -418,6 +448,95 @@ def show_logs(repo: str) -> int:
         print(f"No container is read for {repo}: choose them with `lastcall logs set`.", file=sys.stderr)
         return 1
     print(logs.section(containers, kinds))
+    return 0
+
+
+def connect_loki(url: str, user: str, tenant: str, token_file: str | None) -> int:
+    url, user, tenant = url.strip().rstrip("/"), user.strip(), tenant.strip()
+    if not signals.address(url):
+        raise ValueError(f"not an address lastcall can read: {url!r}")
+    if ":" in user or not loki.TENANT.fullmatch(tenant):
+        raise ValueError("the user cannot hold a colon, and the tenant only letters, digits and !._*'()|-")
+    current = loki.Loki.load(secret_store())
+    token = read_key(token_file, ask=bool(user)) or ""
+    if not token and current is not None and (current.url, current.user) == (url, user):
+        token = current.token
+    connection = loki.Loki(url, user, token, tenant)
+    try:
+        label = loki.label_for(store(), loki.labels(connection, time.time()))
+    except loki.LokiError as e:
+        print(f"Not connected: {e}", file=sys.stderr)
+        return 1
+    connection.save(secret_store())
+    if label:
+        print(f"Connected to {url}. Its sources go by the label {label}: `lastcall loki list` shows them.")
+    else:
+        print(f"Connected to {url}, but its streams have none of the labels {', '.join(loki.NAMES)}.")
+    return 0
+
+
+def list_sources() -> int:
+    st, connection = store(), loki.Loki.load(secret_store())
+    if connection is None:
+        print("Connect Loki first: `lastcall loki connect --url <address>`.", file=sys.stderr)
+        return 1
+    try:
+        now = time.time()
+        label = loki.label_for(st, loki.labels(connection, now))
+        listed = loki.sources(connection, label, now) if label else []
+    except loki.LokiError as e:
+        print(e, file=sys.stderr)
+        return 1
+    if not label:
+        print(f"Loki's streams have none of the labels {', '.join(loki.NAMES)}.", file=sys.stderr)
+        return 1
+    print(f"Sources in {connection.url}, by their label {label}:")
+    choices, repos = loki.chosen(st), [p.repo for p in st.projects()]
+    for s in listed:
+        name = str(s["name"])
+        if name in choices:  # "" when the owner said no
+            project = choices[name] or "-"
+        else:
+            hint = logs.suggest(s, repos)
+            project = f"- (suggested: {hint}; `lastcall loki set {shlex.quote(name)} {hint}`)" if hint else "-"
+        print(f"{name:<32} {', '.join(s['hosts']):<16} {project}")
+    return 0
+
+
+def set_source(source: str, repo: str) -> int:
+    st = store()
+    if not loki.SOURCE.fullmatch(source) or source.startswith(STEP):
+        raise ValueError(f"{source!r} is not a source's name: `lastcall loki list` shows them")
+    if repo != "-" and st.project(repo) is None:
+        raise ValueError(f"no project {repo!r}: add it with `lastcall project add {repo}`")
+    if not st.setting(loki.LABEL):  # the label that names the sources, as Loki has it now
+        connection = loki.Loki.load(secret_store())
+        if connection is None:
+            raise ValueError("connect Loki first: `lastcall loki connect --url <address>`")
+        try:
+            label = loki.label_for(st, loki.labels(connection, time.time()))
+        except loki.LokiError as e:
+            print(e, file=sys.stderr)
+            return 1
+        if not label:
+            raise ValueError(f"Loki's streams have none of the labels {', '.join(loki.NAMES)}")
+        st.set_setting(loki.LABEL, label)
+    loki.choose(st, {**loki.chosen(st), source: "" if repo == "-" else repo})
+    print(f"{source}: {'not read' if repo == '-' else f'read for {repo}'}.")
+    return 0
+
+
+def show_loki(repo: str) -> int:
+    st, connection = store(), loki.Loki.load(secret_store())
+    if connection is None or not loki.names_for(repo, loki.chosen(st)):
+        print(f"No source in Loki is read for {repo}: choose them with `lastcall loki set`.", file=sys.stderr)
+        return 1
+    try:
+        sources, kinds = loki.read(connection, st, repo, (), time.time())
+    except loki.LokiError as e:
+        print(e, file=sys.stderr)
+        return 1
+    print(loki.section(sources, kinds, st.setting(loki.LABEL)))
     return 0
 
 
