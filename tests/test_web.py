@@ -892,6 +892,14 @@ def test_container_logs_from_the_web(tmp_path: Path) -> None:
     page = failing.client.get("/settings").get_data(as_text=True)
     assert "The containers could not be listed: supervisor unreachable" in page
 
+    def unexpected() -> list[dict[str, Any]]:
+        raise AttributeError("module 'socket' has no attribute 'AF_UNIX'")  # lastcall web on Windows
+
+    odd = Web(tmp_path / "odd", containers=unexpected)
+    odd.set_up()
+    response = odd.client.get("/settings")  # an optional integration never takes the page down
+    assert response.status_code == 200 and "The containers could not be listed:" in response.get_data(as_text=True)
+
 
 def test_loki_from_the_web(tmp_path: Path) -> None:
     from lastcall import loki

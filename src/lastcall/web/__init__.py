@@ -510,7 +510,9 @@ def create_app(
             return {"error": t("web.logs.unavailable"), "rows": [], "repos": []}
         try:
             listed = containers()
-        except (SandboxError, OSError) as e:
+        except Exception as e:  # an optional integration never takes the page down
+            if not isinstance(e, (SandboxError, OSError)):
+                log(f"Web UI: the containers could not be listed: {e!r}")
             return {"error": t("web.logs.failed", error=str(e)[:200]), "rows": [], "repos": []}
         repos, choices = [p.repo for p in store.projects()], logs.chosen(store)
         rows = []
@@ -603,7 +605,9 @@ def create_app(
             names = loki.labels(connection, now, loki_fetch)
             label = loki.label_for(store, names)
             listed = loki.sources(connection, label, now, loki_fetch) if label else []
-        except loki.LokiError as e:
+        except Exception as e:  # an optional integration never takes the page down
+            if not isinstance(e, loki.LokiError):
+                log(f"Web UI: Loki's sources could not be listed: {e!r}")
             return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200])}
         rows = []
         for s in listed:
