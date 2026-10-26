@@ -76,7 +76,7 @@ class Engine(Protocol):
     egress: tuple[str, ...]  # domains the CLI needs, for the egress allowlist; "*.x.com" adds subdomains
     home: str  # where the CLI keeps its login; the account's credential volume is mounted here
     home_env: str  # the environment variable that points the CLI at `home`
-    login: tuple[str, ...]  # the CLI's own interactive login, run inside the sandbox
+    login: tuple[str, ...]  # the CLI's own interactive login, run inside the sandbox; empty: an API key (Keyed)
 
     def invocation(self, step: StepSpec) -> Invocation: ...
 
@@ -92,6 +92,25 @@ class QuotaProbe(Protocol):
     def quota_invocation(self) -> Invocation: ...
 
     def quota_reading(self, account: str, lines: Sequence[str], now: float) -> Reading: ...
+
+
+@dataclass(frozen=True)
+class Provider:
+    """What a keyed engine spends: a provider's API, or a model server on the owner's machine."""
+
+    name: str  # the id in accounts and commands: "openrouter"
+    title: str  # as people know it: "OpenRouter"
+    keys: str  # where the owner creates an API key; "" for a local model server, which needs none
+    models: str  # where the owner finds the names of its models
+
+
+@runtime_checkable
+class Keyed(Protocol):
+    """An engine that runs on an API key that lastcall holds, or on a local model, rather than on a CLI login."""
+
+    providers: tuple[Provider, ...]
+
+    def with_key(self, provider: str, key: str | None, base_url: str | None = None) -> Engine: ...
 
 
 def probe_source(name: str) -> str:

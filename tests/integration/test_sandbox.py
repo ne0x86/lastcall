@@ -15,6 +15,7 @@ import pytest
 
 from lastcall.accounts import Account, read_quota
 from lastcall.engines.base import Event, EventKind, Invocation, StepResult, StepSpec
+from lastcall.engines.opencode import OpenCode
 from lastcall.engines.scripted import Scripted
 from lastcall.quota import QuotaError
 from lastcall.sandbox import Sandbox, SandboxError
@@ -219,3 +220,36 @@ def test_a_check_runs_in_the_projects_image(workspace: Path) -> None:
     )
     assert outcome.exit_code == 0
     assert lines == ["1000", "hello", "CapEff:\t0000000000000000"]
+
+
+class OpenCodeOnAStandIn(OpenCode):
+    """The runner's real opencode, on a local model whose server is a stand-in that the step starts first."""
+
+    def invocation(self, step: StepSpec) -> Invocation:
+        inv = super().invocation(step)
+        start = (
+            "python3 /ctx/stand_in.py 18765 >/dev/null 2>&1 & "
+            'until [ -e /tmp/stand-in-ready ]; do sleep 0.1; done; exec "$@"'
+        )
+        stand_in = (Path(__file__).parent / "stand_in_provider.py").read_text(encoding="utf-8")
+        return replace(
+            inv, argv=("sh", "-c", start, "step", *inv.argv), files={**inv.files, "/ctx/stand_in.py": stand_in}
+        )
+
+
+def test_opencode_runs_a_review_in_the_runner(workspace: Path) -> None:
+    """opencode of the runner image, configured only through its environment and with the proxy settings of a step,
+    reads a file with its tool and answers with the JSON that the schema asks for. The model server is not behind
+    the proxy, as the ollama service is not."""
+    engine = OpenCodeOnAStandIn("ollama", base_url="http://127.0.0.1:18765/v1")
+    schema = {"type": "object", "required": ["summary", "findings"]}
+    res = SANDBOX.run(
+        engine,
+        StepSpec("reviewer:bugs", "stand-in", "Review hello.txt.", schema=schema),
+        workspace=workspace,
+        timeout=300,
+    )
+    assert res.ok, res.error
+    assert res.output == {"summary": "nothing to report", "findings": []}
+    assert res.tool_uses == 1
+    assert res.usage == {"input": 2468, "output": 112, "cache_read": 0}

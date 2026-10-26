@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 
 from lastcall.quota import (
@@ -9,6 +11,8 @@ from lastcall.quota import (
     gate,
     learn_ratio,
     learned_rate,
+    ledger_reading,
+    month,
     plan,
 )
 
@@ -229,3 +233,58 @@ def test_no_burst_while_a_model_it_needs_is_out_of_room() -> None:
     assert p.full is not None and p.full.model == "Opus"
     q = plan(with_opus(92), POLICY, 2.0, NOW, ["sonnet"])  # a burst that does not need Opus
     assert q.burst and q.leftover_pct == 60  # the model's window does not change the leftover
+
+
+# accounts on API keys and local models: the ledger, the budget and the schedule
+
+
+def at(year: int, month: int, day: int, hour: int = 0) -> float:
+    return datetime(year, month, day, hour, tzinfo=UTC).timestamp()
+
+
+def test_the_ledger_reads_this_months_spending_against_the_budget() -> None:
+    now = at(2026, 10, 11)
+    r = ledger_reading("openrouter", 20.0, 5.0, now)
+    (w,) = r.windows
+    assert (w.name, w.role, w.used_pct, r.fidelity) == ("budget", "expiring", 25.0, "ledger")
+    assert w.resets_at == at(2026, 11, 1)
+    assert w.duration_hours == 31 * 24
+    assert month(at(2026, 12, 31, 23)) == (at(2026, 12, 1), at(2027, 1, 1))
+    assert ledger_reading("local", None, 0.0, now).windows == ()  # a local model has nothing to count against
+
+
+def test_a_budget_is_spent_at_the_pace_of_the_month() -> None:
+    policy = SpendPolicy(kind="budget", reserve_pct=0)
+    now = at(2026, 10, 11)  # 10 of October's 31 days are gone
+    behind = plan(ledger_reading("key", 20.0, 5.0, now), policy, 2.0, now)
+    assert behind.burst and behind.code == "pace"
+    ahead = plan(ledger_reading("key", 20.0, 8.0, now), policy, 2.0, now)
+    assert not ahead.burst and ahead.code == "ahead"
+    assert ahead.starts_in_hours == pytest.approx(0.40 * 31 * 24 - 10 * 24)  # when 40% of the month is gone
+    spent = plan(ledger_reading("key", 20.0, 19.9, now), policy, 2.0, now)
+    assert not spent.burst and spent.code == "spent" and spent.budget is not None
+    assert plan(ledger_reading("key", None, 0.0, now), policy, 2.0, now).code == "no-budget"
+
+
+def test_a_schedule_bursts_at_its_hours_while_the_budget_has_room() -> None:
+    nights = SpendPolicy(kind="schedule", reserve_pct=0, cron="* 1-6 * * *")
+    night, noon = at(2026, 10, 26, 2), at(2026, 10, 26, 12)
+    assert plan(ledger_reading("local", None, 0.0, night), nights, 2.0, night).code == "schedule"
+    later = plan(ledger_reading("local", None, 0.0, noon), nights, 2.0, noon)
+    assert not later.burst and later.code == "window"
+    assert later.starts_in_hours == pytest.approx(13.0)
+    assert plan(ledger_reading("key", 20.0, 20.0, night), nights, 2.0, night).code == "spent"
+    wrong = SpendPolicy(kind="schedule", cron="every night")
+    assert plan(ledger_reading("local", None, 0.0, noon), wrong, 2.0, noon).code == "bad-schedule"
+    never = SpendPolicy(kind="schedule", cron="0 0 31 2 *")
+    assert plan(ledger_reading("local", None, 0.0, noon), never, 2.0, noon).code == "never"
+
+
+def test_the_gate_stops_an_account_on_a_key_at_its_budget() -> None:
+    now = at(2026, 10, 11)
+    policy = SpendPolicy(kind="budget", reserve_pct=0)
+    assert gate(ledger_reading("key", 20.0, 19.0, now), policy, now).ok
+    closed = gate(ledger_reading("key", 20.0, 20.5, now), policy, now)
+    assert not closed.ok and closed.reason == "this month's budget is spent (102%)"
+    always = SpendPolicy(kind="schedule", reserve_pct=0, cron="* * * * *")
+    assert gate(ledger_reading("local", None, 0.0, now), always, now).ok

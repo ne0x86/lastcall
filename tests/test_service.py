@@ -289,3 +289,64 @@ def test_a_burst_works_on_labelled_issues_after_ticked_ideas(store: Store) -> No
     for work in started:
         work()
     assert done == [("issues", "ne0x86/b")] and audits == []
+
+
+# accounts on API keys and local models
+
+
+def keyed_service(tmp_path: Path, clock: Clock, started: list[Callable[[], None]], told: list[str]) -> Service:
+    """A service on the real reader: an account on a key or a local model reads the ledger, with no sandbox."""
+    store = Store(tmp_path / "keyed.db")
+    store.add_project("ne0x86/a")
+    secrets = SecretStore(tmp_path / "secrets")
+
+    def send(urls: Sequence[str], title: str, body: str) -> tuple[bool, str]:
+        told.append(body)
+        return True, ""
+
+    notifier = Notifier(secrets, store, send=send, log=lambda m: None)
+    notifier.add_url("ntfy://ntfy.sh/lastcall-topic")
+    notifier.choose(["quota", "burst"], "en")
+    inst = Instance(cast(Sandbox, None), cast(GitHub, NoGitHub()), store, notifier, secrets)
+    return Service(inst, audit=lambda *a: None, start=started.append, clock=clock, log=lambda m: None)
+
+
+def test_a_local_model_bursts_at_the_hours_of_its_schedule(tmp_path: Path) -> None:
+    clock, started, told = Clock(), list[Callable[[], None]](), list[str]()  # NOW is 08:00 UTC
+    svc = keyed_service(tmp_path, clock, started, told)
+    store = svc.inst.store
+    models = {"fast": "qwen3-coder", "balanced": "qwen3-coder", "deep": "qwen3-coder"}
+    store.add_account(
+        "local", "opencode", provider="ollama", models=models, policy="schedule", schedule="* 1-6 * * *"
+    )
+    svc.tick()
+    assert started == [] and svc.plans["local"].code == "window"
+    clock.now += 17 * HOUR - 60  # 00:59 UTC
+    svc.tick()
+    assert started == []
+    clock.now += 60  # 01:00 UTC: the schedule begins, a minute after the last reading of the quotas
+    svc.tick()
+    assert len(started) == 1 and svc.running == {"local": "ne0x86/a"}
+    assert told == ["Its schedule (* 1-6 * * *, UTC) has begun."]
+    assert len(store.readings("local", 0)) == 2  # it plans every minute, and keeps a reading every 15 minutes
+
+
+def test_a_key_without_its_key_never_bursts_and_says_so_once(tmp_path: Path) -> None:
+    clock, started, told = Clock(), list[Callable[[], None]](), list[str]()
+    svc = keyed_service(tmp_path, clock, started, told)
+    models = {"fast": "m", "balanced": "m", "deep": "m"}
+    svc.inst.store.add_account(
+        "openrouter", "opencode", provider="openrouter", models=models, policy="budget", budget_usd=20
+    )
+    for _ in range(3):
+        svc.tick()
+        clock.now += 60
+    assert started == [] and "openrouter" not in svc.plans
+    assert told == [
+        "no API key: give the account one on the Accounts page\nIf its login has expired, sign the account in again."
+    ]
+    assert svc.inst.secrets is not None
+    svc.inst.secrets.set("key-openrouter", "sk-or-test")
+    svc.tick()
+    assert svc.plans["openrouter"].code == "pace" and len(started) == 1
+    assert told[-1] == "$0.00 of its $20.00 budget spent this month, behind the calendar."

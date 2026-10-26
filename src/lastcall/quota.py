@@ -4,6 +4,10 @@ A reading is a list of windows. Expiring windows decide whether to spend: their 
 weekly window of a subscription). Throttle windows decide when to wait: when one is nearly full, the next step waits
 for its reset (the 5-hour window). A window can also limit one model only (Claude's weekly window for Opus): it does
 not decide whether to spend, but the steps on that model stop when it reaches the reserve. See DESIGN.md, section 6.
+
+An account on an API key or a local model has no window of its provider. Its reading comes from lastcall's ledger of
+what its steps cost: one expiring window, its monthly budget. Its policy is `budget` (spend the budget at the pace of
+the calendar month), `schedule` (burst at the hours of a cron expression, in UTC) or `manual`.
 """
 
 from __future__ import annotations
@@ -12,13 +16,18 @@ import itertools
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
+
+from lastcall import cron
 
 Role = Literal["expiring", "throttle"]
 Fidelity = Literal["exact", "events", "ledger", "none"]
+Kind = Literal["before-reset", "budget", "schedule", "manual"]
 
 HOUR = 3600.0
+KINDS: tuple[Kind, ...] = ("before-reset", "budget", "schedule", "manual")
+BUDGET = "budget"  # the window of an account's monthly budget, in a reading from the ledger
 
 
 class QuotaError(RuntimeError):
@@ -90,11 +99,12 @@ class Reading:
 
 @dataclass(frozen=True)
 class SpendPolicy:
-    kind: Literal["before-reset", "manual"] = "before-reset"
+    kind: Kind = "before-reset"
     reserve_pct: float = 10.0  # share of every expiring window that stays for the owner
     throttle_max_pct: float = 90.0  # above this, a step waits for the throttle window to reset
     max_lead_hours: float = 48.0  # a burst never starts earlier than this before the reset
     min_leftover_pct: float = 2.0  # a smaller leftover is not worth a burst
+    cron: str = ""  # kind schedule: when it bursts, in UTC (lastcall.cron)
 
 
 @dataclass(frozen=True)
@@ -105,8 +115,9 @@ class Plan:
     hours_to_reset: float | None = None
     hours_needed: float = 0.0
     starts_in_hours: float | None = None
-    code: str = ""  # the reason, for the web UI: manual, paid, no-window, model, no-reset, small, now or later
+    code: str = ""  # the reason, for the web UI: manual, paid, no-window, model, no-reset, small, now, later...
     full: Window | None = None  # code "model": the window of a model that the burst needs, at the reserve
+    budget: Window | None = None  # the monthly budget of an account on an API key
 
 
 def plan(
@@ -120,10 +131,14 @@ def plan(
     `models` are those the burst's steps use: while the window of one of them is at the reserve, those steps could
     not run, so there is no burst.
     """
-    if policy.kind != "before-reset":
-        return Plan(False, f"policy {policy.kind}: only runs started by the owner", code="manual")
+    if policy.kind == "manual":
+        return Plan(False, "policy manual: only runs started by the owner", code="manual")
     if reading.paid_usage:
         return Plan(False, "paid usage is active on this account", code="paid")
+    if policy.kind == "budget":
+        return _budget(reading, policy, now)
+    if policy.kind == "schedule":
+        return _schedule(reading, policy, now)
     windows = reading.expiring
     if not windows:
         return Plan(False, "no expiring window to spend", code="no-window")
@@ -151,6 +166,45 @@ def plan(
     return Plan(burst, reason, leftover, hours_to_reset, hours_needed, max(0.0, starts_in), code)
 
 
+def _budget(reading: Reading, policy: SpendPolicy, now: float) -> Plan:
+    """Spend a monthly budget at the pace of the month: burst while the share spent is behind the share of the month
+    gone, so that a burst early in the month leaves room for the rest of it."""
+    w = reading.window(BUDGET)
+    if w is None or w.resets_at is None or not w.duration_hours:
+        return Plan(False, "no monthly budget", code="no-budget")
+    hours_to_reset = (w.resets_at - now) / HOUR
+    leftover = 100.0 - policy.reserve_pct - w.used_pct
+    if leftover <= policy.min_leftover_pct:
+        reason = f"budget spent ({w.used_pct:.0f}%)"
+        return Plan(False, reason, max(0.0, leftover), hours_to_reset, code="spent", budget=w)
+    gone = 100.0 * (1.0 - hours_to_reset / w.duration_hours)
+    if w.used_pct < gone:
+        reason = f"{w.used_pct:.0f}% of the budget spent and {gone:.0f}% of the month gone"
+        return Plan(True, reason, leftover, hours_to_reset, code="pace", budget=w)
+    starts_in = (w.used_pct - gone) / 100.0 * w.duration_hours
+    reason = f"burst in {starts_in:.1f} h, when the month catches up with the spending"
+    return Plan(False, reason, leftover, hours_to_reset, starts_in_hours=starts_in, code="ahead", budget=w)
+
+
+def _schedule(reading: Reading, policy: SpendPolicy, now: float) -> Plan:
+    """Burst in the minutes of a cron expression, while the monthly budget, when the account has one, has room."""
+    w = reading.window(BUDGET)
+    if w is not None and w.used_pct >= 100.0 - policy.reserve_pct:
+        hours = (w.resets_at - now) / HOUR if w.resets_at is not None else None
+        return Plan(False, f"budget spent ({w.used_pct:.0f}%)", 0.0, hours, code="spent", budget=w)
+    try:
+        when = cron.parse(policy.cron)
+    except ValueError as e:
+        return Plan(False, str(e), code="bad-schedule")
+    if when.matches(now):
+        return Plan(True, f"inside the schedule {when.text} (UTC)", code="schedule", budget=w)
+    start = when.next(now)
+    if start is None:
+        return Plan(False, f"the schedule {when.text} never comes", code="never")
+    hours = (start - now) / HOUR
+    return Plan(False, f"burst in {hours:.1f} h, by the schedule", starts_in_hours=hours, code="window", budget=w)
+
+
 @dataclass(frozen=True)
 class Gate:
     ok: bool
@@ -167,6 +221,8 @@ def gate(reading: Reading | None, policy: SpendPolicy, now: float, models: Seque
         return Gate(False, "paid usage is active on this account")
     windows = reading.limiting(models)
     full = at_reserve(windows, policy)
+    if full and reading.fidelity == "ledger" and full.name == BUDGET:
+        return Gate(False, f"this month's budget is spent ({full.used_pct:.0f}%)")
     if full:
         return Gate(False, f"{full.label} window at {full.used_pct:g}% (reserve {policy.reserve_pct:g}%)")
     for w in windows:
@@ -179,6 +235,23 @@ def gate(reading: Reading | None, policy: SpendPolicy, now: float, models: Seque
 def at_reserve(windows: Iterable[Window], policy: SpendPolicy) -> Window | None:
     """The first expiring window whose use has reached the owner's reserve."""
     return next((w for w in windows if w.role == "expiring" and w.used_pct >= 100.0 - policy.reserve_pct), None)
+
+
+def ledger_reading(account: str, budget_usd: float | None, spent_usd: float, now: float) -> Reading:
+    """The reading of an account on an API key or a local model, from lastcall's ledger: what its steps cost in this
+    calendar month (UTC), as a share of its monthly budget. Without a budget it has no window."""
+    if not budget_usd:
+        return Reading(account, (), False, "none", now)
+    start, end = month(now)
+    window = Window(BUDGET, 100.0 * spent_usd / budget_usd, end, "expiring", (end - start) / HOUR)
+    return Reading(account, (window,), False, "ledger", now)
+
+
+def month(now: float) -> tuple[float, float]:
+    """The calendar month (UTC) of `now`: when it started and when it ends, in epoch seconds."""
+    start = datetime.fromtimestamp(now, UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
+    return start.timestamp(), end.timestamp()
 
 
 def learn_ratio(

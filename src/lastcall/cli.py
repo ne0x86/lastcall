@@ -2,6 +2,7 @@
 
 lastcall login <account> --engine <engine>      # on the host: the CLI's own login, inside the sandbox
 lastcall account add <account> --engine <engine> [--language Spanish] [--reserve 10]
+lastcall account add <account> --engine opencode --provider openrouter --model <model> --budget 20  # an API key
 lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive]
 lastcall quota <account>                        # read an account's quota through the supervisor
 lastcall github setup --owner <login>           # create the instance's GitHub App (manifest flow)
@@ -21,6 +22,7 @@ lastcall pause | resume                         # stop or allow the service's bu
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import re
 import shutil
@@ -33,11 +35,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from lastcall import engines, projects, web
-from lastcall.accounts import Account, ensure_volume, login_argv, read_quota
+from lastcall.accounts import (
+    Account,
+    check_spending,
+    ensure_volume,
+    login_argv,
+    policies,
+    read_quota,
+    tier_models,
+)
+from lastcall.engines.base import Keyed
 from lastcall.github import App, GitHub, GitHubError
 from lastcall.github_setup import SetupServer, run_setup
 from lastcall.notify import Notifier
-from lastcall.quota import QuotaError, Reading, SpendPolicy, account_rate, plan
+from lastcall.quota import KINDS, QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.recipes.audit import AuditReport
 from lastcall.recipes.steps import StepRecord
 from lastcall.runs import (
@@ -62,6 +73,9 @@ from lastcall.web import auth
 
 DEFAULT_RATE = 2.0  # % of the week per hour until the rate is learned from readings
 RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+PROVIDERS = sorted(
+    {p.name for make in engines.BUILTIN.values() if isinstance(e := make(), Keyed) for p in e.providers}
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,11 +89,31 @@ def main(argv: list[str] | None = None) -> int:
     acc = commands.add_parser("account", help="accounts lastcall may spend").add_subparsers(
         dest="action", required=True
     )
-    acc_add = acc.add_parser("add", help="add or change an account (sign it in with `login`)")
+    acc_add = acc.add_parser(
+        "add", help="add or change an account: sign in a subscription with `login`; an API key needs no login"
+    )
     acc_add.add_argument("account")
     acc_add.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
     acc_add.add_argument("--language", default="English", help="language of what it writes (default English)")
     acc_add.add_argument("--reserve", type=float, default=10.0, help="% of every week kept for you (default 10)")
+    acc_add.add_argument(
+        "--provider",
+        choices=PROVIDERS,
+        help="for an engine on API keys: whose API it spends, or ollama for local models",
+    )
+    acc_add.add_argument(
+        "--key-file", help="the API key: a file that holds it, or - to read it from standard input (default: asked)"
+    )
+    acc_add.add_argument("--model", help="the model of every step, as the provider names it")
+    acc_add.add_argument("--review-model", help="a cheaper model for the reviewers (default: --model)")
+    acc_add.add_argument(
+        "--policy",
+        choices=KINDS,
+        help="when it spends: before-reset (subscriptions), budget (API keys), schedule or manual",
+    )
+    acc_add.add_argument("--budget", type=float, help="USD it may spend per calendar month (API keys)")
+    acc_add.add_argument("--schedule", help='policy schedule: when it bursts, as cron in UTC, such as "* 1-6 * * *"')
+    acc_add.add_argument("--base-url", help="another address of the provider's API, such as a local model server")
     acc.add_parser("list", help="the accounts")
 
     proj = commands.add_parser("project", help="repositories lastcall works on").add_subparsers(
@@ -158,19 +192,21 @@ def main(argv: list[str] | None = None) -> int:
 def dispatch(args: argparse.Namespace) -> int:
     match args.command, getattr(args, "action", None):
         case "login", _:
+            if not engines.get(args.engine).login:
+                raise ValueError(
+                    f"{args.engine} has no login: it runs on an API key or a local model. Add the account with "
+                    f"`lastcall account add {args.account} --engine {args.engine} --provider ...`"
+                )
             return login(Account(args.account, args.engine))
         case "account", "add":
-            Account(args.account, args.engine)  # validates
-            store().add_account(args.account, args.engine, args.language, args.reserve)
-            print(
-                f"Account {args.account} ({args.engine}). Sign it in with: lastcall login {args.account} "
-                f"--engine {args.engine}"
-            )
-            return 0
+            return add_account(args)
         case "account", "list":
             for a in store().accounts():
+                engine = f"{a.engine}/{a.provider}" if a.provider else a.engine
+                limit = f"budget {a.budget_usd:g} USD a month" if a.budget_usd else f"reserve {a.reserve_pct:g}%"
                 print(
-                    f"{a.id:<20} {a.engine:<12} {a.language:<10} reserve {a.reserve_pct:g}%"
+                    f"{a.id:<20} {engine:<20} {a.language:<10} {a.policy:<12} {limit}"
+                    + (f"  schedule {a.schedule}" if a.policy == "schedule" else "")
                     + ("" if a.enabled else "  (disabled)")
                 )
             return 0
@@ -230,10 +266,58 @@ def store() -> Store:
 
 
 def account(account_id: str) -> Account:
-    found = next((a for a in store().accounts() if a.id == account_id), None)
+    found = store().account(account_id)
     if found is None:
         raise ValueError(f"no account {account_id!r}: add it with `lastcall account add {account_id} --engine ...`")
-    return Account(found.id, found.engine)
+    return found.account()
+
+
+def add_account(args: argparse.Namespace) -> int:
+    models = tier_models(args.model or "", args.review_model or "")
+    acc = Account(args.account, args.engine, args.provider or "", args.base_url or "", models, args.budget)
+    policy = args.policy or policies(acc)[0]
+    schedule = args.schedule or ""
+    check_spending(acc, policy, schedule)
+    secrets = secret_store()
+    if acc.needs_key():
+        key = read_key(args.key_file, ask=secrets.get(acc.key_name) is None)
+        if key:
+            secrets.set(acc.key_name, key)
+        elif secrets.get(acc.key_name) is None:
+            raise ValueError("give the API key with --key-file: a file that holds it, or - for standard input")
+    store().add_account(
+        acc.id,
+        acc.engine,
+        args.language,
+        args.reserve,
+        provider=acc.provider,
+        base_url=acc.base_url,
+        models=models,
+        policy=policy,
+        budget_usd=acc.budget_usd,
+        schedule=schedule,
+    )
+    if acc.keyed:
+        print(f"Account {acc.id} ({acc.engine} on {acc.provider}), policy {policy}. It needs no login.")
+    else:
+        print(f"Account {acc.id} ({acc.engine}). Sign it in with: lastcall login {acc.id} --engine {acc.engine}")
+    return 0
+
+
+def read_key(path: str | None, ask: bool) -> str | None:
+    """An API key from a file, from standard input (`-`), or typed at a prompt that does not show it; None when
+    there is none to read."""
+    if path == "-":
+        key = sys.stdin.readline()
+    elif path:
+        key = Path(path).read_text(encoding="utf-8")
+    elif ask and sys.stdin.isatty():
+        key = getpass.getpass("API key (it is not shown): ")
+    else:
+        return None
+    if not key.strip():
+        raise ValueError("the API key is empty")
+    return key.strip()
 
 
 def secret_store() -> SecretStore:
@@ -241,8 +325,8 @@ def secret_store() -> SecretStore:
 
 
 def instance(client: GitHub, st: Store | None = None) -> Instance:
-    st = st or store()
-    return Instance(sandbox(), client, st, Notifier(secret_store(), st, log=log))
+    st, secrets = st or store(), secret_store()
+    return Instance(sandbox(), client, st, Notifier(secrets, st, log=log), secrets)
 
 
 def sandbox() -> Sandbox:
@@ -266,8 +350,7 @@ def options(acc: Account, repo: str, max_prs: int = 3, report_only: bool = False
     row = next(a for a in st.accounts() if a.id == acc.id)
     project = st.project(repo)
     language = (project.language if project and project.language else None) or row.language
-    policy = SpendPolicy(reserve_pct=row.reserve_pct)
-    return Options(language=language, max_prs=max_prs, report_only=report_only, policy=policy)
+    return Options(language=language, max_prs=max_prs, report_only=report_only, policy=row.spend_policy())
 
 
 def progress(s: StepRecord) -> None:
@@ -284,8 +367,8 @@ def audit(repo: str, acc: Account, max_prs: int, report_only: bool, peers: Seque
     if client is None:
         return 1
     inst = instance(client)
-    reserves = {a.id: a.reserve_pct for a in inst.store.accounts()}
-    crew = [(p, SpendPolicy(reserve_pct=reserves[p.id])) for p in peers]
+    spending = {a.id: a.spend_policy() for a in inst.store.accounts()}
+    crew = [(p, spending[p.id]) for p in peers]
     try:
         run_dir, report = audit_repo(
             inst, repo, acc, options(acc, repo, max_prs=max_prs, report_only=report_only), progress, log, crew
@@ -353,7 +436,7 @@ def serve(host: str, port: int, scheduler: bool) -> int:
         trust_proxy=os.environ.get("LASTCALL_TRUST_PROXY") == "1",
         origins=origins,
         notifier=Notifier(secrets, st, log=log),
-        read_quota=lambda account: read_quota(account, sandbox(), time.time()),
+        read_quota=lambda account: read_quota(account, sandbox(), time.time(), st, secrets),
     )
     if scheduler:
         threading.Thread(target=schedule, args=(st, secrets), name="service", daemon=True).start()
@@ -394,13 +477,19 @@ def status(st: Store) -> str:
             if last
             else "no reading yet"
         )
-        lines.append(f"  {a.id} ({a.engine}, {a.language}, reserve {a.reserve_pct:g}%): {quota_text}")
+        limit = f"budget {a.budget_usd:g} USD a month" if a.budget_usd else f"reserve {a.reserve_pct:g}%"
+        lines.append(f"  {a.id} ({a.engine}, {a.language}, {a.policy}, {limit}): {quota_text}")
         if last:
-            policy = SpendPolicy(reserve_pct=a.reserve_pct)
+            policy = a.spend_policy()
             rate = account_rate(st.readings(a.id, now - RATE_WINDOW), last, policy, SERVICE_RATE)
-            next_burst = plan(last, policy, rate, now, audit_models(a.engine))
+            try:
+                needs = audit_models(a.account())
+            except ValueError:
+                needs = []
+            next_burst = plan(last, policy, rate, now, needs)
             when = "now" if next_burst.burst else "no"
-            lines.append(f"    burst: {when} ({next_burst.reason}; {rate:.1f}% of the week per hour)")
+            pace = "" if a.keyed else f"; {rate:.1f}% of the week per hour"
+            lines.append(f"    burst: {when} ({next_burst.reason}{pace})")
     lines.append("Projects")
     for p in st.projects():
         counts = st.statuses(p.repo)
@@ -478,24 +567,25 @@ def login(acc: Account) -> int:
 
 
 def quota(acc: Account) -> int:
-    now = time.time()
+    now, st = time.time(), store()
     try:
-        reading = read_quota(acc, sandbox(), now)
+        reading = read_quota(acc, sandbox(), now, st, secret_store())
     except (QuotaError, SandboxError) as e:
         print(f"{acc.id}: {e}", file=sys.stderr)
         return 1
-    store().record_reading(reading)
-    print(describe(reading, now, audit_models(acc.engine)))
+    st.record_reading(reading)
+    row = st.account(acc.id)
+    print(describe(reading, now, audit_models(acc), row.spend_policy() if row else SpendPolicy()))
     return 0
 
 
-def describe(reading: Reading, now: float, models: Sequence[str] = ()) -> str:
+def describe(reading: Reading, now: float, models: Sequence[str] = (), policy: SpendPolicy | None = None) -> str:
     lines = [f"{reading.account} ({reading.fidelity})"]
     width = max([5, *(len(w.label) for w in reading.windows)])
     for w in reading.windows:
         reset = datetime.fromtimestamp(w.resets_at, UTC).strftime("%a %d %H:%M UTC") if w.resets_at else "unknown"
         lines.append(f"  {w.label:<{width}} {w.used_pct:5.1f}% used, resets {reset} ({w.role})")
     lines.append(f"  paid usage: {'ACTIVE, nothing will be spent' if reading.paid_usage else 'off'}")
-    p = plan(reading, SpendPolicy(), DEFAULT_RATE, now, models)
+    p = plan(reading, policy or SpendPolicy(), DEFAULT_RATE, now, models)
     lines.append(f"  burst: {'yes' if p.burst else 'no'} ({p.reason})")
     return "\n".join(lines)

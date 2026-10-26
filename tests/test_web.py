@@ -566,6 +566,86 @@ def test_accounts_page(tmp_path: Path) -> None:
     assert web.client.post("/accounts/nobody", data=form, headers=SITE).status_code == 404
 
 
+def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
+    web.set_up()
+    csrf = web.csrf()
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert '<option value="key">An API key, with a monthly budget</option>' in page
+    assert '<a href="https://openrouter.ai/settings/keys">OpenRouter</a>' in page  # where to get a key
+    assert "docker compose --profile local run --rm ollama-pull qwen3-coder" in page
+
+    def add(**form: str) -> tuple[int, str]:
+        response = web.client.post("/accounts/add-key", data={"csrf": csrf, **form}, headers=SITE)
+        return response.status_code, response.get_data(as_text=True)
+
+    key = {
+        "kind": "key",
+        "id": "openrouter",
+        "source": "opencode/openrouter",
+        "key": "sk-or-test",
+        "model": "qwen/qwen3-coder",
+        "budget": "20",
+        "policy": "budget",
+        "language": "English",
+    }
+    status, page = add(**{**key, "budget": ""})
+    assert status == 400 and "An API key needs a monthly budget" in page
+    assert 'value="qwen/qwen3-coder"' in page and "sk-or-test" not in page  # what was written stays, but the key
+    assert '<option value="key" selected>' in page  # the same form opens again
+    assert "Give the API key." in add(**{**key, "key": ""})[1]
+    assert "Give the model" in add(**{**key, "model": ""})[1]
+    assert "five cron fields" in add(**{**key, "policy": "schedule", "schedule": "nightly"})[1]
+    assert add(**{**key, "policy": "before-reset"})[0] == 400  # only a forged form
+    assert add(**{**key, "source": "claude-code/openrouter"})[0] == 400
+    assert add(**key)[0] == 302
+    assert web.secrets.get("key-openrouter") == "sk-or-test"
+    row = web.store.account("openrouter")
+    assert row is not None
+    assert (row.provider, row.policy, row.budget_usd, row.models["balanced"]) == (
+        "openrouter",
+        "budget",
+        20,
+        "qwen/qwen3-coder",
+    )
+    assert "already an account" in add(**key)[1]
+
+    local = {"kind": "local", "id": "local", "source": "opencode/ollama", "model": "qwen3-coder"}
+    assert add(**local, policy="schedule", schedule="* 1-6 * * *", language="Spanish")[0] == 302
+    assert web.secrets.get("key-local") is None
+
+    web.store.record_spend("openrouter", 5.0, "judge", at=NOW)
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert "On OpenRouter · model qwen/qwen3-coder · writes in English" in page
+    assert "Budget this month" in page and "$5.00 of $20.00" in page
+    assert "Burst in progress: $5.00 of $20.00 spent this month, behind the calendar." in page
+    assert "Local models cost nothing." in page and "at the hours of its schedule (* 1-6 * * *, UTC)" in page
+    assert "ACCOUNT=openrouter" not in page  # an API key has no login
+
+    form = {
+        "csrf": csrf,
+        "enabled": "1",
+        "language": "English",
+        "policy": "schedule",
+        "schedule": "* 0-5 * * 1-5",
+        "budget": "30",
+        "model": "qwen/qwen3-coder",
+        "review_model": "qwen/qwen3-small",
+        "key": "sk-or-new",
+    }
+    assert web.client.post("/accounts/openrouter", data=form, headers=SITE).status_code == 302
+    row = web.store.account("openrouter")
+    assert row is not None and (row.policy, row.schedule, row.budget_usd) == ("schedule", "* 0-5 * * 1-5", 30)
+    assert (row.models["deep"], row.models["balanced"]) == ("qwen/qwen3-coder", "qwen/qwen3-small")
+    assert web.secrets.get("key-openrouter") == "sk-or-new"
+    assert web.client.post("/accounts/openrouter", data={**form, "key": ""}, headers=SITE).status_code == 302
+    assert web.secrets.get("key-openrouter") == "sk-or-new"  # an empty field keeps the key
+    assert web.client.post("/accounts/local", data={**form, "policy": "budget"}, headers=SITE).status_code == 400
+
+    web.client.get("/language/es")
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert "Una clave de API, con un presupuesto mensual" in page and "5,00 USD de 30,00 USD" in page
+
+
 def test_without_the_sandbox_the_quota_cannot_be_read(web: Web) -> None:
     web.set_up()
     web.store.add_account("max", "claude-code")

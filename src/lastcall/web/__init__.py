@@ -19,6 +19,7 @@ import secrets as tokens
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from functools import wraps
 from typing import Any
 from urllib.parse import urlsplit
@@ -28,15 +29,16 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, destinations, engines, i18n, projects
-from lastcall.accounts import Account
+from lastcall import __version__, cron, destinations, engines, i18n, projects
+from lastcall.accounts import ACCOUNT_ID, Account, policies, tier_models
+from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
 from lastcall.github_setup import LOGIN, Exchange, exchange_code, form_action, manifest
 from lastcall.notify import EVENTS, Notifier, describe
 from lastcall.quota import QuotaError, Reading
 from lastcall.sandbox import SandboxError
 from lastcall.secretstore import SecretStore
-from lastcall.store import Store
+from lastcall.store import AccountRow, Store
 from lastcall.web import auth, dashboard, project_views
 
 COOKIE = "lastcall_session"
@@ -44,6 +46,7 @@ LANGUAGE_COOKIE = "lastcall_language"
 LANGUAGES = (("en", "English"), ("es", "Español"))
 DOCS = "https://github.com/ne0x86/lastcall#readme"
 TERMS = "https://github.com/ne0x86/lastcall/blob/main/DESIGN.md#3-provider-terms-and-responsible-use"
+CRON_HELP = "https://crontab.guru/"  # reads a cron expression back in words
 SERVICES = "https://github.com/caronc/apprise#supported-notifications"  # every service Apprise reaches, with its URL
 STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
@@ -530,79 +533,205 @@ def create_app(
     def accounts_page() -> ResponseReturnValue:
         return show_accounts()
 
-    def show_accounts(status: int = 200, error: str = "") -> ResponseReturnValue:
+    def show_accounts(
+        status: int = 200, error: str = "", chosen: str = "", filled: Mapping[str, str] | None = None
+    ) -> ResponseReturnValue:
+        """The accounts and the forms that add one. After a mistake in a form, `chosen` opens that form again with
+        what the owner wrote in `filled` (never the API key)."""
         now = clock()
         working = dashboard.working_on(store.running())
-        cards = [
-            {
-                "row": row,
-                "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
-                "error": quota_errors.get(row.id, ""),
-                "login": f"ACCOUNT={row.id} ENGINE={row.engine} docker compose run --rm login",
-                "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
-            }
-            for row in store.accounts()
-        ]
         done = request.args.get("done", "")
         known = ("saved", "account_added", "reading")
         message = t(f"web.done.{done}") if done in known and not error else ""
+        all_engines = [engines.get(name) for name in sorted(engines.BUILTIN)]
+        sources = [(e, p) for e in all_engines if isinstance(e, Keyed) for p in e.providers]
         return page(
             "accounts.html",
             status,
-            cards=cards,
-            engines=[(e.name, f"{e.provider} ({e.title})") for e in map(engines.get, sorted(engines.BUILTIN))],
+            cards=[account_card(row, now, working) for row in store.accounts()],
+            engines=[(e.name, f"{e.provider} ({e.title})") for e in all_engines if e.login],
+            keys=[(f"{e.name}/{p.name}", p) for e, p in sources if p.keys],
+            local=next(((f"{e.name}/{p.name}", p) for e, p in sources if not p.keys), None),
             writing=[(name, dashboard.language_name(g.lang, name).capitalize()) for name in project_views.LANGUAGES],
             known=project_views.LANGUAGES,
             can_read=read_quota is not None,
             terms=TERMS,
+            cron_help=CRON_HELP,
             done=message,
             error=error,
+            chosen=chosen,
+            filled={k: v for k, v in (filled or {}).items() if k not in ("key", "csrf")},
         )
+
+    def account_card(row: AccountRow, now: float, working: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
+        model = row.models.get("deep", "")
+        review = row.models.get("balanced", "")
+        card: dict[str, Any] = {
+            "row": row,
+            "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
+            "error": quota_errors.get(row.id, ""),
+            "login": f"ACCOUNT={row.id} ENGINE={row.engine} docker compose run --rm login",
+            "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
+            "policies": [],
+            "needs_key": False,
+            "model": model,
+            "review": review if review != model else "",
+        }
+        try:
+            account = row.account()
+        except ValueError:  # an account that this version cannot run, such as one of an engine that is gone
+            return card
+        card["policies"] = [(kind, t(f"web.spend.{kind}")) for kind in policies(account)]
+        card["needs_key"] = account.needs_key()
+        if account.needs_key() and secrets.get(account.key_name) is None:
+            card["error"] = t("web.accounts.no_key")
+        return card
 
     @app.post("/accounts/add")
     @signed_in
     def add_account() -> ResponseReturnValue:
+        """An account on a subscription, which signs in with its CLI's own login."""
         form = request.form
+        account_id = form.get("id", "").strip()
+        if not ACCOUNT_ID.fullmatch(account_id):
+            return show_accounts(400, t("web.accounts.bad"), "subscription", form)
         try:
-            account = Account(form.get("id", "").strip(), form.get("engine", ""))
+            account = Account(account_id, form.get("engine", ""))
             reserve = float(form.get("reserve", "10"))
         except ValueError:
-            return show_accounts(400, t("web.accounts.bad"))
-        language = form.get("language", "English")
-        if language not in project_views.LANGUAGES or not 0 <= reserve <= 90:
             return problem(400, "web.error.form")
-        if any(a.id == account.id for a in store.accounts()):
-            return show_accounts(400, t("web.accounts.exists"))
+        language = form.get("language", "English")
+        if account.keyed or language not in project_views.LANGUAGES or not 0 <= reserve <= 90:
+            return problem(400, "web.error.form")
+        if store.account(account.id):
+            return show_accounts(400, t("web.accounts.exists"), "subscription", form)
         store.add_account(account.id, account.engine, language, reserve)
         log(f"Web UI: account {account.id} ({account.engine}) added")
         return redirect(url_for("accounts_page", done="account_added"))
 
+    @app.post("/accounts/add-key")
+    @signed_in
+    def add_keyed_account() -> ResponseReturnValue:
+        """An account on an API key, or on a local model server."""
+        form = request.form
+        chosen = "local" if form.get("kind") == "local" else "key"
+        account_id = form.get("id", "").strip()
+        if not ACCOUNT_ID.fullmatch(account_id):
+            return show_accounts(400, t("web.accounts.bad"), chosen, form)
+        if store.account(account_id):
+            return show_accounts(400, t("web.accounts.exists"), chosen, form)
+        engine, _, provider = form.get("source", "").partition("/")
+        found = spending(form, None, engine, provider, account_id)
+        if isinstance(found, str):
+            return show_accounts(400, found, chosen, form) if found else problem(400, "web.error.form")
+        account, policy, schedule = found
+        language = form.get("language", "English")
+        if language not in project_views.LANGUAGES:
+            return problem(400, "web.error.form")
+        key = form.get("key", "").strip()
+        if account.needs_key():
+            secrets.set(account.key_name, key)
+        store.add_account(
+            account.id,
+            account.engine,
+            language,
+            provider=account.provider,
+            models=account.models,
+            policy=policy,
+            budget_usd=account.budget_usd,
+            schedule=schedule,
+        )
+        log(f"Web UI: account {account.id} ({account.engine} on {account.provider}) added")
+        return redirect(url_for("accounts_page", done="account_added"))
+
+    def spending(
+        form: Mapping[str, str], row: AccountRow | None, engine: str, provider: str, account_id: str
+    ) -> tuple[Account, str, str] | str:
+        """The account on a key that a form describes, with its policy and schedule; or what is wrong with the form,
+        in the owner's language ("" when only a forged form could be wrong)."""
+        model = form.get("model", "").strip()
+        if not model:
+            return t("web.accounts.need_model")
+        models = tier_models(model, form.get("review_model", "").strip())
+        try:
+            account = Account(account_id, engine, provider, row.base_url if row else "", models)
+        except ValueError:
+            return ""
+        budget = None
+        if account.needs_key():
+            try:
+                budget = float(form.get("budget", ""))
+            except ValueError:
+                budget = None
+            if budget is None or not math.isfinite(budget) or budget <= 0:
+                return t("web.accounts.need_budget")
+            if not form.get("key", "").strip() and (row is None or secrets.get(account.key_name) is None):
+                return t("web.accounts.need_key")
+        policy, schedule = form.get("policy", ""), form.get("schedule", "").strip()
+        if policy not in policies(account):
+            return ""
+        if policy == "schedule":
+            try:
+                cron.parse(schedule)
+            except ValueError:
+                return t("web.accounts.bad_schedule")
+        else:
+            schedule = ""
+        return replace(account, budget_usd=budget), policy, schedule
+
     @app.post("/accounts/<account_id>")
     @signed_in
     def account_settings(account_id: str) -> ResponseReturnValue:
-        row = next((a for a in store.accounts() if a.id == account_id), None)
+        row = store.account(account_id)
         if row is None:
             return problem(404, "web.error.not_found")
-        language = request.form.get("language", "")
+        form = request.form
+        language = form.get("language", "")
+        if language not in {*project_views.LANGUAGES, row.language}:
+            return problem(400, "web.error.form")
+        enabled = form.get("enabled") == "1"
+        if row.keyed:
+            found = spending(form, row, row.engine, row.provider, row.id)
+            if isinstance(found, str):
+                return show_accounts(400, found) if found else problem(400, "web.error.form")
+            account, policy, schedule = found
+            key = form.get("key", "").strip()
+            if key and account.needs_key():
+                secrets.set(account.key_name, key)
+            store.update_account(
+                row.id,
+                enabled=enabled,
+                language=language,
+                reserve_pct=row.reserve_pct,
+                policy=policy,
+                budget_usd=account.budget_usd,
+                schedule=schedule,
+                models=account.models,
+            )
+            return redirect(url_for("accounts_page", done="saved"))
         try:
-            reserve = float(request.form.get("reserve", ""))
+            reserve = float(form.get("reserve", ""))
         except ValueError:
             return problem(400, "web.error.form")
-        if language not in {*project_views.LANGUAGES, row.language} or not 0 <= reserve <= 90:
+        policy = form.get("policy", row.policy)
+        if not 0 <= reserve <= 90 or policy not in ("before-reset", "manual"):
             return problem(400, "web.error.form")
-        enabled = request.form.get("enabled") == "1"
-        store.update_account(row.id, enabled=enabled, language=language, reserve_pct=reserve)
+        store.update_account(row.id, enabled=enabled, language=language, reserve_pct=reserve, policy=policy)
         return redirect(url_for("accounts_page", done="saved"))
 
     @app.post("/accounts/<account_id>/quota")
     @signed_in
     def read_account_quota(account_id: str) -> ResponseReturnValue:
-        row = next((a for a in store.accounts() if a.id == account_id), None)
+        row = store.account(account_id)
         if row is None:
             return problem(404, "web.error.not_found")
         if read_quota is None:
             return show_accounts(503, t("web.accounts.no_sandbox"))
-        reader, account = read_quota, Account(row.id, row.engine)
+        try:
+            account = row.account()
+        except ValueError:
+            return problem(400, "web.error.form")
+        reader = read_quota
 
         def work() -> None:
             try:

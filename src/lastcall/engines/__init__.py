@@ -7,8 +7,9 @@ from collections.abc import Callable
 from lastcall.engines.base import Engine
 from lastcall.engines.claude_code import ClaudeCode
 from lastcall.engines.codex import Codex
+from lastcall.engines.opencode import OpenCode
 
-BUILTIN: dict[str, Callable[[], Engine]] = {"claude-code": ClaudeCode, "codex": Codex}
+BUILTIN: dict[str, Callable[[], Engine]] = {"claude-code": ClaudeCode, "codex": Codex, "opencode": OpenCode}
 
 
 def get(name: str) -> Engine:

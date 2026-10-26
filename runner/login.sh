@@ -17,8 +17,12 @@ case "${LASTCALL_ENGINE:-}" in
     export CODEX_HOME="$account"
     exec codex login --device-auth
     ;;
+  opencode)
+    echo "An opencode account runs on an API key or a local model, which you give on the Accounts page: it has no login." >&2
+    exit 2
+    ;;
   *)
-    echo "Set ENGINE to an engine: claude-code or codex (it was '${LASTCALL_ENGINE:-}')." >&2
+    echo "Set ENGINE to an engine with a login: claude-code or codex (it was '${LASTCALL_ENGINE:-}')." >&2
     exit 2
     ;;
 esac

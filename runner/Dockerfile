@@ -1,6 +1,7 @@
 # Runner: one ephemeral container per step, started by the supervisor. It holds the official agent CLIs at pinned
 # versions, the scanners of the context pack, Python and Node.js for the projects' tests, and read-only tools. No
-# Docker socket and no keys: only the workspace, /ctx and the account's credential volume are mounted.
+# Docker socket: only the workspace, /ctx and the account's credential volume are mounted. An account on an API key
+# has no volume: its steps get the key as a read-only file in /ctx.
 FROM node:22-bookworm-slim AS node
 FROM zricethezav/gitleaks:v8.30.1 AS gitleaks
 FROM ghcr.io/google/osv-scanner:v2.7.0 AS osv
@@ -9,6 +10,7 @@ FROM hadolint/hadolint:v2.15.1 AS hadolint
 FROM python:3.12-slim-bookworm
 ARG CLAUDE_CODE_VERSION=2.1.285
 ARG CODEX_VERSION=0.163.0
+ARG OPENCODE_VERSION=1.19.4
 ARG SEMGREP_VERSION=1.182.1
 
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -30,8 +32,10 @@ RUN python -m venv /opt/semgrep \
     && /opt/semgrep/bin/pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" \
     && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
 
-# Versions change only on purpose: the quota readers use experimental CLI interfaces.
+# Versions change only on purpose: the quota readers use experimental CLI interfaces. OpenCode is OpenCode 1, the npm
+# package opencode-ai; OpenCode 2 is another program.
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
+        "opencode-ai@${OPENCODE_VERSION}" \
     && npm cache clean --force
 ENV DISABLE_AUTOUPDATER=1 \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \

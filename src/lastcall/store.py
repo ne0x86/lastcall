@@ -1,5 +1,6 @@
-"""lastcall's state in SQLite: accounts, projects, quota readings, runs, findings, ideas, labelled issues, pull
-requests, the suggestions for the installed repositories, the owner's orders and the web UI's sessions.
+"""lastcall's state in SQLite: accounts, projects, quota readings, what the steps of accounts on API keys cost (the
+ledger), runs, findings, ideas, labelled issues, pull requests, the suggestions for the installed repositories, the
+owner's orders and the web UI's sessions.
 
 Findings keep their story across runs, so the judge never proposes again what the owner rejected:
     pending    valid, meant for a pull request, not opened yet (it did not fit, or delivery failed)
@@ -41,11 +42,12 @@ import sqlite3
 import threading
 import time
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from lastcall.quota import Reading, Window
+from lastcall.accounts import Account
+from lastcall.quota import Kind, Reading, SpendPolicy, Window
 from lastcall.suggest import Suggestion
 
 if TYPE_CHECKING:
@@ -56,7 +58,9 @@ if TYPE_CHECKING:
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
     id TEXT PRIMARY KEY, engine TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
-    language TEXT NOT NULL DEFAULT 'English', reserve_pct REAL NOT NULL DEFAULT 10, created REAL NOT NULL);
+    language TEXT NOT NULL DEFAULT 'English', reserve_pct REAL NOT NULL DEFAULT 10, created REAL NOT NULL,
+    provider TEXT NOT NULL DEFAULT '', base_url TEXT NOT NULL DEFAULT '', models TEXT NOT NULL DEFAULT '{}',
+    policy TEXT NOT NULL DEFAULT 'before-reset', budget_usd REAL, schedule TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS projects (
     repo TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 0, weight REAL NOT NULL DEFAULT 1, language TEXT,
     max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL, merge_on_approve INTEGER NOT NULL DEFAULT 0,
@@ -65,6 +69,9 @@ CREATE TABLE IF NOT EXISTS readings (
     account TEXT NOT NULL, taken_at REAL NOT NULL, windows TEXT NOT NULL, paid INTEGER NOT NULL,
     fidelity TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS readings_by_account ON readings (account, taken_at);
+CREATE TABLE IF NOT EXISTS spend (
+    account TEXT NOT NULL, at REAL NOT NULL, usd REAL NOT NULL, run TEXT NOT NULL DEFAULT '', role TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS spend_by_account ON spend (account, at);
 CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY, repo TEXT NOT NULL, account TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL,
     sha TEXT, started REAL NOT NULL, ended REAL, crew TEXT NOT NULL DEFAULT '', recipe TEXT NOT NULL DEFAULT 'audit');
@@ -101,6 +108,23 @@ class AccountRow:
     enabled: bool
     language: str
     reserve_pct: float
+    provider: str = ""  # an API's provider or a local model server; "" for an account on a CLI login
+    base_url: str = ""
+    models: Mapping[str, str] = field(default_factory=dict)  # tier -> model, over the engine's defaults
+    policy: Kind = "before-reset"
+    budget_usd: float | None = None  # per calendar month (UTC), for an account on an API key
+    schedule: str = ""  # policy schedule: when it bursts, as a cron expression in UTC
+
+    @property
+    def keyed(self) -> bool:
+        return bool(self.provider)
+
+    def account(self) -> Account:
+        return Account(self.id, self.engine, self.provider, self.base_url, self.models, self.budget_usd)
+
+    def spend_policy(self) -> SpendPolicy:
+        """How it spends. An account on an API key keeps no reserve: its monthly budget is the owner's limit."""
+        return SpendPolicy(self.policy, 0.0 if self.keyed else self.reserve_pct, cron=self.schedule)
 
 
 @dataclass(frozen=True)
@@ -123,7 +147,19 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.lock = threading.Lock()
         self.db.executescript(SCHEMA)
-        # crew came in v0.3; recipe, the projects' merge and watch settings and the pull requests' watch in v0.4
+        # crew came in v0.3; recipe, the projects' merge and watch settings and the pull requests' watch in v0.4;
+        # accounts on API keys and local models, with their models, policies, budgets and schedules, in v0.5
+        self._add_columns(
+            "accounts",
+            {
+                "provider": "TEXT NOT NULL DEFAULT ''",
+                "base_url": "TEXT NOT NULL DEFAULT ''",
+                "models": "TEXT NOT NULL DEFAULT '{}'",
+                "policy": "TEXT NOT NULL DEFAULT 'before-reset'",
+                "budget_usd": "REAL",
+                "schedule": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
         self._add_columns("runs", {"crew": "TEXT NOT NULL DEFAULT ''", "recipe": "TEXT NOT NULL DEFAULT 'audit'"})
         self._add_columns(
             "projects",
@@ -172,23 +208,88 @@ class Store:
 
     # accounts and projects
 
-    def add_account(self, account_id: str, engine: str, language: str = "English", reserve_pct: float = 10) -> None:
+    def add_account(
+        self,
+        account_id: str,
+        engine: str,
+        language: str = "English",
+        reserve_pct: float = 10,
+        *,
+        provider: str = "",
+        base_url: str = "",
+        models: Mapping[str, str] | None = None,
+        policy: str = "before-reset",
+        budget_usd: float | None = None,
+        schedule: str = "",
+    ) -> None:
         self.x(
-            "INSERT INTO accounts (id, engine, language, reserve_pct, created) VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO accounts (id, engine, language, reserve_pct, created, provider, base_url, models, policy, "
+            "budget_usd, schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (id) DO UPDATE SET engine = excluded.engine, language = excluded.language, "
-            "reserve_pct = excluded.reserve_pct",
-            (account_id, engine, language, reserve_pct, time.time()),
+            "reserve_pct = excluded.reserve_pct, provider = excluded.provider, base_url = excluded.base_url, "
+            "models = excluded.models, policy = excluded.policy, budget_usd = excluded.budget_usd, "
+            "schedule = excluded.schedule",
+            (
+                account_id,
+                engine,
+                language,
+                reserve_pct,
+                time.time(),
+                provider,
+                base_url,
+                json.dumps(dict(models or {})),
+                policy,
+                budget_usd,
+                schedule,
+            ),
         )
 
-    def update_account(self, account_id: str, *, enabled: bool, language: str, reserve_pct: float) -> None:
+    def update_account(
+        self,
+        account_id: str,
+        *,
+        enabled: bool,
+        language: str,
+        reserve_pct: float,
+        policy: str | None = None,
+        budget_usd: float | None = None,
+        schedule: str = "",
+        models: Mapping[str, str] | None = None,
+    ) -> None:
+        """The owner's settings. The policy, budget, schedule and models change only when `policy` is given."""
         self.x(
             "UPDATE accounts SET enabled = ?, language = ?, reserve_pct = ? WHERE id = ?",
             (int(enabled), language, reserve_pct, account_id),
         )
+        if policy is not None:
+            self.x(
+                "UPDATE accounts SET policy = ?, budget_usd = ?, schedule = ? WHERE id = ?",
+                (policy, budget_usd, schedule, account_id),
+            )
+        if models is not None:
+            self.x("UPDATE accounts SET models = ? WHERE id = ?", (json.dumps(dict(models)), account_id))
 
     def accounts(self, enabled_only: bool = False) -> list[AccountRow]:
         rows = self.q("SELECT * FROM accounts" + (" WHERE enabled = 1" if enabled_only else "") + " ORDER BY id")
-        return [AccountRow(r["id"], r["engine"], bool(r["enabled"]), r["language"], r["reserve_pct"]) for r in rows]
+        return [
+            AccountRow(
+                r["id"],
+                r["engine"],
+                bool(r["enabled"]),
+                r["language"],
+                r["reserve_pct"],
+                r["provider"],
+                r["base_url"],
+                json.loads(r["models"] or "{}"),
+                r["policy"],
+                r["budget_usd"],
+                r["schedule"],
+            )
+            for r in rows
+        ]
+
+    def account(self, account_id: str) -> AccountRow | None:
+        return next((a for a in self.accounts() if a.id == account_id), None)
 
     def add_project(self, repo: str, active: bool = True, weight: float = 1, language: str | None = None) -> None:
         self.x(
@@ -292,6 +393,21 @@ class Store:
     def last_reading(self, account: str) -> Reading | None:
         rows = self.q("SELECT * FROM readings WHERE account = ? ORDER BY taken_at DESC LIMIT 1", (account,))
         return _reading(rows[0]) if rows else None
+
+    # the ledger: what the steps of accounts on API keys and local models cost
+
+    def record_spend(self, account: str, usd: float, role: str, run: str = "", at: float | None = None) -> None:
+        self.x(
+            "INSERT INTO spend (account, at, usd, run, role) VALUES (?, ?, ?, ?, ?)",
+            (account, time.time() if at is None else at, usd, run, role),
+        )
+
+    def spent(self, account: str, since: float) -> float:
+        """What the account's steps cost since then, in USD."""
+        rows = self.q(
+            "SELECT COALESCE(SUM(usd), 0) AS usd FROM spend WHERE account = ? AND at >= ?", (account, since)
+        )
+        return float(rows[0]["usd"])
 
     # runs
 

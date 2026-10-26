@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import shutil
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from lastcall import engines, environment, git, i18n, pack, scanners
-from lastcall.accounts import Account, read_quota
+from lastcall import environment, git, i18n, pack, scanners
+from lastcall.accounts import Account, engine_for, read_quota
 from lastcall.engines.base import Engine, Invocation, StepResult, StepSpec
 from lastcall.environment import TOOL_ENV, Environment
 from lastcall.github import GitHub, GitHubForge
@@ -37,8 +37,8 @@ from lastcall.recipes.issues import LABEL, IssuesReport, build_issues, comments,
 from lastcall.recipes.issues import markdown as issues_markdown
 from lastcall.recipes.steps import QuotaCheck, StepRecord, StepRunner
 from lastcall.sandbox import Sandbox, SandboxError
+from lastcall.secretstore import SecretStore
 from lastcall.store import Store
-from lastcall.tiers import defaults
 
 if TYPE_CHECKING:
     from lastcall.notify import Notifier
@@ -55,6 +55,7 @@ class Instance:
     client: GitHub
     store: Store
     notify: Notifier | None = None
+    secrets: SecretStore | None = None  # where the API keys of accounts on keys are
 
 
 @dataclass(frozen=True)
@@ -68,22 +69,35 @@ class Options:
 
 
 def agent_hooks(
-    box: Sandbox,
+    inst: Instance,
     account: Account,
     policy: SpendPolicy,
     wait: bool = False,
     log: Log = print,
     sleep: Callable[[float], None] = time.sleep,
+    run: str = "",
 ) -> tuple[StepRunner, QuotaCheck]:
-    """How a recipe runs agent steps for this account: in the sandbox, behind the quota gate."""
+    """How a recipe runs agent steps for this account: in the sandbox, behind the quota gate. The steps of an account
+    on an API key or a local model get no account volume, and the ledger keeps what each one cost. When a step on an
+    API key used tokens that the engine could not price, the budget cannot hold, and the next gate stops the run."""
+    unpriced: list[str] = []
 
     def run_step(engine: Engine, step: StepSpec, workspace: Path) -> StepResult:
-        return box.run(engine, step, workspace=workspace, account_volume=account.volume)
+        if not account.keyed:
+            return inst.box.run(engine, step, workspace=workspace, account_volume=account.volume)
+        res = inst.box.run(engine, step, workspace=workspace)
+        inst.store.record_spend(account.id, res.cost_usd or 0.0, step.role, run)
+        if account.needs_key() and not res.cost_usd and _used_tokens(res) and not step.model.endswith(":free"):
+            unpriced.append(step.model)
+        return res
 
     def check_quota(models: Sequence[str]) -> tuple[Gate, Reading | None]:
+        if unpriced:
+            reason = f"{unpriced[0]} used tokens that have no price, so the budget cannot hold: choose a priced model"
+            return Gate(False, reason), None
         while True:
             try:
-                reading = read_quota(account, box, time.time())
+                reading = read_quota(account, inst.box, time.time(), inst.store, inst.secrets)
             except (QuotaError, SandboxError) as e:
                 return Gate(False, f"no quota reading: {e}"), None
             verdict = gate(reading, policy, time.time(), models)
@@ -95,9 +109,13 @@ def agent_hooks(
     return run_step, check_quota
 
 
-def audit_models(engine: str) -> list[str]:
-    """The models that an audit on this engine's accounts uses: no burst starts while one of them is out of room."""
-    return models(defaults(engine))
+def _used_tokens(res: StepResult) -> bool:
+    return isinstance(res.usage, Mapping) and any(int(v or 0) > 0 for v in res.usage.values())
+
+
+def audit_models(account: Account) -> list[str]:
+    """The models that an audit on this account uses: no burst starts while one of them is out of room."""
+    return models(account.tiers())
 
 
 FOCUS = "What matters most to the owner (.lastcall.yml)"
@@ -183,9 +201,14 @@ def audit_repo(
             f"Auditing {repo} @ {context.sha} with {account.id} ({account.engine}): {context.files} files, "
             f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}"
         )
-        run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+        run_step, check_quota = agent_hooks(inst, account, opts.policy, opts.wait, log, run=run_dir.name)
         crew = [
-            Peer(p.id, engines.get(p.engine), defaults(p.engine), *agent_hooks(inst.box, p, policy, opts.wait, log))
+            Peer(
+                p.id,
+                engine_for(p, inst.secrets),
+                p.tiers(),
+                *agent_hooks(inst, p, policy, opts.wait, log, run=run_dir.name),
+            )
             for p, policy in peers
         ]
         if crew:
@@ -193,8 +216,8 @@ def audit_repo(
         report = run_audit(
             repo=repo,
             pack=context,
-            engine=engines.get(account.engine),
-            tiers=defaults(account.engine),
+            engine=engine_for(account, inst.secrets),
+            tiers=account.tiers(),
             run_step=run_step,
             check_quota=check_quota,
             language=opts.language,
@@ -244,7 +267,7 @@ def improve_repo(
             own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
             extra = {FOCUS: own.focus} if own and own.focus else {}
             context = pack.build(run_dir / "clone", run_dir, repo, extra=extra, exclude=own.exclude if own else ())
-            run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+            run_step, check_quota = agent_hooks(inst, account, opts.policy, opts.wait, log, run=run_dir.name)
             if wanted:
                 env = environment.detect(run_dir / "clone", own)
                 log(f"Building {min(len(wanted), opts.max_prs)} idea(s) for {repo}, checked in {env.name}.")
@@ -254,8 +277,8 @@ def improve_repo(
                     wanted=wanted,
                     run_dir=run_dir,
                     shared=context.path,
-                    engine=engines.get(account.engine),
-                    tiers=defaults(account.engine),
+                    engine=engine_for(account, inst.secrets),
+                    tiers=account.tiers(),
                     run_step=run_step,
                     check_quota=check_quota,
                     verify=verifier(inst.box, account.engine, env),
@@ -270,8 +293,8 @@ def improve_repo(
                 report = run_improve(
                     repo=repo,
                     pack=context,
-                    engine=engines.get(account.engine),
-                    tiers=defaults(account.engine),
+                    engine=engine_for(account, inst.secrets),
+                    tiers=account.tiers(),
                     run_step=run_step,
                     check_quota=check_quota,
                     language=opts.language,
@@ -337,14 +360,14 @@ def issues_repo(
             context = pack.build(run_dir / "clone", run_dir, repo, extra=extra, exclude=own.exclude if own else ())
             env = environment.detect(run_dir / "clone", own)
             log(f"Working on {len(tickets)} labelled issue(s) of {repo}, checked in {env.name}.")
-            run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+            run_step, check_quota = agent_hooks(inst, account, opts.policy, opts.wait, log, run=run_dir.name)
             build_issues(
                 report=report,
                 tickets=tickets,
                 run_dir=run_dir,
                 shared=context.path,
-                engine=engines.get(account.engine),
-                tiers=defaults(account.engine),
+                engine=engine_for(account, inst.secrets),
+                tiers=account.tiers(),
                 run_step=run_step,
                 check_quota=check_quota,
                 verify=verifier(inst.box, account.engine, env),
@@ -388,7 +411,7 @@ def deliver_report(
     forge = GitHubForge.connect(inst.client, report.repo)
     planned = report.prs[:max_prs] if max_prs else report.prs
     log(f"Delivering {len(planned)} pull request(s) for {report.repo} as {forge.author[0]}.")
-    run_step, check_quota = agent_hooks(inst.box, account, opts.policy, opts.wait, log)
+    run_step, check_quota = agent_hooks(inst, account, opts.policy, opts.wait, log, run=run_dir.name)
     clone = run_dir / "clone"
     env = environment.detect(clone, environment.settings(clone)) if clone.is_dir() else environment.RUNNER
     opened = {d.get("url") for d in report.deliveries if d.get("status") == "opened"}
@@ -396,8 +419,8 @@ def deliver_report(
     deliver(
         report=report,
         run_dir=run_dir,
-        engine=engines.get(account.engine),
-        tiers=defaults(account.engine),
+        engine=engine_for(account, inst.secrets),
+        tiers=account.tiers(),
         run_step=run_step,
         check_quota=check_quota,
         verify=verifier(inst.box, account.engine, env),
