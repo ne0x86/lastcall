@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS projects (
     repo TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 0, weight REAL NOT NULL DEFAULT 1, language TEXT,
     max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL, merge_on_approve INTEGER NOT NULL DEFAULT 0,
-    watch INTEGER NOT NULL DEFAULT 0, health_url TEXT);
+    watch INTEGER NOT NULL DEFAULT 0, health_url TEXT, tests INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS readings (
     account TEXT NOT NULL, taken_at REAL NOT NULL, windows TEXT NOT NULL, paid INTEGER NOT NULL,
     fidelity TEXT NOT NULL);
@@ -137,6 +137,7 @@ class ProjectRow:
     merge_on_approve: bool = False  # lastcall merges its pull requests that the owner approves
     watch: bool = False  # after a merge, lastcall watches the checks and the health address, and proposes a revert
     health_url: str | None = None
+    tests: bool = False  # bursts also write tests for it: every other run, after an audit
 
 
 class Store:
@@ -148,7 +149,8 @@ class Store:
         self.lock = threading.Lock()
         self.db.executescript(SCHEMA)
         # crew came in v0.3; recipe, the projects' merge and watch settings and the pull requests' watch in v0.4;
-        # accounts on API keys and local models, with their models, policies, budgets and schedules, in v0.5
+        # accounts on API keys and local models, with their models, policies, budgets and schedules, and the
+        # projects' tests setting, in v0.5
         self._add_columns(
             "accounts",
             {
@@ -167,6 +169,7 @@ class Store:
                 "merge_on_approve": "INTEGER NOT NULL DEFAULT 0",
                 "watch": "INTEGER NOT NULL DEFAULT 0",
                 "health_url": "TEXT",
+                "tests": "INTEGER NOT NULL DEFAULT 0",
             },
         )
         self._add_columns(
@@ -312,6 +315,7 @@ class Store:
                 bool(r["merge_on_approve"]),
                 bool(r["watch"]),
                 r["health_url"],
+                bool(r["tests"]),
             )
             for r in rows
         ]
@@ -330,11 +334,12 @@ class Store:
         merge_on_approve: bool = False,
         watch: bool = False,
         health_url: str | None = None,
+        tests: bool = False,
     ) -> None:
         self.x(
             "UPDATE projects SET active = ?, weight = ?, language = ?, max_prs = ?, merge_on_approve = ?, watch = ?, "
-            "health_url = ? WHERE repo = ?",
-            (int(active), weight, language, max_prs, int(merge_on_approve), int(watch), health_url, repo),
+            "health_url = ?, tests = ? WHERE repo = ?",
+            (int(active), weight, language, max_prs, int(merge_on_approve), int(watch), health_url, int(tests), repo),
         )
 
     def pause_project(self, repo: str) -> None:
@@ -510,12 +515,14 @@ class Store:
         else:
             self.x(sql.format(where="run = ? AND fid = ?"), (*args, run, fid))
 
-    def earlier(self, repo: str) -> list[dict[str, Any]]:
-        """What the judge must know from earlier runs, with ids #<n> (no reviewer prefix starts with #). Pending
-        ones carry everything, because the judge may put them in a pull request of this run."""
+    def earlier(self, repo: str, recipe: str = "audit") -> list[dict[str, Any]]:
+        """What the judge must know from the earlier runs of the same recipe (the audit's, or the tests'), with ids
+        #<n> (no reviewer prefix starts with #). Pending ones carry everything, because the judge may put them in a
+        pull request of this run."""
         rows = self.q(
-            f"SELECT * FROM findings WHERE repo = ? AND status IN ({','.join('?' * len(REMEMBERED))}) ORDER BY id",
-            (repo, *REMEMBERED),
+            "SELECT f.* FROM findings f LEFT JOIN runs r ON r.id = f.run WHERE f.repo = ? "
+            f"AND COALESCE(r.recipe, 'audit') = ? AND f.status IN ({','.join('?' * len(REMEMBERED))}) ORDER BY f.id",
+            (repo, recipe, *REMEMBERED),
         )
         out = []
         for r in rows:

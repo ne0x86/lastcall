@@ -20,11 +20,13 @@ QUEUED = {
     "audit": "web.project.queued",
     "improve": "web.project.queued.improve",
     "issues": "web.project.queued.issues",
+    "tests": "web.project.queued.tests",
 }
 RUNNING = {
     "audit": "web.project.running",
     "improve": "web.project.running.improve",
     "issues": "web.project.running.issues",
+    "tests": "web.project.running.tests",
 }
 
 
@@ -50,6 +52,7 @@ class ProjectCard:
     merge_on_approve: bool
     watch: bool
     health_url: str
+    tests: bool
     busy: str  # what it waits for or what runs on it, in words; "" when nothing does
 
 
@@ -134,6 +137,7 @@ def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any
         p.merge_on_approve,
         p.watch,
         p.health_url or "",
+        p.tests,
         busy,
     )
 

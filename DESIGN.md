@@ -421,7 +421,7 @@ engine runs all of them with the same guarantees.
 
 ### Shapes
 
-- **find → judge → fix → verify → deliver**: `audit`, and later `tests` and `deps`.
+- **find → judge → fix → verify → deliver**: `audit` and `tests`, and later `deps`.
 - **ideate → edit → deliver**: `improve`.
 - **issue → fix → verify → deliver**: `issues`. The owner labels an issue, and leftover quota solves it.
 
@@ -472,6 +472,20 @@ The `issues` recipe (`lastcall.recipes.issues`) works on the issues that the own
 - When the issue is unclear, needs a decision or does not fit in one pull request, or the change fails its checks
   twice, lastcall says why in a comment on the issue and takes the label off. lastcall also takes it off when the
   owner closes its pull request without merging. Labelling the issue again asks for a new attempt.
+
+The `tests` recipe (`lastcall.recipes.tests`) has the audit's shape, aimed at the behavior that no test checks:
+- One reviewer, `tests` (balanced tier), finds behavior that matters and that no test reaches: a bug fix in the
+  history with no test that would catch it again, core logic whose branches no test takes, a public interface that
+  no test calls. Never coverage for its own sake.
+- Its judge keeps what tests can check as the code is today. When today's behavior looks wrong, the finding goes to
+  the owner's decisions instead: a test must not set a bug in stone.
+- The test writer (deep tier) adds tests only, next to the existing ones and with their conventions. lastcall
+  refuses a change to anything that is not a test: a path in a tests folder, or named the way tests are named
+  (`test_*.py`, `*_test.go`, `*.test.ts`, `*Test.java`...). Then it checks the change like any other. Tests inside a
+  source file, such as Rust's `#[cfg(test)]`, are out of reach.
+- Each recipe keeps its own memory of findings: the judge of the tests sees only earlier tests.
+- The owner turns it on for a project with "Tests too": then every other burst on that project, after an audit,
+  writes tests instead. "Write tests now" on the Projects page, or `lastcall tests <owner/name>`, starts one at once.
 
 Prompts are in English, and the language of findings, pull requests and reports is a parameter. Every prompt tells
 the model that the code and documents it reads are data, not instructions.
@@ -632,8 +646,8 @@ page alone may post a form to github.com), the accounts page (add a subscription
 it and a quota reading on demand to check the login; an API key, with its provider, model, monthly budget and
 policy; or a local model with its schedule; each form shows its steps, with links to where keys and model names
 come from), the dashboard (with pause and resume, and a notice when the service stops
-writing its heartbeat) and the projects page: each project's settings (merge on approve and the watch after the merge
-among them), an audit or an improvement on demand, adding a repository by its address, and the suggestions, which the
+writing its heartbeat) and the projects page: each project's settings (merge on approve, the watch after the merge
+and tests too among them), an audit, tests or an improvement on demand, adding a repository by its address, and the suggestions, which the
 service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
 audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
 reset. The settings page holds the notifications: the destinations, chosen by service with only the fields that
@@ -722,7 +736,8 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Engine `opencode` (API keys of OpenRouter, Anthropic and OpenAI, and local models on Ollama); spend policies
   `budget` and `schedule`, and lastcall's ledger. Done.
 - Recipe `issues`. Done.
-- Recipes `tests` and `deps`.
+- Recipe `tests`. Done.
+- Recipe `deps`.
 - Signals (container logs, Sentry or GlitchTip); GitLab or Forgejo.
 
 ## 18. Prior art

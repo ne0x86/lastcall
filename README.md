@@ -29,6 +29,8 @@ also spend an API key with a monthly budget, or a local model at the hours you c
   take go to one issue.
 - 💡 **Improves.** When you ask, a plan of small improvements that fit your project, checked against the code: one
   issue with a checkbox per idea. lastcall builds the ones you tick, one pull request each.
+- 🧪 **Writes tests, if you want.** For the behavior that matters and that no test checks: pull requests that add
+  tests and change nothing else. lastcall refuses any change outside the tests.
 - 🏷️ **Takes requests.** Label an issue `lastcall`, and a coming burst works on it: a pull request that closes the
   issue, or a comment on it that says what is missing. lastcall adds the label to your active repositories.
 - 👀 **Merges and watches, if you want.** It merges the pull requests you approve once their checks pass, and it
@@ -173,6 +175,7 @@ docker compose run --rm cli audit <owner/name> --account claude-max --report-onl
 docker compose run --rm cli deliver <run> --account claude-max                       # then the pull requests
 docker compose run --rm cli improve <owner/name> --account claude-max                # a plan; then the ideas you tick
 docker compose run --rm cli issues <owner/name> --account claude-max                 # labelled issues, now
+docker compose run --rm cli tests <owner/name> --account claude-max                  # tests for what none checks
 docker compose run --rm cli status                                                   # accounts, bursts, findings
 docker compose run --rm cli pause                                                    # or resume
 ```
@@ -215,6 +218,9 @@ contrast set in code, keyboard traps, focus order. Cite file and lines.
 
 A repository can have up to 4 reviewers of its own, of 8 KB at most each. A wrong one stops the run before it
 spends anything, and the run says why.
+
+**Tests too.** On the Projects page, each project can also get tests: every other burst on it writes tests for
+the behavior that no test checks, instead of an audit. "Write tests now" starts one at once.
 
 **After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
 in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
@@ -262,7 +268,8 @@ advice.
   - ✅ API keys and local models: OpenCode on OpenRouter, Anthropic, OpenAI and Ollama, with a monthly budget or a
     schedule.
   - ✅ The `issues` recipe: label an issue `lastcall`, and it becomes a pull request.
-  - More recipes: tests, dependencies.
+  - ✅ The `tests` recipe: tests for what no test checks, in pull requests that change only tests.
+  - The `deps` recipe: dependency upgrades that need more than a new version number.
   - GitLab and Forgejo.
 
 ## 🧑‍💻 Development

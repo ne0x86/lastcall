@@ -350,3 +350,25 @@ def test_a_key_without_its_key_never_bursts_and_says_so_once(tmp_path: Path) -> 
     svc.tick()
     assert svc.plans["openrouter"].code == "pace" and len(started) == 1
     assert told[-1] == "$0.00 of its $20.00 budget spent this month, behind the calendar."
+
+
+def test_a_project_that_wants_tests_gets_them_every_other_run(store: Store) -> None:
+    started: list[Callable[[], None]] = []
+    readings: dict[str, Reading | Exception] = {"claude": reading("claude", 30, 20), "chatgpt": QuotaError("x")}
+    svc = service(store, readings, [], Clock(), started)
+    tested: list[tuple[str, str, str]] = []
+    svc.tests = lambda repo, account, trigger: tested.append((account.id, repo, trigger))
+    store.update_project("ne0x86/a", active=True, weight=1, language=None, max_prs=3, tests=True)
+    assert svc.recipe("ne0x86/a") == "audit"  # nothing ran yet: an audit first
+    store.start_run("r1", "ne0x86/a", "claude", "burst")
+    store.finish_run("r1", "ok", "abc1234")
+    store.x("UPDATE runs SET started = 1 WHERE id = 'r1'")
+    assert svc.recipe("ne0x86/a") == "tests" and svc.recipe("ne0x86/b") == "audit"  # b does not want tests
+    store.start_run("r2", "ne0x86/a", "claude", "burst", recipe="tests")
+    store.x("UPDATE runs SET started = 2 WHERE id = 'r2'")
+    assert svc.recipe("ne0x86/a") == "audit"
+    store.add_order("tests", "ne0x86/b", "claude", NOW)
+    svc.tick()
+    for work in started:
+        work()
+    assert tested == [("claude", "ne0x86/b", "manual")]
