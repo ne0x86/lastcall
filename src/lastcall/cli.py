@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     acc_add.add_argument("account")
     acc_add.add_argument("--engine", required=True, choices=sorted(engines.BUILTIN))
     acc_add.add_argument("--language", default="English", help="language of what it writes (default English)")
-    acc_add.add_argument("--reserve", type=float, default=10.0, help="% of every week kept for you (default 10)")
+    acc_add.add_argument("--reserve", type=float, default=10.0, help="%% of every week kept for you (default 10)")
     acc_add.add_argument(
         "--provider",
         choices=PROVIDERS,
