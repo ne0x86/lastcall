@@ -1,6 +1,6 @@
 # lastcall design
 
-Status: **v0.4 released, October 2026**, open for discussion. This document describes what lastcall is and how it
+Status: **v0.5 released, October 2026**, open for discussion. This document describes what lastcall is and how it
 works. Section 17 says what is done and what comes next; open decisions are listed in section 19.
 
 ## 1. What lastcall is
@@ -426,8 +426,8 @@ multiplies the score.
 
 ### Other forges
 
-v1 supports GitHub. The `Forge` interface (list, clone, push a branch, open a pull request, read approvals, merge,
-issues, labels) leaves room for GitLab, Gitea and Forgejo.
+lastcall supports GitHub. The `Forge` interface (list, clone, push a branch, open a pull request, read approvals,
+merge, issues, labels) leaves room for GitLab, Gitea and Forgejo, which come when people ask for them.
 
 ## 9. Recipes
 
@@ -771,16 +771,19 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Merge on approve; watch after the merge and open a revert pull request.
 - lastcall reads a repository's files on its own side only from inside the repository (section 12).
 
-**v0.5: wider reach**
+**v0.5: wider reach** (done, October 2026)
 
 - Engine `opencode` (API keys of OpenRouter, Anthropic and OpenAI, and local models on Ollama); spend policies
-  `budget` and `schedule`, and lastcall's ledger. Done.
-- Recipe `issues`. Done.
-- Recipe `tests`. Done.
-- Recipe `deps`. Done.
-- Signals: errors in production from Sentry or GlitchTip, in the audits, the tests and the ranking. Done. Container
-  logs may come later.
-- GitLab or Forgejo.
+  `budget` and `schedule`, and lastcall's ledger.
+- Recipes `issues`, `tests` and `deps`, and the turn of the recipes that the owner wants for a project.
+- Signals: errors in production from Sentry or GlitchTip, in the audits, the tests and the ranking.
+
+**Next, as people ask for it**
+
+- GitLab or Forgejo, through the `Forge` interface (section 8).
+- Container logs and health as signals, read on the host as the prototype did.
+- Asking once for a repair when an engine without structured output answers with something that is not the JSON
+  (section 7).
 
 ## 18. Prior art
 

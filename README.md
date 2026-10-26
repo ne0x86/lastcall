@@ -113,7 +113,7 @@ You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and W
 **1. Start lastcall:**
 
 ```sh
-git clone --branch v0.4.0 https://github.com/ne0x86/lastcall && cd lastcall
+git clone --branch v0.5.0 https://github.com/ne0x86/lastcall && cd lastcall
 docker compose up -d
 ```
 
@@ -161,7 +161,7 @@ and set `LASTCALL_TRUST_PROXY=1`.
 To upgrade, check out the new release and pull its images; your settings and history stay in Docker volumes:
 
 ```sh
-git fetch --tags && git checkout v0.4.0      # the release you want
+git fetch --tags && git checkout v0.5.0      # the release you want
 docker compose pull && docker compose up -d
 ```
 
@@ -235,7 +235,8 @@ both, in turn with its audits: an audit, then tests, then upgrades, then an audi
 [deps.dev](https://deps.dev) for their latest versions, so the names of your dependencies go to those services.
 
 **Errors in production.** If your apps send their errors to [Sentry](https://sentry.io) or
-[GlitchTip](https://glitchtip.com), lastcall can read them:
+[GlitchTip](https://glitchtip.com), lastcall can read them. It is optional, and lastcall runs no tracker of its own:
+it reads the one your apps already use.
 1. Create a token that can only read (`project:read` and `event:read`). In GlitchTip: your profile › Auth Tokens.
 2. On the Settings page, under *Errors in production*, give the tracker's address, the organization and the token.
    lastcall reads one error to check them, and saves them only if that works.
@@ -288,14 +289,16 @@ advice.
   - The `improve` recipe: plans of small improvements, and pull requests for the ideas you tick.
   - Merge on approve; watch after the merge and propose a revert.
   - The gate checks the weekly window of each model.
-- 🔜 **v0.5, wider reach.**
-  - ✅ API keys and local models: OpenCode on OpenRouter, Anthropic, OpenAI and Ollama, with a monthly budget or a
+- ✅ **v0.5, wider reach.**
+  - API keys and local models: OpenCode on OpenRouter, Anthropic, OpenAI and Ollama, with a monthly budget or a
     schedule.
-  - ✅ The `issues` recipe: label an issue `lastcall`, and it becomes a pull request.
-  - ✅ The `tests` recipe: tests for what no test checks, in pull requests that change only tests.
-  - ✅ The `deps` recipe: dependency upgrades that need more than a new version number.
-  - ✅ Signals: errors in production from Sentry or GlitchTip.
-  - GitLab and Forgejo.
+  - The `issues` recipe: label an issue `lastcall`, and it becomes a pull request.
+  - The `tests` recipe: tests for what no test checks, in pull requests that change only tests.
+  - The `deps` recipe: dependency upgrades that need more than a new version number.
+  - Signals: errors in production from Sentry or GlitchTip.
+- 🔭 **Next, as people ask for it** ([open an issue](https://github.com/ne0x86/lastcall/issues/new/choose)).
+  - GitLab and Forgejo, next to GitHub.
+  - Container logs as signals, next to Sentry and GlitchTip.
 
 ## 🧑‍💻 Development
 
