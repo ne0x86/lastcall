@@ -421,7 +421,7 @@ engine runs all of them with the same guarantees.
 
 ### Shapes
 
-- **find → judge → fix → verify → deliver**: `audit` and `tests`, and later `deps`.
+- **find → judge → fix → verify → deliver**: `audit`, `tests` and `deps`.
 - **ideate → edit → deliver**: `improve`.
 - **issue → fix → verify → deliver**: `issues`. The owner labels an issue, and leftover quota solves it.
 
@@ -484,8 +484,30 @@ The `tests` recipe (`lastcall.recipes.tests`) has the audit's shape, aimed at th
   (`test_*.py`, `*_test.go`, `*.test.ts`, `*Test.java`...). Then it checks the change like any other. Tests inside a
   source file, such as Rust's `#[cfg(test)]`, are out of reach.
 - Each recipe keeps its own memory of findings: the judge of the tests sees only earlier tests.
-- The owner turns it on for a project with "Tests too": then every other burst on that project, after an audit,
-  writes tests instead. "Write tests now" on the Projects page, or `lastcall tests <owner/name>`, starts one at once.
+- The owner turns it on for a project with "Tests too". "Write tests now" on the Projects page, or
+  `lastcall tests <owner/name>`, starts one at once.
+
+The `deps` recipe (`lastcall.recipes.deps`) has the same shape, aimed at the dependency upgrades that need more than
+a new version number, which a bot such as Dependabot cannot finish on its own:
+- The pack carries two sections instead of the scanners' (`lastcall.scanners.dependencies`): the known
+  vulnerabilities, and the direct dependencies behind their latest versions, the deprecated first. A probe in the
+  runner lists every package with osv-scanner (`--all-packages`), keeps those that a manifest of the repository
+  names, and asks deps.dev, through the egress proxy, for their latest version and whether their authors deprecated
+  them. The names of the dependencies go to osv.dev and deps.dev, as for the audit's osv-scanner.
+- One reviewer, `deps` (balanced tier), chooses the upgrades worth a pull request: a known vulnerability that the
+  code can reach, a deprecated package, a major version behind that changes something the code uses, a runtime at
+  the end of its life. Not a minor upgrade that needs no code change.
+- Its judge keeps what the project's checks can verify, one upgrade per pull request unless packages must move
+  together; a migration too large for one pull request, or a replacement package, goes to the owner's decisions.
+- The upgrader (deep tier) changes the manifest, the lock file (with the ecosystem's own tool, which it may install
+  with pip for the step, such as uv) and the code that the new version breaks. The check then runs in the project's
+  environment like any change. A lock file that needs a toolchain the runner lacks (Go, Cargo) stops that pull
+  request, and the upgrader says why.
+- The owner turns it on for a project with "Dependencies too", or starts one with "Upgrade dependencies now" or
+  `lastcall deps <owner/name>`.
+
+The recipes that the owner wants for a project take turns in its bursts: an audit, then tests, then upgrades, then an
+audit again. What the owner asked for goes first: ticked ideas, then labelled issues.
 
 Prompts are in English, and the language of findings, pull requests and reports is a parameter. Every prompt tells
 the model that the code and documents it reads are data, not instructions.
@@ -647,7 +669,7 @@ it and a quota reading on demand to check the login; an API key, with its provid
 policy; or a local model with its schedule; each form shows its steps, with links to where keys and model names
 come from), the dashboard (with pause and resume, and a notice when the service stops
 writing its heartbeat) and the projects page: each project's settings (merge on approve, the watch after the merge
-and tests too among them), an audit, tests or an improvement on demand, adding a repository by its address, and the suggestions, which the
+and tests and dependencies too among them), an audit, tests, upgrades or an improvement on demand, adding a repository by its address, and the suggestions, which the
 service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
 audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
 reset. The settings page holds the notifications: the destinations, chosen by service with only the fields that
@@ -737,7 +759,7 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
   `budget` and `schedule`, and lastcall's ledger. Done.
 - Recipe `issues`. Done.
 - Recipe `tests`. Done.
-- Recipe `deps`.
+- Recipe `deps`. Done.
 - Signals (container logs, Sentry or GlitchTip); GitLab or Forgejo.
 
 ## 18. Prior art

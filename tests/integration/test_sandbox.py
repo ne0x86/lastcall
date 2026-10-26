@@ -253,3 +253,14 @@ def test_opencode_runs_a_review_in_the_runner(workspace: Path) -> None:
     assert res.output == {"summary": "nothing to report", "findings": []}
     assert res.tool_uses == 1
     assert res.usage == {"input": 2468, "output": 112, "cache_read": 0}
+
+
+def test_the_deps_probe_reads_the_latest_versions_through_the_proxy(workspace: Path) -> None:
+    """osv-scanner in the runner lists the dependencies, and deps.dev, through the egress proxy, says how far
+    behind they are."""
+    from lastcall.scanners import TITLES, VERSIONS, dependencies
+
+    (workspace / "requirements.txt").write_text("requests==2.19.0\n", encoding="utf-8")
+    found = dependencies(SANDBOX, "claude-code", workspace)
+    assert "- requests 2.19.0 → " in found[VERSIONS]
+    assert "requests 2.19.0: " in found[TITLES["osv-scanner"]]  # it has known vulnerabilities

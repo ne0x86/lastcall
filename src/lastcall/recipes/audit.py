@@ -8,7 +8,8 @@ Fix, verify and deliver (`deliver`): one implementer per planned pull request, e
 the agent, checks the change in a clean container, scans what it would publish for secrets, commits, pushes and
 opens the pull request. Findings that need the owner go to one issue per run.
 
-The tests recipe (`lastcall.recipes.tests`) has the same shape, with its own prompts: a `Recipe` says which.
+The tests and deps recipes (`lastcall.recipes.tests`, `lastcall.recipes.deps`) have the same shape, with their own
+prompts: a `Recipe` says which.
 """
 
 from __future__ import annotations
@@ -153,7 +154,7 @@ class AuditReport:
     environment: str = ""  # where the checks run: an image, or the runner, and what decided it
     peers: list[str] = field(default_factory=list)  # other accounts whose reviewers took part (fan-out)
     notes: list[str] = field(default_factory=list)  # what happened to them, such as a peer stopped by its quota
-    recipe: str = "audit"  # or "tests"
+    recipe: str = "audit"  # or "tests", "deps"
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=1)
@@ -384,7 +385,7 @@ def markdown(report: AuditReport) -> str:
             v.get("reason") or f["why"]
         )
 
-    heading = "Tests for" if report.recipe == "tests" else "Audit of"
+    heading = {"tests": "Tests for", "deps": "Dependency upgrades for"}.get(report.recipe, "Audit of")
     out = [f"# {heading} {report.repo} @ {report.sha} ({report.engine})", ""]
     out.append(f"Status: **{report.status}**" + (f" ({report.stopped})" if report.stopped else ""))
     if report.peers:

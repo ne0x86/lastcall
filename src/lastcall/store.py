@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS projects (
     repo TEXT PRIMARY KEY, active INTEGER NOT NULL DEFAULT 0, weight REAL NOT NULL DEFAULT 1, language TEXT,
     max_prs INTEGER NOT NULL DEFAULT 3, created REAL NOT NULL, merge_on_approve INTEGER NOT NULL DEFAULT 0,
-    watch INTEGER NOT NULL DEFAULT 0, health_url TEXT, tests INTEGER NOT NULL DEFAULT 0);
+    watch INTEGER NOT NULL DEFAULT 0, health_url TEXT, tests INTEGER NOT NULL DEFAULT 0,
+    deps INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS readings (
     account TEXT NOT NULL, taken_at REAL NOT NULL, windows TEXT NOT NULL, paid INTEGER NOT NULL,
     fidelity TEXT NOT NULL);
@@ -137,7 +138,8 @@ class ProjectRow:
     merge_on_approve: bool = False  # lastcall merges its pull requests that the owner approves
     watch: bool = False  # after a merge, lastcall watches the checks and the health address, and proposes a revert
     health_url: str | None = None
-    tests: bool = False  # bursts also write tests for it: every other run, after an audit
+    tests: bool = False  # bursts also write tests for it, in turn with the audits
+    deps: bool = False  # bursts also upgrade its dependencies, in turn with the audits
 
 
 class Store:
@@ -150,7 +152,7 @@ class Store:
         self.db.executescript(SCHEMA)
         # crew came in v0.3; recipe, the projects' merge and watch settings and the pull requests' watch in v0.4;
         # accounts on API keys and local models, with their models, policies, budgets and schedules, and the
-        # projects' tests setting, in v0.5
+        # projects' tests and deps settings, in v0.5
         self._add_columns(
             "accounts",
             {
@@ -170,6 +172,7 @@ class Store:
                 "watch": "INTEGER NOT NULL DEFAULT 0",
                 "health_url": "TEXT",
                 "tests": "INTEGER NOT NULL DEFAULT 0",
+                "deps": "INTEGER NOT NULL DEFAULT 0",
             },
         )
         self._add_columns(
@@ -316,6 +319,7 @@ class Store:
                 bool(r["watch"]),
                 r["health_url"],
                 bool(r["tests"]),
+                bool(r["deps"]),
             )
             for r in rows
         ]
@@ -335,11 +339,23 @@ class Store:
         watch: bool = False,
         health_url: str | None = None,
         tests: bool = False,
+        deps: bool = False,
     ) -> None:
         self.x(
             "UPDATE projects SET active = ?, weight = ?, language = ?, max_prs = ?, merge_on_approve = ?, watch = ?, "
-            "health_url = ?, tests = ? WHERE repo = ?",
-            (int(active), weight, language, max_prs, int(merge_on_approve), int(watch), health_url, int(tests), repo),
+            "health_url = ?, tests = ?, deps = ? WHERE repo = ?",
+            (
+                int(active),
+                weight,
+                language,
+                max_prs,
+                int(merge_on_approve),
+                int(watch),
+                health_url,
+                int(tests),
+                int(deps),
+                repo,
+            ),
         )
 
     def pause_project(self, repo: str) -> None:

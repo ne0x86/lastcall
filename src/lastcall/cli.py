@@ -12,6 +12,7 @@ lastcall deliver <run> --account <account>      # the pull requests of a report-
 lastcall improve <owner/name> --account <account> # an improvement plan; later runs build the ideas you tick
 lastcall issues <owner/name> --account <account>  # work now on the issues labelled `lastcall`
 lastcall tests <owner/name> --account <account>   # tests for the behavior that no test checks
+lastcall deps <owner/name> --account <account>    # dependency upgrades that need more than a version number
 lastcall sync                                   # what the owner did with lastcall's pull requests and issues
 lastcall status                                 # accounts, projects and what happened to their findings
 lastcall serve [--port 8080]                    # the service, which bursts on its own, and its web UI
@@ -31,7 +32,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -58,6 +59,7 @@ from lastcall.runs import (
     audit_models,
     audit_repo,
     deliver_report,
+    deps_repo,
     improve_repo,
     issues_repo,
     save,
@@ -168,6 +170,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     tests_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
     tests_cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
+    deps_cmd = commands.add_parser(
+        "deps", help="upgrades of dependencies that need more than a new version number, one pull request each"
+    )
+    deps_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
+    deps_cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
 
     commands.add_parser("sync", help="what the owner did with lastcall's pull requests and issues")
     commands.add_parser("status", help="accounts, projects and what happened to their findings")
@@ -242,7 +249,9 @@ def dispatch(args: argparse.Namespace) -> int:
         case "issues", _:
             return issues(args.repo, account(args.account))
         case "tests", _:
-            return tests(args.repo, account(args.account))
+            return shape(tests_repo, args.repo, account(args.account))
+        case "deps", _:
+            return shape(deps_repo, args.repo, account(args.account))
         case "sync", _:
             client = github_client()
             if client is None:
@@ -415,12 +424,13 @@ def issues(repo: str, acc: Account) -> int:
     return 1 if report.status == "failed" else 0
 
 
-def tests(repo: str, acc: Account) -> int:
+def shape(recipe: Callable[..., tuple[Path, AuditReport]], repo: str, acc: Account) -> int:
+    """A run of the audit's shape with another recipe, such as tests_repo or deps_repo."""
     client = github_client()
     if client is None:
         return 1
     try:
-        run_dir, report = tests_repo(instance(client), repo, acc, options(acc, repo), progress, log)
+        run_dir, report = recipe(instance(client), repo, acc, options(acc, repo), progress, log)
     except GitHubError as e:
         print(e, file=sys.stderr)
         return 1

@@ -259,7 +259,7 @@ def create_app(
         found = App.load(secrets)
         view = project_views.build(store, g.lang, clock(), found.install_url if found else "", reading.is_set())
         done = request.args.get("done", "")
-        known = ("added", "saved", "queued", "improve", "tests", "refreshing")
+        known = ("added", "saved", "queued", "improve", "tests", "deps", "refreshing")
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page("projects.html", status, v=view, done=message, error=error, install=install)
 
@@ -333,6 +333,7 @@ def create_app(
             watch=form.get("watch") == "1",
             health_url=health or None,
             tests=form.get("tests") == "1",
+            deps=form.get("deps") == "1",
         )
         return redirect(url_for("projects_page", done="saved"))
 
@@ -367,6 +368,15 @@ def create_app(
     @app.post("/projects/<owner>/<name>/tests")
     @signed_in
     def tests_now(owner: str, name: str) -> ResponseReturnValue:
+        return order(owner, name, "tests")
+
+    @app.post("/projects/<owner>/<name>/deps")
+    @signed_in
+    def deps_now(owner: str, name: str) -> ResponseReturnValue:
+        return order(owner, name, "deps")
+
+    def order(owner: str, name: str, kind: str) -> ResponseReturnValue:
+        """An order for one account of the project, or for any free one: it waits while another waits."""
         project = store.project(f"{owner}/{name}")
         if project is None:
             return problem(404, "web.error.not_found")
@@ -374,9 +384,9 @@ def create_app(
         if account and account != "*" and account not in {a.id for a in store.accounts(enabled_only=True)}:
             return problem(400, "web.error.form")
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
-            store.add_order("tests", project.repo, None if account in ("", "*") else account, clock())
-            log(f"Web UI: tests of {project.repo} ordered")
-        return redirect(url_for("projects_page", done="tests"))
+            store.add_order(kind, project.repo, None if account in ("", "*") else account, clock())
+            log(f"Web UI: {kind} of {project.repo} ordered")
+        return redirect(url_for("projects_page", done=kind))
 
     @app.get("/settings")
     @signed_in

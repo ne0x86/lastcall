@@ -31,6 +31,9 @@ also spend an API key with a monthly budget, or a local model at the hours you c
   issue with a checkbox per idea. lastcall builds the ones you tick, one pull request each.
 - 🧪 **Writes tests, if you want.** For the behavior that matters and that no test checks: pull requests that add
   tests and change nothing else. lastcall refuses any change outside the tests.
+- 📦 **Upgrades dependencies, if you want.** The upgrades that need more than a new version number: a known
+  vulnerability, a deprecated package, a major version behind. It changes the code that the new version breaks, and
+  your tests check it.
 - 🏷️ **Takes requests.** Label an issue `lastcall`, and a coming burst works on it: a pull request that closes the
   issue, or a comment on it that says what is missing. lastcall adds the label to your active repositories.
 - 👀 **Merges and watches, if you want.** It merges the pull requests you approve once their checks pass, and it
@@ -176,6 +179,7 @@ docker compose run --rm cli deliver <run> --account claude-max                  
 docker compose run --rm cli improve <owner/name> --account claude-max                # a plan; then the ideas you tick
 docker compose run --rm cli issues <owner/name> --account claude-max                 # labelled issues, now
 docker compose run --rm cli tests <owner/name> --account claude-max                  # tests for what none checks
+docker compose run --rm cli deps <owner/name> --account claude-max                   # upgrades with code changes
 docker compose run --rm cli status                                                   # accounts, bursts, findings
 docker compose run --rm cli pause                                                    # or resume
 ```
@@ -219,8 +223,10 @@ contrast set in code, keyboard traps, focus order. Cite file and lines.
 A repository can have up to 4 reviewers of its own, of 8 KB at most each. A wrong one stops the run before it
 spends anything, and the run says why.
 
-**Tests too.** On the Projects page, each project can also get tests: every other burst on it writes tests for
-the behavior that no test checks, instead of an audit. "Write tests now" starts one at once.
+**Tests and dependencies too.** On the Projects page, each project can also get tests, dependency upgrades, or
+both, in turn with its audits: an audit, then tests, then upgrades, then an audit again. "Write tests now" and
+"Upgrade dependencies now" start one at once. The upgrades read your dependencies with osv-scanner and ask
+[deps.dev](https://deps.dev) for their latest versions, so the names of your dependencies go to those services.
 
 **After the merge.** Two settings of each project, on the Projects page, are off until you turn them on. They live
 in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from a pull request:
@@ -269,7 +275,7 @@ advice.
     schedule.
   - ✅ The `issues` recipe: label an issue `lastcall`, and it becomes a pull request.
   - ✅ The `tests` recipe: tests for what no test checks, in pull requests that change only tests.
-  - The `deps` recipe: dependency upgrades that need more than a new version number.
+  - ✅ The `deps` recipe: dependency upgrades that need more than a new version number.
   - GitLab and Forgejo.
 
 ## 🧑‍💻 Development

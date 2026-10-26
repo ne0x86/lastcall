@@ -372,3 +372,23 @@ def test_a_project_that_wants_tests_gets_them_every_other_run(store: Store) -> N
     for work in started:
         work()
     assert tested == [("claude", "ne0x86/b", "manual")]
+
+
+def test_the_recipes_take_turns_on_a_project(store: Store) -> None:
+    readings: dict[str, Reading | Exception] = {"claude": reading("claude", 30, 150), "chatgpt": QuotaError("x")}
+    svc = service(store, readings, [], Clock(), [])
+
+    def turns(n: int) -> list[str]:
+        done = []
+        for _ in range(n):
+            recipe = svc.recipe("ne0x86/a")
+            done.append(recipe)
+            run = f"r{len(store.runs(100))}"
+            store.start_run(run, "ne0x86/a", "claude", "burst", recipe=recipe)
+            store.x("UPDATE runs SET started = ? WHERE id = ?", (float(len(store.runs(100))), run))
+        return done
+
+    store.update_project("ne0x86/a", active=True, weight=1, language=None, max_prs=3, tests=True, deps=True)
+    assert turns(4) == ["audit", "tests", "deps", "audit"]
+    store.update_project("ne0x86/a", active=True, weight=1, language=None, max_prs=3, deps=True)
+    assert turns(3) == ["deps", "audit", "deps"]  # after an audit; the tests are off now

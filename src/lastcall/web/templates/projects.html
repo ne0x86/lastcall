@@ -47,6 +47,7 @@
         <label class="check plain"><input type="checkbox" name="merge_on_approve" value="1"{% if p.merge_on_approve %} checked{% endif %}> {{ t("web.project.merge_on_approve") }}</label>
         <label class="check plain"><input type="checkbox" name="watch" value="1"{% if p.watch %} checked{% endif %}> {{ t("web.project.watch") }}</label>
         <label class="check plain"><input type="checkbox" name="tests" value="1"{% if p.tests %} checked{% endif %}> {{ t("web.project.tests") }}</label>
+        <label class="check plain"><input type="checkbox" name="deps" value="1"{% if p.deps %} checked{% endif %}> {{ t("web.project.deps") }}</label>
         <div>
           <label for="health-{{ n }}">{{ t("web.project.health_url") }}</label>
           <input id="health-{{ n }}" name="health_url" type="url" value="{{ p.health_url }}" placeholder="https://example.com/health" autocomplete="off" spellcheck="false" aria-describedby="health-hint-{{ n }}">
@@ -67,8 +68,9 @@
           <button>{{ t("web.project.audit") }}</button>
           <button class="secondary" formaction="{{ url_for('improve_now', owner=p.owner, name=p.name) }}">{{ t("web.project.improve") }}</button>
           <button class="secondary" formaction="{{ url_for('tests_now', owner=p.owner, name=p.name) }}">{{ t("web.project.tests_now") }}</button>
+          <button class="secondary" formaction="{{ url_for('deps_now', owner=p.owner, name=p.name) }}">{{ t("web.project.deps_now") }}</button>
         </div>
-        <p class="muted">{{ t("web.project.improve_hint") }} {{ t("web.project.tests_hint") }}</p>
+        <p class="muted">{{ t("web.project.improve_hint") }} {{ t("web.project.tests_hint") }} {{ t("web.project.deps_hint") }}</p>
       </form>
       {%- else %}
       <p class="muted">{{ t("web.project.no_accounts") }}</p>
