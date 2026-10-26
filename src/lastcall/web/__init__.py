@@ -35,7 +35,7 @@ from lastcall import __version__, cron, destinations, engines, i18n, logs, loki,
 from lastcall.accounts import ACCOUNT_ID, MODEL, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
-from lastcall.github_setup import LOGIN, Exchange, exchange_code, form_action, manifest
+from lastcall.github_setup import LOGIN, Exchange, clean_owner, exchange_code, form_action, manifest, owner_kind
 from lastcall.notify import EVENTS, Notifier, describe
 from lastcall.quota import QuotaError, Reading
 from lastcall.sandbox import SandboxError
@@ -98,7 +98,8 @@ def create_app(
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
     reads an account's quota in the sandbox; without it, the web UI cannot check a new account's login.
-    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats."""
+    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats, and
+    GitHub whether an owner is a person or an organization."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -705,9 +706,19 @@ def create_app(
     @app.get("/github/new")
     @signed_in
     def github_new() -> ResponseReturnValue:
-        owner, org = request.args.get("owner", "").strip(), request.args.get("org") == "1"
+        owner = clean_owner(request.args.get("owner", ""))
         if not LOGIN.fullmatch(owner):
             return page("github.html", 400, app=None, error=t("web.github.bad_owner"), owner=owner)
+        chosen = request.args.get("org")
+        if chosen in ("0", "1"):  # the owner's own answer, when GitHub could not say
+            org = chosen == "1"
+        else:
+            found = owner_kind(owner, fetch)
+            if found == "missing":
+                return page("github.html", 400, app=None, error=t("web.github.missing", owner=owner), owner=owner)
+            if found is None:
+                return page("github.html", app=None, owner=owner, unknown=True)
+            org = found == "org"
         now = clock()
         for state, shown in list(app_states.items()):
             if now - shown > STATE_SECONDS:
@@ -722,6 +733,9 @@ def create_app(
             app=None,
             owner=owner,
             org=org,
+            kind=t(
+                f"web.github.{'chosen' if chosen in ('0', '1') else 'found'}.{'org' if org else 'user'}", owner=owner
+            ),
             confirm=t("web.github.confirm", name=values["name"], owner=owner, permissions=permissions),
             action=form_action(owner, org, state),
             manifest=json.dumps(values),
@@ -1066,11 +1080,14 @@ def local(target: str) -> str:
     return target
 
 
-def serve(app: Flask, host: str, port: int, log: Log = print, trust_proxy: bool = False) -> None:
+def serve(
+    app: Flask, host: str, port: int, log: Log = print, trust_proxy: bool = False, shown: str | None = None
+) -> None:
     """Waitress drops the X-Forwarded-* headers that a client sends, unless lastcall trusts the proxy in front of it:
-    then they reach ProxyFix (create_app), which reads the client's address, scheme and host from them."""
-    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    log(f"Web UI on http://{shown}:{port}/ (in English and Spanish)")
+    then they reach ProxyFix (create_app), which reads the client's address, scheme and host from them. `shown` is
+    where the log says the web UI answers, when that is not the address that it listens on (Docker publishes it)."""
+    shown = shown or f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/"
+    log(f"Web UI on {shown} (in English and Spanish)")
     waitress.serve(
         app, host=host, port=port, threads=8, ident="lastcall", clear_untrusted_proxy_headers=not trust_proxy
     )

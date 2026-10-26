@@ -3,17 +3,18 @@ import http.client
 import json
 import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.request import Request
 
 import pytest
 import waitress.server
 from flask.testing import FlaskClient
 
 from lastcall.accounts import Account
-from lastcall.github import App, GitHub
+from lastcall.github import App, GitHub, Response
 from lastcall.notify import Notifier
 from lastcall.quota import HOUR, QuotaError, Reading, Window
 from lastcall.recipes.audit import AuditReport
@@ -179,7 +180,7 @@ def test_only_a_trusted_proxy_says_the_scheme_and_the_host(tmp_path: Path, monke
     monkeypatch.setattr(waitress, "serve", start)
     proxy = {"Host": "lastcall.example.com", "X-Forwarded-Proto": "https", "X-Forwarded-For": "203.0.113.9"}
     for trusted in (False, True):
-        web = Web(tmp_path / f"trusted-{trusted}", trust_proxy=trusted)
+        web = Web(tmp_path / f"trusted-{trusted}", trust_proxy=trusted, fetch=github_users({"acme": "User"}))
         serve(web.app, "127.0.0.1", 8080, log=web.logs.append, trust_proxy=trusted)
         server, thread = servers[-1]
         connection = http.client.HTTPConnection("127.0.0.1", server.effective_port, timeout=10)
@@ -1419,6 +1420,134 @@ def test_a_connected_integration_drops_its_intro(tmp_path: Path) -> None:
     assert "lastcall can read the errors your apps send" not in page
 
 
+def github_users(kinds: Mapping[str, str]) -> Callable[[Request], Response]:
+    """GitHub's public API for /users/<name>: the type of each name in `kinds`, 404 for any other, and no network
+    at all for the name `offline`."""
+
+    def fetch(req: Request) -> Response:
+        prefix = "https://api.github.com/users/"
+        assert req.full_url.startswith(prefix) and not req.has_header("Authorization")
+        name = req.full_url.removeprefix(prefix)
+        if name == "offline":
+            raise OSError("no route to host")
+        if name == "limited":
+            return 403, {}, b'{"message": "API rate limit exceeded"}'
+        if name not in kinds:
+            return 404, {}, b'{"message": "Not Found"}'
+        return 200, {}, json.dumps({"login": name, "type": kinds[name]}).encode()
+
+    return fetch
+
+
+ACME = {"acme": "Organization", "octocat": "User"}
+CREATE_FORM = r'<form method="post" action="(https://github\.com[^"]+)"'
+
+
+def test_the_github_page_asks_one_question_and_has_no_checkbox(web: Web) -> None:
+    web.set_up()
+    page = web.client.get("/github").get_data(as_text=True)
+    assert 'for="owner">Who owns the repositories that lastcall will work on?</label>' in page
+    assert 'id="owner-hint"' in page and 'aria-describedby="owner-hint"' in page
+    assert "Your GitHub username, or the name of the organization they belong to." in page
+    assert 'placeholder="octocat"' in page and 'autocomplete="off"' in page
+    assert 'autocapitalize="none"' in page and 'spellcheck="false"' in page
+    assert 'type="checkbox"' not in page and "It is an organization" not in page and "help-github-org" not in page
+    spanish = web.client.get("/github", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "¿De quién son los repositorios con los que trabajará lastcall?" in spanish
+    assert "lastcall pregunta a GitHub cuál de las dos es." in spanish
+
+
+def test_an_organization_found_by_github_leads_to_the_organizations_settings(tmp_path: Path) -> None:
+    web = Web(tmp_path, fetch=github_users(ACME))
+    web.set_up()
+    response = web.client.get("/github/new?owner=acme")
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200 and "acme is an organization." in page
+    action = re.search(CREATE_FORM, page)
+    assert action and action.group(1).startswith("https://github.com/organizations/acme/settings/apps/new?state=")
+    assert "You chose it" not in page
+    spanish = web.client.get("/github/new?owner=acme", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "acme es una organización." in spanish
+
+
+def test_a_user_found_by_github_leads_to_the_personal_settings(tmp_path: Path) -> None:
+    web = Web(tmp_path, fetch=github_users(ACME))
+    web.set_up()
+    page = web.client.get("/github/new?owner=octocat").get_data(as_text=True)
+    assert "octocat is a personal account." in page
+    action = re.search(CREATE_FORM, page)
+    assert action and action.group(1).startswith("https://github.com/settings/apps/new?state=")
+    assert "GitHub will create a private App named lastcall-octocat for octocat" in page
+
+
+def test_a_name_that_github_does_not_know_is_an_error_that_keeps_the_text(tmp_path: Path) -> None:
+    web = Web(tmp_path, fetch=github_users(ACME))
+    web.set_up()
+    response = web.client.get("/github/new?owner=acmee")
+    page = response.get_data(as_text=True)
+    assert response.status_code == 400
+    assert re.search(r'role="alert">GitHub has no account or organization called acmee\. Check the spelling', page)
+    assert 'name="owner"' in page and 'value="acmee"' in page and 'name="manifest"' not in page
+    spanish = web.client.get("/github/new?owner=acmee", headers={"Accept-Language": "es"})
+    assert spanish.status_code == 400
+    assert "GitHub no tiene ninguna cuenta ni organización llamada acmee" in spanish.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("name", ["offline", "limited"])
+def test_when_github_cannot_say_the_owner_chooses_with_no_create_button(tmp_path: Path, name: str) -> None:
+    web = Web(tmp_path, fetch=github_users(ACME))
+    web.set_up()
+    response = web.client.get(f"/github/new?owner={name}")
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert f"GitHub did not say whether {name} is a person or an organization." in page
+    assert f'<a class="button" href="/github/new?owner={name}&amp;org=0">It is a personal account</a>' in page
+    assert f'<a class="button" href="/github/new?owner={name}&amp;org=1">It is an organization</a>' in page
+    assert "Pick this if" in page and "Create the App on GitHub" not in page and 'name="manifest"' not in page
+    assert 'role="alert"' not in page and "lastcall works through your own GitHub App" not in page
+    chosen = web.client.get(f"/github/new?owner={name}&org=1").get_data(as_text=True)
+    assert f"You chose it: {name} is an organization." in chosen
+    assert f"https://github.com/organizations/{name}/settings/apps/new?state=" in chosen
+    personal = web.client.get(f"/github/new?owner={name}&org=0").get_data(as_text=True)
+    assert "https://github.com/settings/apps/new?state=" in personal
+    spanish = web.client.get(f"/github/new?owner={name}", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Es una cuenta personal</a>" in spanish and "Es una organización</a>" in spanish
+
+
+def test_an_explicit_org_never_asks_github(tmp_path: Path) -> None:
+    def never(req: Request) -> Response:
+        raise AssertionError("GitHub was asked")
+
+    web = Web(tmp_path, fetch=never)
+    web.set_up()
+    for org in ("0", "1"):
+        assert web.client.get(f"/github/new?owner=acme&org={org}").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "typed", ["acme", " acme ", "@acme", "https://github.com/acme/", "github.com/acme", "https://github.com/@acme/"]
+)
+def test_the_owner_is_cleaned_before_it_is_checked(tmp_path: Path, typed: str) -> None:
+    web = Web(tmp_path, fetch=github_users(ACME))
+    web.set_up()
+    page = web.client.get("/github/new", query_string={"owner": typed}).get_data(as_text=True)
+    assert "acme is an organization." in page and "lastcall-acme" in page
+
+
+def test_the_log_says_where_the_web_ui_answers(monkeypatch: pytest.MonkeyPatch, web: Web) -> None:
+    monkeypatch.setattr(waitress, "serve", lambda *args, **options: None)
+    for shown, expected in (
+        (None, "Web UI on http://127.0.0.1:8080/ (in English and Spanish)"),
+        ("http://192.168.1.20:9000/", "Web UI on http://192.168.1.20:9000/ (in English and Spanish)"),
+    ):
+        web.logs.clear()
+        serve(web.app, "0.0.0.0", 8080, log=web.logs.append, shown=shown)
+        assert web.logs == [expected]
+    web.logs.clear()
+    serve(web.app, "10.0.0.5", 8081, log=web.logs.append)
+    assert web.logs == ["Web UI on http://10.0.0.5:8081/ (in English and Spanish)"]
+
+
 def test_the_github_page_has_steps_a_way_back_and_its_help(tmp_path: Path) -> None:
     web = Web(tmp_path)
     web.set_up()
@@ -1430,7 +1559,7 @@ def test_the_github_page_has_steps_a_way_back_and_its_help(tmp_path: Path) -> No
     )
     assert page.count('<li aria-current="step">Create</li>') == 1
     assert "lastcall works through your own GitHub App" in page  # the intro, in the default branch
-    for topic in ("app", "owner", "org"):
+    for topic in ("app", "owner"):
         assert (
             f'class="help" popovertarget="help-github-{topic}"' in page
             and f'id="help-github-{topic}" popover' in page

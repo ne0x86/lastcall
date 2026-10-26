@@ -130,8 +130,9 @@ git clone --branch stable https://github.com/ne0x86/lastcall && cd lastcall   # 
 docker compose up -d
 ```
 
-**2. Open http://127.0.0.1:8080** 🖥️ and choose your password. To show that the instance is yours, copy the setup
-code from the log:
+**2. Open the web UI** 🖥️ at http://127.0.0.1:8080, or at your server's address if you set `LASTCALL_BIND`
+([On a server](#-on-a-server)), and choose your password. To show that the instance is yours, copy the setup code
+from the log:
 
 ```sh
 docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
@@ -139,7 +140,8 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 
 **3. Follow the dashboard.** It walks you through the rest:
 
-- 🐙 **GitHub App.** One click creates it, private to you. Then install it on the repositories lastcall may work on.
+- 🐙 **GitHub App.** Say whose repositories they are (your username or an organization: lastcall asks GitHub
+  which), and one click creates the App, private to you. Then install it on the repositories lastcall may work on.
 - 🤖 **Accounts.** Add each AI subscription that lastcall may use, and sign it in with its tool's own official
   login. lastcall never sees it:
 

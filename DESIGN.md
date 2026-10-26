@@ -367,7 +367,9 @@ Rules for engines:
    pull requests and issues read and write, metadata read; no workflows, no administration and no webhooks (lastcall
    asks GitHub when it needs to). The owner installs the App on all repositories or on selected ones. The
    installation is the security boundary: lastcall cannot touch anything else. The web UI does it from its GitHub
-   App page; `lastcall github setup` serves the same one-button page from the command line.
+   App page, which asks whose the repositories are and finds out from GitHub's public API whether that is a person or
+   an organization (`lastcall.github_setup.owner_kind`); `lastcall github setup` serves the same one-button page from
+   the command line, with `--org` to say it when GitHub does not answer.
 2. **Suggestions.** For each installed repository, lastcall works out whether it is worth activating and says why,
    without any model call: recent activity, tests or CI, supported language, size, open issues, not a fork and not
    archived. The points are in `lastcall.suggest`. Each suggestion shows the size of the code an audit reads. Once

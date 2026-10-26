@@ -6,7 +6,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +14,9 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+from lastcall import cli
 from lastcall.github import App, GitHub, GitHubError, Response, app_jwt
-from lastcall.github_setup import SetupServer, form_action, manifest, run_setup
+from lastcall.github_setup import SetupServer, clean_owner, form_action, manifest, owner_kind, run_setup
 from lastcall.secretstore import SecretStore
 
 NOW = 1_800_000_000.0
@@ -192,3 +193,128 @@ def test_run_setup_ends_when_the_app_arrives(setup_server: SetupServer, app: App
         pass
     worker.join(timeout=10)
     assert result == [app]
+
+
+# who owns the repositories: a person, an organization, or nobody
+
+
+def users_api(
+    status: int, body: object
+) -> tuple[Callable[[urllib.request.Request], Response], list[urllib.request.Request]]:
+    asked: list[urllib.request.Request] = []
+
+    def fetch(req: urllib.request.Request) -> Response:
+        asked.append(req)
+        return status, {}, body if isinstance(body, bytes) else json.dumps(body).encode()
+
+    return fetch, asked
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (200, {"type": "User"}, "user"),
+        (200, {"type": "Organization"}, "org"),
+        (404, {"message": "Not Found"}, "missing"),
+        (403, {"message": "API rate limit exceeded"}, None),
+        (500, {}, None),
+        (200, {"type": "Bot"}, None),
+        (200, {"login": "acme"}, None),
+        (200, [1, 2], None),
+        (200, b"<html>not json</html>", None),
+        (200, b"", None),
+    ],
+)
+def test_owner_kind_reads_what_github_says(status: int, body: object, expected: str | None) -> None:
+    fetch, asked = users_api(status, body)
+    assert owner_kind("acme", fetch) == expected
+    request = asked[0]
+    assert request.full_url == "https://api.github.com/users/acme" and request.get_method() == "GET"
+    assert request.get_header("Accept") == "application/vnd.github+json"
+    assert request.get_header("X-github-api-version") == "2022-11-28"
+    assert not request.has_header("Authorization")  # the public API, with no token
+
+
+def test_owner_kind_is_none_when_github_cannot_be_reached() -> None:
+    def down(req: urllib.request.Request) -> Response:
+        raise OSError("no route to host")
+
+    assert owner_kind("acme", down) is None
+
+
+def test_clean_owner_strips_what_people_paste_with_a_name() -> None:
+    for typed in (
+        "acme",
+        " acme ",
+        "@acme",
+        "https://github.com/acme",
+        "https://github.com/acme/",
+        "github.com/acme/",
+    ):
+        assert clean_owner(typed) == "acme"
+    assert clean_owner("http://www.github.com/@acme") == "acme"
+    assert clean_owner("acme/api") == "acme/api"  # not a name: the pattern refuses it afterwards
+
+
+def run_github_setup(monkeypatch: pytest.MonkeyPatch, kind: str | None, *argv: str) -> tuple[int, list[bool]]:
+    """`lastcall github setup` with GitHub answering `kind`, up to the moment that it would open the setup page."""
+    monkeypatch.setattr(cli, "owner_kind", lambda owner: kind)
+    orgs: list[bool] = []
+
+    def refuse(address: tuple[str, int], store: SecretStore, owner: str, org: bool) -> None:
+        orgs.append(org)
+        raise ValueError("stop here")
+
+    monkeypatch.setattr(cli, "SetupServer", refuse)
+    code = cli.main(["github", "setup", "--owner", "acme", *argv])
+    return code, orgs
+
+
+@pytest.mark.parametrize(
+    ("kind", "argv", "org", "said"),
+    [
+        ("org", (), True, ""),
+        ("user", (), False, ""),
+        (None, (), False, "Pass --org"),
+        (None, ("--org",), True, ""),
+        ("user", ("--org",), True, ""),  # --org overrides what GitHub says
+    ],
+)
+def test_github_setup_asks_github_whether_the_owner_is_an_organization(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str | None,
+    argv: tuple[str, ...],
+    org: bool,
+    said: str,
+) -> None:
+    code, orgs = run_github_setup(monkeypatch, kind, *argv)
+    assert code == 2 and orgs == [org]  # the stub refuses to open the page, after the choice is made
+    out = capsys.readouterr()
+    assert (said in out.out) and ("GitHub did not say" in out.out) == bool(said)
+
+
+def test_github_setup_stops_on_a_name_that_does_not_exist(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, orgs = run_github_setup(monkeypatch, "missing")
+    assert code == 2 and orgs == []
+    assert "no account or organization called acme" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("published", "shown"),
+    [
+        ("127.0.0.1:8080", "http://127.0.0.1:8080/"),
+        ("192.168.1.20:9000", "http://192.168.1.20:9000/"),
+        ("lastcall.lan:8080", "http://lastcall.lan:8080/"),
+        ("0.0.0.0:8080", "port 8080 of this server's addresses, such as http://<this server's address>:8080/"),
+        (":::8081", "port 8081 of this server's addresses, such as http://<this server's address>:8081/"),
+        ("[::1]:8080", "http://[::1]:8080/"),
+        ("", None),
+        ("8080", None),
+        ("host:", None),
+    ],
+)
+def test_the_log_says_where_docker_publishes_the_web_ui(published: str, shown: str | None) -> None:
+    assert cli.published_address(published) == shown

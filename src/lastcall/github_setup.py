@@ -17,7 +17,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from lastcall.github import PERMISSIONS, App, GitHubError, urlopen
+from lastcall.github import API, PERMISSIONS, App, Fetch, GitHubError, urlopen
 from lastcall.secretstore import SecretStore
 
 HOMEPAGE = "https://github.com/ne0x86/lastcall"
@@ -46,6 +46,34 @@ def form_action(owner: str, org: bool, state: str) -> str:
         else "https://github.com/settings/apps/new"
     )
     return f"{base}?state={urllib.parse.quote(state)}"
+
+
+def clean_owner(typed: str) -> str:
+    """What someone typed for the owner, without the decoration that people paste along with the name: spaces, a
+    leading @, and the address of the profile (https://github.com/name/ or github.com/name)."""
+    owner = typed.strip()
+    for prefix in ("https://", "http://"):
+        owner = owner.removeprefix(prefix)
+    owner = owner.removeprefix("www.").removeprefix("github.com/").strip().removeprefix("@")
+    return owner.rstrip("/").strip()
+
+
+def owner_kind(owner: str, fetch: Fetch = urlopen) -> str | None:
+    """Ask GitHub's public API, with no token, what `owner` is: "user", "org" or "missing" (no such account). None
+    when GitHub cannot say: the hourly limit of anonymous requests, no network or an answer that is not JSON."""
+    req = urllib.request.Request(f"{API}/users/{urllib.parse.quote(owner, safe='')}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    try:
+        status, _, raw = fetch(req)
+        if status == 404:
+            return "missing"
+        if status != 200:
+            return None
+        kind = json.loads(raw).get("type")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return {"User": "user", "Organization": "org"}.get(kind) if isinstance(kind, str) else None
 
 
 def exchange_code(code: str) -> dict[str, Any]:

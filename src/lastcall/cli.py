@@ -61,7 +61,7 @@ from lastcall.accounts import (
 )
 from lastcall.engines.base import Keyed
 from lastcall.github import App, GitHub, GitHubError
-from lastcall.github_setup import SetupServer, run_setup
+from lastcall.github_setup import SetupServer, owner_kind, run_setup
 from lastcall.notify import Notifier
 from lastcall.quota import KINDS, QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.recipes.audit import AuditReport
@@ -193,7 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     gh = commands.add_parser("github", help="the instance's GitHub App").add_subparsers(dest="action", required=True)
     setup = gh.add_parser("setup", help="create the GitHub App with GitHub's manifest flow")
     setup.add_argument("--owner", required=True, help="GitHub account or organization that will own the App")
-    setup.add_argument("--org", action="store_true", help="the owner is an organization")
+    setup.add_argument(
+        "--org",
+        action="store_true",
+        help="the owner is an organization (by default lastcall asks GitHub; pass it when GitHub does not answer)",
+    )
     setup.add_argument("--port", type=int, default=8765, help="port of the setup page (default 8765)")
     gh.add_parser("repos", help="installed repositories, with lastcall's suggestions")
 
@@ -741,8 +745,23 @@ def serve(host: str, port: int, scheduler: bool) -> int:
     )
     if scheduler:
         threading.Thread(target=schedule, args=(st, secrets), name="service", daemon=True).start()
-    web.serve(app, host, port, log, trust_proxy=trust)
+    web.serve(
+        app, host, port, log, trust_proxy=trust, shown=published_address(os.environ.get("LASTCALL_PUBLISHED", ""))
+    )
     return 0
+
+
+def published_address(published: str) -> str | None:
+    """Where the web UI answers for people, from LASTCALL_PUBLISHED (`host:port`, how Docker publishes it): its
+    address, or a sentence for a host that listens on every address of the server. None when it says nothing usable,
+    so that the log keeps the address that the web UI listens on."""
+    host, _, port = published.strip().rpartition(":")
+    host = host.strip("[]")
+    if not host or not port.isdigit():
+        return None
+    if host in ("0.0.0.0", "::"):
+        return f"port {port} of this server's addresses, such as http://<this server's address>:{port}/"
+    return f"http://[{host}]:{port}/" if ":" in host else f"http://{host}:{port}/"
 
 
 def schedule(st: Store, secrets: SecretStore) -> None:
@@ -801,6 +820,19 @@ def status(st: Store) -> str:
 
 
 def github_setup(owner: str, org: bool, port: int) -> int:
+    if not org:
+        match owner_kind(owner):
+            case "missing":
+                print(f"GitHub has no account or organization called {owner}: check the spelling.", file=sys.stderr)
+                return 2
+            case "org":
+                org = True
+            case None:
+                print(
+                    f"GitHub did not say whether {owner} is a person or an organization: using a personal account. "
+                    "Pass --org if it is an organization.",
+                    flush=True,
+                )
     try:
         server = SetupServer(("0.0.0.0", port), secret_store(), owner, org)
     except ValueError as e:

@@ -3,7 +3,7 @@
 {% block main %}
 {%- from "_help.html" import help, bubbles with context %}
 {%- set hb = namespace(items=[], seen=[]) %}
-{%- set fresh = not app %}
+{%- set fresh = not app and not unknown %}
 <nav class="crumbs" aria-label="{{ t('web.nav.breadcrumb') }}"><a href="{{ url_for('settings_page') }}#github">{{ t("web.nav.settings") }}</a></nav>
 
 <header class="page-head">
@@ -27,7 +27,16 @@
   <p class="status-line">{{ t("web.github.ready", name=app.name, owner=app.owner) }}</p>
   <div class="form-actions"><a class="button" href="{{ app.install_url }}">{{ t("web.github.install") }}</a>{{ help(hb, "github-install", t("web.github.install"), ["github.install"]) }}</div>
   <p class="hint">{{ t("web.github.install_hint") }}</p>
+  {%- elif unknown %}
+  <p class="found">{{ t("web.github.unknown", owner=owner) }}</p>
+  <p>{{ t("web.github.unknown_hint") }}</p>
+  <ul class="choices">
+    <li><a class="button" href="{{ url_for('github_new', owner=owner, org=0) }}">{{ t("web.github.choose.user") }}</a><p class="hint">{{ t("web.github.choose.user_hint", owner=owner) }}</p></li>
+    <li><a class="button" href="{{ url_for('github_new', owner=owner, org=1) }}">{{ t("web.github.choose.org") }}</a><p class="hint">{{ t("web.github.choose.org_hint", owner=owner) }}</p></li>
+  </ul>
+  <p class="change"><a href="{{ url_for('github_page') }}">{{ t("web.github.change") }}</a></p>
   {%- elif action %}
+  <p class="found">{{ kind }}</p>
   <div class="line"><p>{{ confirm }}</p>{{ help(hb, "github-permissions", t("web.help.github.permissions.title"), ["github.permissions"]) }}</div>
   <div class="form-actions">
     <form method="post" action="{{ action }}">
@@ -36,13 +45,14 @@
     </form>
     {{ help(hb, "github-create", t("web.github.create"), ["github.create"]) }}
   </div>
+  <p class="change"><a href="{{ url_for('github_page') }}">{{ t("web.github.change") }}</a></p>
   {%- else %}
   <form method="get" action="{{ url_for('github_new') }}" class="stack">
     <div class="field">
       <div class="label-row"><label for="owner">{{ t("web.github.owner") }}</label>{{ help(hb, "github-owner", t("web.github.owner"), ["github.owner"]) }}</div>
-      <input id="owner" name="owner" type="text" value="{{ owner or '' }}" autocomplete="username" spellcheck="false" required>
+      <input id="owner" name="owner" type="text" value="{{ owner or '' }}" placeholder="octocat" autocomplete="off" autocapitalize="none" spellcheck="false" required aria-describedby="owner-hint">
+      <p id="owner-hint" class="hint">{{ t("web.github.owner_hint") }}</p>
     </div>
-    <div class="check-row"><label class="check plain"><input type="checkbox" name="org" value="1"> {{ t("web.github.org") }}</label>{{ help(hb, "github-org", t("web.github.org"), ["github.org"]) }}</div>
     <button>{{ t("web.github.next") }}</button>
   </form>
   {%- endif %}

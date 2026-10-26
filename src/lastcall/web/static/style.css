@@ -1146,6 +1146,12 @@ fieldset.has-help > legend { float: left; margin: 0; }
 .github-card .form-actions { margin: var(--s3) 0; }
 .github-card .hint { margin-top: 0; }
 .github-card .status-line { margin-bottom: var(--s3); }
+.github-card .found { margin: 0 0 var(--s3); font-family: var(--font-round); font-size: 1.1rem; font-weight: 700; overflow-wrap: anywhere; }
+.github-card .change { margin: var(--s3) 0 0; }
+.github-card .change a { display: inline-flex; align-items: center; min-height: 44px; }
+.choices { display: grid; gap: var(--s4); margin: var(--s3) 0 0; padding: 0; list-style: none; }
+.choices li { display: grid; justify-items: start; gap: var(--s2); }
+.choices .hint { margin: 0; }
 
 /* ================================================================================================================
    Settings polish: a sticky index that stays clear of the notice, and the hint under the events.
@@ -1272,6 +1278,7 @@ fieldset > .hint { margin: 0; }
   .toc-group > a { display: flex; color: var(--muted); }
   .toc-group ul { display: grid; padding-left: var(--s3); border-left: 2px solid var(--border); margin-left: var(--s3); }
   .bubble { width: 24rem; }
+  .choices { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); }
 }
 
 /* ---------- Print ---------- */
