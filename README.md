@@ -48,7 +48,7 @@ also spend an API key with a monthly budget, or a local model at the hours you c
   before any paid usage. An API key spends its monthly budget at the pace of the month, and a local model works at
   the hours of its schedule.
 - 🖥️ **Shows you everything.** A dashboard in English and Spanish: what is left of every quota, the next burst, the
-  pull requests to review and the decisions waiting for you.
+  pull requests to review and the decisions waiting for you. A "?" next to anything unclear explains it.
 - 🔔 **Tells you.** A notification when a pull request opens, a decision waits, an audit fails or an account needs
   you: Telegram, ntfy, Discord, Slack, email and many more, through Apprise.
 
@@ -163,8 +163,8 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
   want: from Sentry or GlitchTip, your containers' logs or Loki (see *Your project's settings* below).
 
 That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
-does. Pause it from the dashboard at any time, or start an audit or an improvement plan yourself from the Projects
-page.
+does. Pause it from the dashboard at any time: Pause holds the bursts only, so an audit or an improvement plan that you
+start yourself from the Projects page still runs. Choose the language of the pages in Settings.
 
 The web UI listens only on this machine. To open it from elsewhere, put a reverse proxy with HTTPS in front of it.
 Then add `LASTCALL_TRUST_PROXY=1` to a `.env` file next to `compose.yaml`, so that lastcall reads the client's

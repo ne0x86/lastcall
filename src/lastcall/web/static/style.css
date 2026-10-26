@@ -307,6 +307,7 @@ footer.bottom {
 .grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--s4); margin: 0 0 var(--s5); }
 
 :target { scroll-margin-top: var(--s5); }
+main:has(> .notice.done) :target { scroll-margin-top: 6.5rem; }
 .card:target, section:target { outline: 3px solid color-mix(in srgb, var(--ember) 55%, transparent); outline-offset: 3px; }
 
 /* ---------- Status hero (dashboard) ---------- */
@@ -717,8 +718,9 @@ tbody th { font-weight: 650; }
 
 /* ---------- Forms ---------- */
 label { display: block; margin-bottom: var(--s1); font-weight: 600; }
-.label-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s1); margin-bottom: var(--s1); }
-.label-row label, .label-row legend { margin: 0; }
+.label-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 0 var(--s1); margin-bottom: var(--s1); }
+.label-row label, .label-row legend { min-width: 0; margin: 0; }
+.label-row .help { flex: none; margin-top: .1rem; }
 .field { min-width: 0; }
 
 input, select, textarea {
@@ -1148,9 +1150,6 @@ fieldset.has-help > legend { margin: 0; }
    ================================================================================================================ */
 .toc li { margin: 0; }
 fieldset > .hint { margin: 0; }
-@media (min-width: 48rem) {
-  .toc { top: 5rem; }
-}
 
 /* ---------- Help: the "?" and its bubble ---------- */
 .help {
@@ -1263,6 +1262,7 @@ fieldset > .hint { margin: 0; }
   .destinations > li { grid-template-columns: minmax(0, 1fr) auto; }
   .settings-layout { grid-template-columns: 13.5rem minmax(0, 1fr); align-items: start; gap: var(--s5); }
   .toc { position: sticky; top: var(--s4); padding: var(--s4); }
+  main:has(> .notice.done) .toc { top: 5rem; }
   .toc ul { display: grid; gap: 2px; }
   .toc a { display: flex; min-height: 44px; background: none; border: 0; border-radius: var(--r-sm); }
   .toc a:hover { background: var(--surface); }

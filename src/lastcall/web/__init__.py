@@ -214,10 +214,10 @@ def create_app(
         if request.method == "GET":
             return page("setup.html", minimum=auth.MIN_LENGTH)
         if message := locked():
-            return page("setup.html", 429, minimum=auth.MIN_LENGTH, error=message)
+            return page("setup.html", 429, minimum=auth.MIN_LENGTH, error=message, counted=True)
         if not setup_code.check(request.form.get("code", "")):
             throttle.fail(address())
-            return page("setup.html", 400, minimum=auth.MIN_LENGTH, error=t("web.setup.bad_code"))
+            return page("setup.html", 400, minimum=auth.MIN_LENGTH, error=t("web.setup.bad_code"), counted=True)
         password = request.form.get("password", "")
         wrong = auth.password_problem(password, request.form.get("repeat", ""))
         if wrong:
@@ -946,7 +946,7 @@ def create_app(
                 schedule=schedule,
                 models=account.models,
             )
-            return redirect(url_for("accounts_page", done="saved"))
+            return redirect(url_for("accounts_page", done="saved") + f"#account-{row.id}")
         try:
             reserve = float(form.get("reserve", ""))
         except ValueError:
@@ -955,7 +955,7 @@ def create_app(
         if not 0 <= reserve <= 90 or policy not in ("before-reset", "manual"):
             return problem(400, "web.error.form")
         store.update_account(row.id, enabled=enabled, language=language, reserve_pct=reserve, policy=policy)
-        return redirect(url_for("accounts_page", done="saved"))
+        return redirect(url_for("accounts_page", done="saved") + f"#account-{row.id}")
 
     @app.post("/accounts/<account_id>/tiers")
     @signed_in
@@ -1008,7 +1008,7 @@ def create_app(
                 log(f"{account.id}: no quota reading: {e}")
 
         later(work)
-        return redirect(url_for("accounts_page", done="reading"))
+        return redirect(url_for("accounts_page", done="reading") + f"#account-{row.id}")
 
     @app.get("/language/<code>")
     def set_language(code: str) -> ResponseReturnValue:

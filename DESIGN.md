@@ -725,18 +725,32 @@ The web UI is server-rendered HTML that works without JavaScript. It is accessib
 installable as a PWA, in English and Spanish from the start. Pages: dashboard (quota per account, next burst, what
 is running, pull requests to review), projects, runs, decisions, statistics, accounts and settings.
 
+The look is one warm design in a light and a dark scheme: ivory paper or warm charcoal, an ember accent for time and
+bursts, dusk blue for actions. Each card has a 3 px edge along its top, following its rounded corners, whose colour
+says something: the engine of an account, the kind of a notice, whether a project is on and
+whether the service is running, paused or down. Nothing loads from outside (no web fonts, no images as data), so the
+content security policy stays strict.
+
+The language is chosen in Settings, under Language, and in the header while signed out; until then it is the
+browser's. A "?" next to a label, a heading or a button opens a short bubble that explains what is confusing on that
+spot: it is the HTML `popover` attribute, so it needs no script. The bubbles of a page are also listed at its end
+under "Help on this page", for browsers without `popover`. A "?" shows only when its spot does (no tracker, no "?" for
+it), once per page for what repeats, and its text says only what the code does.
+
 It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
 (`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`); the language
 is the browser's, until the owner picks one. So far it has the sign-in, the GitHub App page (the manifest flow, whose
 page alone may post a form to github.com), the accounts page (add a subscription, with the exact login command for
 it and a quota reading on demand to check the login; an API key, with its provider, model, monthly budget and
 policy; or a local model with its schedule; each form shows its steps, with links to where keys and model names
-come from), the dashboard (with pause and resume, and a notice when the service stops
-writing its heartbeat) and the projects page: each project's settings (merge on approve, the watch after the merge
+come from), the dashboard (with pause and resume, and a notice with the command to restart it
+when the service stops writing its heartbeat) and the projects page: each project's settings (merge on approve, the watch after the merge
 and tests and dependencies too among them), an audit, tests, upgrades or an improvement on demand, adding a repository by its address, and the suggestions, which the
 service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
 audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
-reset. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
+reset, and the dashboard says so. While paused, or while the service is not running, no account card says it is
+bursting. A form that saves returns to its own card or section (`#project-owner--name`, `#account-id`, `#runs`,
+`#notify`), under the notice. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
 organization and a read-only token, saved only when one request with them gets through), the container logs (the
 host's containers, each with its project or the one lastcall suggests, and the label that works as well), the logs
 in Loki (the connection, the label that names the sources, and the project of each, with suggestions), and the

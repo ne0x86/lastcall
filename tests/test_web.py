@@ -252,14 +252,28 @@ def test_dashboard_in_spanish_and_english(web: Web) -> None:
     assert "Getting started" in page  # no GitHub App yet
 
 
+def test_a_reverted_finding_shows_in_the_findings_summary(web: Web) -> None:
+    seed(web.store)
+    web.store.x("UPDATE findings SET status = 'reverted' WHERE fid = 'B1'")
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    page = web.client.get("/", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "1 por decidir · 1 revertido · 1 descartado" in page
+    page = web.client.get("/").get_data(as_text=True)
+    assert "1 to decide · 1 reverted · 1 discarded" in page
+
+
 def test_dashboard_says_when_the_service_is_not_running(web: Web) -> None:
     web.set_up()
     page = web.client.get("/").get_data(as_text=True)
     assert "The service is not running" in page and "Last seen" not in page
+    assert "docker compose restart lastcall" in page and 'popovertarget="help-common-terminal"' in page
     web.store.set_setting("heartbeat", str(NOW - 3 * HOUR))
-    assert "Last seen 3 h ago." in web.client.get("/").get_data(as_text=True)
+    page = web.client.get("/").get_data(as_text=True)
+    assert "Last seen 3 h ago." in page and "docker compose restart lastcall" in page
     web.store.set_setting("heartbeat", str(NOW - 60))
-    assert "The service is not running" not in web.client.get("/").get_data(as_text=True)
+    page = web.client.get("/").get_data(as_text=True)
+    assert "The service is not running" not in page and "docker compose restart lastcall" not in page
 
 
 def test_links_that_are_not_https_are_inert(web: Web) -> None:
@@ -556,14 +570,15 @@ def test_accounts_page(tmp_path: Path) -> None:
 
     for name in ("max", "broken"):
         response = web.client.post(f"/accounts/{name}/quota", data={"csrf": csrf}, headers=SITE)
-        assert response.headers["Location"] == "/accounts?done=reading"
+        assert response.headers["Location"] == f"/accounts?done=reading#account-{name}"
     assert [a.id for a in readings] == ["max", "broken"]
     assert web.store.last_reading("max") is not None
     page = web.client.get("/accounts").get_data(as_text=True)
     assert "The last reading failed: not signed in" in page and "12% used" in page
 
     form = {"csrf": csrf, "language": "Spanish", "reserve": "15"}
-    assert web.client.post("/accounts/max", data=form, headers=SITE).status_code == 302
+    saved = web.client.post("/accounts/max", data=form, headers=SITE)
+    assert saved.status_code == 302 and saved.headers["Location"] == "/accounts?done=saved#account-max"
     row = next(a for a in web.store.accounts() if a.id == "max")
     assert (row.enabled, row.language, row.reserve_pct) == (False, "Spanish", 15)
     assert web.client.post("/accounts/max", data={**form, "reserve": "95"}, headers=SITE).status_code == 400
@@ -689,7 +704,7 @@ def test_without_the_sandbox_the_quota_cannot_be_read(web: Web) -> None:
     web.set_up()
     web.store.add_account("max", "claude-code")
     page = web.client.get("/accounts").get_data(as_text=True)
-    assert "Read the quota now" not in page
+    assert "Read the quota now" not in page and "help-accounts-check" not in page  # no button, no bubble for it
     response = web.client.post("/accounts/max/quota", data={"csrf": web.csrf()}, headers=SITE)
     assert response.status_code == 503 and "The sandbox is not available here" in response.get_data(as_text=True)
 
@@ -1249,8 +1264,23 @@ def test_setup_and_login_explain_themselves(web: Web) -> None:
     for topic in ("login-session", "login-reset"):
         assert f'popovertarget="help-{topic}"' in page
     assert "help-login-locked" not in page
+    assert 'hreflang="es">Español</a>' in page  # and so does the signed-out header of /login
     wrong = other.post("/login", data={"password": "wrong"}, headers=SITE).get_data(as_text=True)
     assert 'popovertarget="help-login-locked"' in wrong
+
+
+def test_setup_explains_locking_only_when_the_attempt_counted(tmp_path: Path) -> None:
+    web = Web(tmp_path)
+    page = web.client.get("/setup").get_data(as_text=True)
+    form = {"code": web.code(), "password": PASSWORD, "repeat": PASSWORD + "x"}
+    mismatch = web.client.post("/setup", data=form, headers=SITE)
+    text = mismatch.get_data(as_text=True)
+    assert mismatch.status_code == 400 and "not the same" in text and "help-login-locked" not in text
+    short = web.client.post("/setup", data={**form, "password": "short", "repeat": "short"}, headers=SITE)
+    assert short.status_code == 400 and "help-login-locked" not in short.get_data(as_text=True)
+    assert "help-login-locked" not in page
+    wrong = web.client.post("/setup", data={**form, "code": "WRNG-CODE"}, headers=SITE)
+    assert wrong.status_code == 400 and 'popovertarget="help-login-locked"' in wrong.get_data(as_text=True)
 
 
 def test_the_error_page_leads_back_and_explains_its_cause(tmp_path: Path) -> None:

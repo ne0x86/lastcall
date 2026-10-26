@@ -28,7 +28,7 @@
   <div class="form-actions"><a class="button" href="{{ app.install_url }}">{{ t("web.github.install") }}</a>{{ help(hb, "github-install", t("web.github.install"), ["github.install"]) }}</div>
   <p class="hint">{{ t("web.github.install_hint") }}</p>
   {%- elif action %}
-  <p>{{ confirm }}{{ help(hb, "github-permissions", t("web.help.github.permissions.title"), ["github.permissions"]) }}</p>
+  <div class="line"><p>{{ confirm }}</p>{{ help(hb, "github-permissions", t("web.help.github.permissions.title"), ["github.permissions"]) }}</div>
   <div class="form-actions">
     <form method="post" action="{{ action }}">
       <input type="hidden" name="manifest" value="{{ manifest }}">
