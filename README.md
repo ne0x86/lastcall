@@ -127,8 +127,9 @@ git clone --branch stable https://github.com/ne0x86/lastcall && cd lastcall   # 
 docker compose up -d
 ```
 
-**2. Open http://127.0.0.1:8080** 🖥️ and choose your password. To show that the instance is yours, copy the setup
-code from the log:
+**2. Open the web UI** 🖥️ at http://127.0.0.1:8080, or at your server's address if you set `LASTCALL_BIND`
+([On a server](#-on-a-server)), and choose your password. To show that the instance is yours, copy the setup code
+from the log:
 
 ```sh
 docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
