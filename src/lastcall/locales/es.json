@@ -571,6 +571,7 @@
   "web.loki.connected": "Conectado a {url}.",
   "web.loki.remove": "Desconectar",
   "web.loki.bad": "Revisa los campos: la dirección lleva http o https, sin usuario ni consulta, y el usuario no puede llevar dos puntos.",
+  "web.loki.control": "El usuario y el token no pueden llevar saltos de línea ni otros caracteres de control: vuelve a pegarlos, en una sola línea.",
   "web.loki.failed": "No se pudo leer Loki: {error}",
   "web.loki.sources_failed": "No se pudieron listar las fuentes: {error}",
   "web.loki.label": "Fuentes nombradas por la etiqueta",

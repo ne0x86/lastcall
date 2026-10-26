@@ -40,6 +40,7 @@ UNKNOWN = "unknown_service"  # Loki's service_name for a stream that names none
 METADATA = {"__stream_shard__", "detected_level"}  # Loki's own labels, not the stream's
 LABEL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 SOURCE = re.compile(r"[^\x00-\x1f\x7f]{1,200}")
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")  # a line break in a login would break the header that carries it
 TENANT = re.compile(r"[A-Za-z0-9!._*'()|-]{0,150}")
 LIST_DAYS = 7  # how far back the list of sources looks
 DAY = 86_400
@@ -123,6 +124,10 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Any:
         raise LokiError(f"{why.get(e.code, f'HTTP {e.code}')}{': ' + said if said else ''} ({where})") from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise LokiError(f"no answer from {where}: {e}") from None
+    except ValueError:  # http.client refuses a header it cannot send, and its message holds the header: never shown
+        raise LokiError(
+            f"the request to {where} could not be sent: check the address, the user, the token and the tenant"
+        ) from None
     if len(body) > MAX_ANSWER:
         raise LokiError(f"the answer of {where} is too big")
     try:

@@ -29,12 +29,13 @@ import threading
 import time
 import traceback
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from lastcall import i18n, logs, loki, projects, signals
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
-from lastcall.quota import Plan, QuotaError, Reading, account_rate, plan
+from lastcall.quota import BUDGET, Plan, QuotaError, Reading, account_rate, plan
 from lastcall.ranking import rank
 from lastcall.runs import (
     Instance,
@@ -85,6 +86,7 @@ class Service:
         self.running: dict[str, str] = {}  # account id -> repository
         self.plans: dict[str, Plan] = {}
         self.alerts: set[tuple[str, str]] = set()  # (account, "quota" or "paid") already told to the owner
+        self.passed: dict[str, float] = {}  # account -> the past reset that a fresh reading showed, once logged
         self.last_read = self.last_sync = self.last_refresh = self.last_signals = 0.0
         self.errors: dict[str, int] = {}  # repository -> errors in production in the last day
         self.lock = threading.Lock()
@@ -163,6 +165,7 @@ class Service:
         rate = account_rate(history, reading, policy, DEFAULT_RATE)
         before = self.plans.get(account.id)
         self.plans[account.id] = current = plan(reading, policy, rate, now, audit_models(acc))
+        self.note_passed(account.id, reading, current, now)
         if current.burst and not (before and before.burst):
             pace = "" if account.keyed else f"; {rate:.1f}%/h"
             self.log(f"{account.id}: burst starts ({current.reason}{pace})")
@@ -172,6 +175,20 @@ class Service:
         if reading.paid_usage and record:
             self.log(f"{account.id}: paid usage is active on this account: lastcall spends nothing from it")
         self.alert(account.id, "paid", reading.paid_usage)
+
+    def note_passed(self, account: str, reading: Reading, current: Plan, now: float) -> None:
+        """A reading taken now never shows a window that has already reset, so a plan that says "passed" from one
+        means a provider answered with a past reset, and the account would stay "passed" with no sign of why. Say
+        so once for each reset time."""
+        if current.code != "passed":
+            self.passed.pop(account, None)
+            return
+        resets = [w.resets_at for w in (*reading.expiring, reading.window(BUDGET)) if w and w.resets_at is not None]
+        reset = min((r for r in resets if r <= now), default=None)
+        if reset is not None and self.passed.get(account) != reset:
+            self.passed[account] = reset
+            when = datetime.fromtimestamp(reset, UTC).strftime("%Y-%m-%d %H:%M UTC")
+            self.log(f"{account}: a reading taken now shows a window that reset at {when}: no burst until it changes")
 
     def bursting(self, account: str, now: float) -> bool:
         """Whether the account's plan bursts now. A plan lasts until the next reading, up to 15 minutes; once the

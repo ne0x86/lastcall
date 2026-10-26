@@ -497,6 +497,8 @@ def connect_loki(url: str, user: str, tenant: str, token_file: str | None) -> in
         raise ValueError("the user cannot hold a colon, and the tenant only letters, digits and !._*'()|-")
     current = loki.Loki.load(secret_store())
     token = read_key(token_file, ask=bool(user)) or ""
+    if loki.CONTROL.search(user + token):
+        raise ValueError("the user and the token cannot hold line breaks or other control characters")
     if not token and current is not None and (current.url, current.user) == (url, user):
         token = current.token
     connection = loki.Loki(url, user, token, tenant)
@@ -757,7 +759,7 @@ def published_address(published: str) -> str | None:
     so that the log keeps the address that the web UI listens on."""
     host, _, port = published.strip().rpartition(":")
     host = host.strip("[]")
-    if not host or not port.isdigit():
+    if not host or not (port.isascii() and port.isdigit() and 1 <= int(port) <= 65535):  # isdigit(): full-width too
         return None
     if host in ("0.0.0.0", "::"):
         return f"port {port} of this server's addresses, such as http://<this server's address>:{port}/"

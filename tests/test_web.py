@@ -1770,3 +1770,165 @@ def test_an_account_whose_quota_cannot_be_read_says_so_on_both_pages(tmp_path: P
     web.client.get("/language/es")
     for path in ("/", "/accounts"):
         assert ">Sin lectura</span>" in web.client.get(path).get_data(as_text=True), path
+
+
+def test_the_card_stops_saying_cannot_read_once_a_newer_reading_is_stored(tmp_path: Path) -> None:
+    from lastcall.sandbox import SandboxError
+
+    def read(account: Account) -> Reading:
+        raise SandboxError("docker is not running")
+
+    web = Web(tmp_path, read_quota=read)
+    web.store.add_account("claude", "claude-code", "English", 10)
+    web.store.set_setting("heartbeat", str(NOW))
+    web.set_up()
+    web.client.post("/accounts/claude/quota", data={"csrf": web.csrf()}, headers=SITE)
+
+    def says_cannot_read() -> list[bool]:
+        return [">Cannot read</span>" in web.client.get(path).get_data(as_text=True) for path in ("/", "/accounts")]
+
+    def stored(taken_at: float) -> None:
+        window = Window("week", 12, NOW + 30 * HOUR, "expiring", 168.0)
+        web.store.record_reading(Reading("claude", (window,), False, "exact", taken_at))
+
+    assert says_cannot_read() == [True, True]
+    stored(NOW - 60)  # a reading from before the failure does not undo it
+    assert says_cannot_read() == [True, True]
+    stored(NOW + 900)  # the service has read it fine since
+    assert says_cannot_read() == [False, False]
+    assert "docker is not running" not in web.client.get("/accounts").get_data(as_text=True)
+
+
+def test_an_unexpected_error_is_logged_by_its_type_and_never_by_its_repr(tmp_path: Path) -> None:
+    from lastcall import loki
+
+    secret = "Authorization: Bearer glc_s3cret"
+
+    def unexpected(*args: Any) -> Any:
+        raise RuntimeError("request failed" + chr(10) + f"headers={{{secret!r}}}")
+
+    web = Web(tmp_path, containers=unexpected, loki_fetch=unexpected)
+    web.set_up()
+    loki.Loki("http://loki.example.com:3100", token="glc_s3cret").save(web.secrets)
+    page = web.client.get("/settings")
+    assert page.status_code == 200 and "glc_s3cret" not in page.get_data(as_text=True)
+    said = [line for line in web.logs if "could not be listed" in line]
+    assert len(said) == 2 and all(chr(10) not in line and "RuntimeError" in line for line in said)
+    assert not any("glc_s3cret" in line for line in web.logs)
+
+
+def test_brief_keeps_the_type_and_the_start_of_the_message() -> None:
+    from lastcall.web import brief
+
+    assert brief(KeyError("id")) == "KeyError: 'id'"
+    assert brief(ValueError()) == "ValueError"
+    assert brief(ValueError("a" + chr(10) + "  b")) == "ValueError: a b"
+    assert len(brief(ValueError("x" * 1000))) < 150
+    assert brief(ValueError('Invalid header value b"Bearer abc def"')) == "ValueError: Invalid header value ***"
+    assert brief(OSError("401 for Bearer abc def")) == "OSError: 401 for bearer ***"
+    assert "abc" not in brief(OSError("sent Authorization: Basic abc"))
+
+
+def test_loki_refuses_a_login_with_a_line_break_inside(tmp_path: Path) -> None:
+    from lastcall import loki
+
+    asked: list[str] = []
+
+    def fetch(url: str, headers: Mapping[str, str]) -> Any:
+        asked.append(url)
+        return {"status": "success", "data": []}
+
+    web = Web(tmp_path, loki_fetch=fetch)
+    web.set_up()
+    form = {"csrf": web.csrf(), "url": "http://loki.example.com:3100", "user": "", "tenant": ""}
+    for field, value in (("token", "glc_a" + chr(10) + "glc_b"), ("user", "1234" + chr(13) + "56")):
+        response = web.client.post("/settings/loki", data={**form, "token": "t", field: value}, headers=SITE)
+        page = response.get_data(as_text=True)
+        assert response.status_code == 400 and "cannot hold line breaks" in page and "glc_b" not in page
+    web.client.get("/language/es")
+    spanish = web.client.post("/settings/loki", data={**form, "token": "a" + chr(10) + "b"}, headers=SITE)
+    assert "no pueden llevar saltos de línea" in spanish.get_data(as_text=True)
+    assert asked == [] and loki.Loki.load(web.secrets) is None
+
+
+def test_loki_turns_a_header_that_cannot_be_sent_into_a_form_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(request: Any, timeout: float) -> None:
+        raise ValueError('Invalid header value b"Bearer glc_s3cret"')
+
+    monkeypatch.setattr("urllib.request.urlopen", refuse)
+    web = Web(tmp_path)  # the real fetch, with a token that only the encoding of the header refuses
+    web.set_up()
+    form = {
+        "csrf": web.csrf(),
+        "url": "http://loki.example.com:3100",
+        "user": "",
+        "token": "glc_s3cret",
+        "tenant": "",
+    }
+    response = web.client.post("/settings/loki", data=form, headers=SITE)
+    page = response.get_data(as_text=True)
+    assert response.status_code == 400 and "could not be sent" in page and "glc_s3cret" not in page
+    assert not any("glc_s3cret" in line for line in web.logs)
+
+
+def test_github_asks_once_for_an_owner_every_10_minutes(tmp_path: Path) -> None:
+    asked: list[str] = []
+    answers = github_users(ACME)
+
+    def fetch(req: Request) -> Response:
+        asked.append(req.full_url.rsplit("/", 1)[1])
+        return answers(req)
+
+    web = Web(tmp_path, fetch=fetch)
+    web.set_up()
+    for owner in ("acme", "acme", "ACME", "octocat", "nobody", "nobody", "offline", "offline", "limited"):
+        web.client.get(f"/github/new?owner={owner}")
+    # an answer is kept: user, org and missing; "GitHub did not say" never
+    assert asked == ["acme", "octocat", "nobody", "offline", "offline", "limited"]
+    web.clock.now += 599
+    assert "acme is an organization." in web.client.get("/github/new?owner=acme").get_data(as_text=True)
+    assert asked.count("acme") == 1
+    web.clock.now += 2
+    web.client.get("/github/new?owner=acme")
+    assert asked.count("acme") == 2
+
+
+def test_github_forms_waiting_for_an_answer_are_limited_to_the_newest_50(tmp_path: Path) -> None:
+    def exchange(code: str) -> dict[str, Any]:
+        return {
+            "id": 42,
+            "slug": "lastcall-acme",
+            "name": "lastcall-acme",
+            "owner": {"login": "acme"},
+            "html_url": "https://github.com/apps/lastcall-acme",
+            "pem": "-----BEGIN RSA PRIVATE KEY-----",
+        }
+
+    web = Web(tmp_path, exchange=exchange)
+    web.set_up()
+    states = []
+    for _ in range(60):  # every visit to the page makes one, and an hour has to pass before one is forgotten
+        page = web.client.get("/github/new?owner=acme&org=1").get_data(as_text=True)
+        action = re.search(CREATE_FORM, page)
+        assert action
+        states.append(parse_qs(urlsplit(action.group(1).replace("&amp;", "&")).query)["state"][0])
+    callback = "/github/callback?code=abc&state="
+    assert [web.client.get(callback + states[n]).status_code for n in (0, 9)] == [400, 400]
+    assert [web.client.get(callback + states[n]).status_code for n in (10, 59)] == [302, 302]
+
+
+def test_the_log_brackets_an_ipv6_address(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(waitress, "serve", lambda *args, **options: None)
+    web = Web(tmp_path)
+    for host, said in (
+        ("127.0.0.1", "http://127.0.0.1:8080/"),
+        ("lastcall.lan", "http://lastcall.lan:8080/"),
+        ("::1", "http://[::1]:8080/"),
+        ("0.0.0.0", "http://127.0.0.1:8080/"),
+        ("::", "http://127.0.0.1:8080/"),
+    ):
+        web.logs.clear()
+        serve(web.app, host, 8080, log=web.logs.append)
+        assert web.logs == [f"Web UI on {said} (in English and Spanish)"], host

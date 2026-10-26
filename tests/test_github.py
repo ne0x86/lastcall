@@ -134,7 +134,14 @@ def test_form_action_for_an_organization() -> None:
 
 @pytest.fixture
 def setup_server(app: App, tmp_path: Path) -> Iterator[SetupServer]:
-    conversion = {"id": app.id, "slug": app.slug, "name": app.name, "html_url": app.html_url, "pem": app.pem}
+    conversion = {
+        "id": app.id,
+        "slug": app.slug,
+        "name": app.name,
+        "owner": {"login": app.owner},
+        "html_url": app.html_url,
+        "pem": app.pem,
+    }
 
     def exchange(code: str) -> dict[str, Any]:
         assert code == "one-time-code"
@@ -199,6 +206,35 @@ def test_callback_saves_the_app_for_lastcall_only(setup_server: SetupServer, app
     assert (tmp_path / "github-app.secret").stat().st_mode & 0o777 == 0o600
 
 
+def test_callback_records_the_owner_that_github_says(tmp_path: Path, app: App) -> None:
+    # for a person, GitHub creates the App under whoever is signed in, whatever name the command was given
+    conversion = {
+        "id": app.id,
+        "slug": app.slug,
+        "name": app.name,
+        "owner": {"login": "someone-else"},
+        "html_url": app.html_url,
+        "pem": app.pem,
+    }
+    server = SetupServer(("127.0.0.1", 0), SecretStore(tmp_path), "ne0x86", False, lambda code: conversion)
+    try:
+        status, _ = get(server, f"/callback?code=one-time-code&state={server.state}")
+    finally:
+        server.server_close()
+    saved = App.load(SecretStore(tmp_path))
+    assert status == 200 and saved is not None and saved.owner == "someone-else"
+
+
+def test_callback_without_an_owner_in_the_answer_is_a_bad_gateway(tmp_path: Path, app: App) -> None:
+    conversion = {"id": app.id, "slug": app.slug, "name": app.name, "html_url": app.html_url, "pem": app.pem}
+    server = SetupServer(("127.0.0.1", 0), SecretStore(tmp_path), "ne0x86", False, lambda code: conversion)
+    try:
+        status, _ = get(server, f"/callback?code=one-time-code&state={server.state}")
+    finally:
+        server.server_close()
+    assert status == 502 and App.load(SecretStore(tmp_path)) is None
+
+
 def test_run_setup_ends_when_the_app_arrives(setup_server: SetupServer, app: App) -> None:
     result: list[App] = []
     worker = threading.Thread(target=lambda: result.append(run_setup(setup_server)))
@@ -248,6 +284,11 @@ def test_owner_kind_reads_what_github_says(status: int, body: object, expected: 
     assert request.get_header("Accept") == "application/vnd.github+json"
     assert request.get_header("X-github-api-version") == "2022-11-28"
     assert not request.has_header("Authorization")  # the public API, with no token
+
+
+def test_owner_kind_is_none_for_a_body_nested_too_deep_to_read() -> None:
+    fetch, _ = users_api(200, b"[" * 100_000)  # json.loads raises RecursionError, which is a RuntimeError
+    assert owner_kind("acme", fetch) is None
 
 
 def test_owner_kind_waits_10_seconds_and_every_other_request_30(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -304,6 +345,33 @@ def test_clean_owner_strips_what_people_paste_with_a_name() -> None:
         assert clean_owner(typed) == "acme"
     assert clean_owner("http://www.github.com/@acme") == "acme"
     assert clean_owner("acme/api") == "acme/api"  # not a name: the pattern refuses it afterwards
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        "HTTPS://GitHub.com/acme",
+        "Https://WWW.GITHUB.COM/acme/",
+        "GitHub.com/acme",
+        "https://github.com/acme?tab=repositories",
+        "https://github.com/acme/?tab=repositories#x",
+        "https://github.com/acme#x",
+        "github.com/@acme?",
+        "https://github.com/orgs/acme",
+        "https://github.com/orgs/acme/",
+        "https://github.com/orgs/acme?tab=people",
+        "github.com/ORGS/acme",
+    ],
+)
+def test_clean_owner_reads_a_profile_address_however_it_is_written(typed: str) -> None:
+    assert clean_owner(typed) == "acme"
+
+
+def test_clean_owner_keeps_the_case_of_the_name_and_what_is_not_an_address() -> None:
+    assert clean_owner("HTTPS://github.com/Acme") == "Acme"
+    assert clean_owner("orgs/acme") == "orgs/acme"  # only an address of github.com has an organization's page
+    assert clean_owner("https://github.com/orgs") == "orgs"  # an account that is named orgs
+    assert clean_owner("https://example.com/github.com/acme") == "https://example.com/github.com/acme"
 
 
 asked: list[str] = []  # the owners that `lastcall github setup` asked GitHub about
@@ -393,6 +461,11 @@ def test_github_setup_accepts_the_owner_as_the_web_page_does(monkeypatch: pytest
         ("0.0.0.0:8080", "port 8080 of this server's addresses, such as http://<this server's address>:8080/"),
         (":::8081", "port 8081 of this server's addresses, such as http://<this server's address>:8081/"),
         ("[::1]:8080", "http://[::1]:8080/"),
+        ("host:65535", "http://host:65535/"),
+        ("host:0", None),
+        ("host:65536", None),
+        ("host:" + "".join(map(chr, (0xFF18, 0xFF10))), None),  # full-width digits are digits to str.isdigit()
+        ("host:" + "".join(map(chr, (0x0668, 0x0660))), None),
         ("", None),
         ("8080", None),
         ("host:", None),

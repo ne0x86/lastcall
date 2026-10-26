@@ -57,6 +57,10 @@ TRACKER_PROJECT = re.compile(r"[A-Za-z0-9._-]{0,100}")
 CONTAINER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 SERVICES = "https://github.com/caronc/apprise#supported-notifications"  # every service Apprise reaches, with its URL
 STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
+MAX_STATES = 50  # manifest forms that wait for GitHub's answer: the oldest give way
+OWNER_SECONDS = 600.0  # GitHub's answer on what an owner is, kept 10 minutes: anonymous requests are 60 an hour
+MAX_OWNERS = 100
+CREDENTIAL = re.compile(r"(?i)\b(bearer|basic)\s+[^\"']*|\b(authorization|header value)\W+.*")
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
 CSP = (
     "default-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; form-action 'self'; "
@@ -112,7 +116,9 @@ def create_app(
     reading = threading.Event()  # the installed repositories are being read from GitHub
     notifications = notifier or Notifier(secrets, store, log=log)
     app_states: dict[str, float] = {}  # manifest forms shown, by state, with when they were shown
-    quota_errors: dict[str, str] = {}  # the last failed quota reading of each account
+    owner_answers: dict[str, tuple[str, float]] = {}  # what GitHub said an owner is ("user", "org", "missing"), when
+    cache_lock = threading.Lock()  # for app_states and owner_answers: waitress answers on 8 threads
+    quota_errors: dict[str, tuple[float, str]] = {}  # the last failed quota reading of each account, and when
 
     def connect() -> GitHub | None:
         if github is not None:
@@ -521,9 +527,10 @@ def create_app(
         try:
             listed = containers()
         except Exception as e:  # an optional integration never takes the page down
-            if not isinstance(e, (SandboxError, OSError)):
-                log(f"Web UI: the containers could not be listed: {e!r}")
-            return {"error": t("web.logs.failed", error=str(e)[:200]), "rows": [], "repos": []}
+            known = isinstance(e, (SandboxError, OSError))
+            if not known:
+                log(f"Web UI: the containers could not be listed: {brief(e)}")
+            return {"error": t("web.logs.failed", error=str(e)[:200] if known else brief(e)), "rows": [], "repos": []}
         repos, choices = [p.repo for p in store.projects()], logs.chosen(store)
         rows = []
         for c in listed:
@@ -546,6 +553,8 @@ def create_app(
         tried = {"url": url, "user": user, "tenant": tenant}
         if not signals.address(url) or ":" in user or len(user) > 100 or not loki.TENANT.fullmatch(tenant):
             return show_settings(400, loki_error=t("web.loki.bad"), loki_tried=tried)
+        if loki.CONTROL.search(user + token):  # a pasted line break: no header can carry it
+            return show_settings(400, loki_error=t("web.loki.control"), loki_tried=tried)
         connection = loki.Loki(url, user, token, tenant)
         try:
             loki.labels(connection, clock(), loki_fetch)
@@ -616,9 +625,10 @@ def create_app(
             label = loki.label_for(store, names)
             listed = loki.sources(connection, label, now, loki_fetch) if label else []
         except Exception as e:  # an optional integration never takes the page down
-            if not isinstance(e, loki.LokiError):
-                log(f"Web UI: Loki's sources could not be listed: {e!r}")
-            return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200])}
+            known = isinstance(e, loki.LokiError)
+            if not known:
+                log(f"Web UI: Loki's sources could not be listed: {brief(e)}")
+            return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200] if known else brief(e))}
         rows = []
         for s in listed:
             name = s["name"]
@@ -704,6 +714,23 @@ def create_app(
         done = t("web.done.app_created") if request.args.get("done") == "app_created" else ""
         return page("github.html", app=found, done=done)
 
+    def owner_answer(owner: str) -> str | None:
+        """What GitHub says `owner` is, from the last 10 minutes when it was asked: a link from another site can make
+        this page ask for any name, and anonymous requests are few. Only an answer is kept, never "did not say"."""
+        key, now = owner.lower(), clock()
+        with cache_lock:
+            known = owner_answers.get(key)
+        if known is not None and now - known[1] < OWNER_SECONDS:
+            return known[0]
+        found = owner_kind(owner, fetch)
+        if found is not None:
+            with cache_lock:
+                owner_answers.pop(key, None)  # asked again: it goes to the end, as the newest
+                owner_answers[key] = (found, now)
+                while len(owner_answers) > MAX_OWNERS:
+                    del owner_answers[next(iter(owner_answers))]
+        return found
+
     @app.get("/github/new")
     @signed_in
     def github_new() -> ResponseReturnValue:
@@ -714,18 +741,21 @@ def create_app(
         if chosen in ("0", "1"):  # the owner's own answer, when GitHub could not say
             org = chosen == "1"
         else:
-            found = owner_kind(owner, fetch)
+            found = owner_answer(owner)
             if found == "missing":
                 return page("github.html", 400, app=None, error=t("web.github.missing", owner=owner), owner=owner)
             if found is None:
                 return page("github.html", app=None, owner=owner, unknown=True)
             org = found == "org"
         now = clock()
-        for state, shown in list(app_states.items()):
-            if now - shown > STATE_SECONDS:
-                del app_states[state]
         state = tokens.token_urlsafe(16)
-        app_states[state] = now
+        with cache_lock:
+            for old, shown in list(app_states.items()):
+                if now - shown > STATE_SECONDS:
+                    del app_states[old]
+            app_states[state] = now
+            while len(app_states) > MAX_STATES:  # every GET adds one: the oldest give way
+                del app_states[next(iter(app_states))]
         values = manifest(owner, url_for("github_callback", _external=True))
         permissions = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in PERMISSIONS.items())
         g.github_form = True
@@ -747,7 +777,8 @@ def create_app(
     @signed_in
     def github_callback() -> ResponseReturnValue:
         code, state = request.args.get("code", ""), request.args.get("state", "")
-        shown = app_states.pop(state, None)
+        with cache_lock:
+            shown = app_states.pop(state, None)
         if not code or shown is None or clock() - shown > STATE_SECONDS:
             return page("github.html", 400, app=App.load(secrets), error=t("web.github.bad_state"))
         try:
@@ -812,7 +843,19 @@ def create_app(
             account = None
         if account is not None and account.needs_key() and secrets.get(account.key_name) is None:
             return "nokey"
-        return "unreadable" if row.id in quota_errors else ""
+        return "unreadable" if quota_error(row.id) else ""
+
+    def quota_error(account_id: str) -> str:
+        """Why the last reading of the account's quota from this page failed, until a reading of it is newer: the
+        service reads it every 15 minutes, and once that works the account is not "cannot read" any more."""
+        failed = quota_errors.get(account_id)
+        if failed is None:
+            return ""
+        latest = store.last_reading(account_id)
+        if latest is not None and latest.taken_at > failed[0]:
+            quota_errors.pop(account_id, None)
+            return ""
+        return failed[1]
 
     def account_card(row: AccountRow, now: float, working: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
         try:
@@ -823,7 +866,7 @@ def create_app(
         card: dict[str, Any] = {
             "row": row,
             "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id), chip),
-            "error": t("web.accounts.no_key") if chip == "nokey" else quota_errors.get(row.id, ""),
+            "error": t("web.accounts.no_key") if chip == "nokey" else quota_error(row.id),
             "login": f"ACCOUNT={row.id} ENGINE={row.engine} docker compose run --rm login",
             "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
             "policies": [],
@@ -1031,7 +1074,7 @@ def create_app(
                 store.record_reading(reader(account))
                 quota_errors.pop(account.id, None)
             except (QuotaError, SandboxError, OSError) as e:
-                quota_errors[account.id] = str(e)[:300]
+                quota_errors[account.id] = (clock(), str(e)[:300])
                 log(f"{account.id}: no quota reading: {e}")
 
         later(work)
@@ -1055,6 +1098,13 @@ def create_app(
         return problem(404, "web.error.not_found")
 
     return app
+
+
+def brief(error: BaseException) -> str:
+    """An exception for the log: its type and a short line of its message. Never its repr, which can hold request
+    data, and a header's value or an authorization is masked wherever it shows in the message."""
+    message = CREDENTIAL.sub(lambda m: f"{(m.group(1) or m.group(2)).lower()} ***", " ".join(str(error).split()))
+    return f"{type(error).__name__}: {message[:120]}" if message else type(error).__name__
 
 
 def language() -> str:
@@ -1096,7 +1146,8 @@ def serve(
     """Waitress drops the X-Forwarded-* headers that a client sends, unless lastcall trusts the proxy in front of it:
     then they reach ProxyFix (create_app), which reads the client's address, scheme and host from them. `shown` is
     where the log says the web UI answers, when that is not the address that it listens on (Docker publishes it)."""
-    shown = shown or f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/"
+    where = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    shown = shown or f"http://{f'[{where}]' if ':' in where else where}:{port}/"
     log(f"Web UI on {shown} (in English and Spanish)")
     waitress.serve(
         app, host=host, port=port, threads=8, ident="lastcall", clear_untrusted_proxy_headers=not trust_proxy
