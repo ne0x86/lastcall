@@ -502,7 +502,7 @@ div.notice::before { display: none; }
 .state-spending, .state-bursting { color: var(--ember-text); background: var(--ember-soft); border-color: color-mix(in srgb, var(--ember) 35%, transparent); }
 .state-planned, .state-reviewing { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 .state-resting, .state-manual, .state-held { color: var(--muted); }
-.state-paid, .state-signin { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 30%, transparent); }
+.state-paid, .state-nokey, .state-unreadable { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 30%, transparent); }
 .state-off { color: var(--muted); background: transparent; border-style: dashed; border-color: var(--line); }
 .chip.state-active { color: var(--good); background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 30%, transparent); }
 .chip.state-active::before { content: ""; width: .5rem; height: .5rem; background: currentColor; border-radius: 50%; }

@@ -2,12 +2,13 @@
     _help.html's help macro: each macro takes the page's help namespace `hb`. -#}
 {% from "_help.html" import help with context %}
 
-{#- The state chip: one word for what the account is doing. `held` is "down" or "paused" when nothing bursts: then no
+{#- The state chip: one word for what the account is doing. `kind` is "nokey" or "unreadable" when the card has an error:
+    the chip names the cause, so an API-key account with no key never asks for a sign-in. `held` is "down" or "paused" when nothing bursts: then no
     chip says that an account is bursting. A run that goes on is "Working": the chip for any running run, manual ones
     included, so it never claims a burst. -#}
-{% macro state_chip(a, error="", held="") -%}
+{% macro state_chip(a, kind="", held="") -%}
 {%- if not a.enabled %}{% set key = "off" %}
-{%- elif error %}{% set key = "signin" %}
+{%- elif kind %}{% set key = kind %}
 {%- elif a.paid %}{% set key = "paid" %}
 {%- elif held == "down" and (a.working or a.plan_code in ("now", "pace", "schedule", "later", "ahead", "window")) %}{% set key = "held" %}
 {%- elif a.working and a.reviewing %}{% set key = "reviewing" %}
@@ -21,22 +22,24 @@
 {%- endmacro %}
 
 {#- The header: name, engine chip, state chip and the engine's help after both, so the chips stay together. `level` is h2 on the Accounts page, h3 on the dashboard. -#}
-{% macro head(hb, a, level="h3", error="", held="") -%}
+{% macro head(hb, a, level="h3", kind="", held="") -%}
 <header class="account-head">
   <{{ level }} class="account-name">{{ a.id }}</{{ level }}>
-  <span class="chips"><span class="chip engine engine-{{ a.engine_key or 'other' }}">{{ a.engine }}</span>{{ state_chip(a, error, held) }}{{ help(hb, "common-engine", t("web.help.common.engine.title"), ["common.engine"]) }}</span>
+  <span class="chips"><span class="chip engine engine-{{ a.engine_key or 'other' }}">{{ a.engine }}</span>{{ state_chip(a, kind, held) }}{{ help(hb, "common-engine", t("web.help.common.engine.title"), ["common.engine"]) }}</span>
 </header>
 {%- endmacro %}
 
 {#- The plan sentence, the card's main line, with the bubble that explains it. `held` mutes it while nothing bursts, and
     then a plan that says "burst in progress" or "next burst" is replaced by what is true: the account waits. The same
-    accounts get the "On hold" chip (state_chip), so the two never contradict each other. -#}
+    accounts get the "On hold" chip (state_chip), so the two never contradict each other. A paused account whose run is
+    still going says so: the run finishes, then nothing bursts. -#}
 {% macro plan(hb, a, held="") -%}
 {%- set bursty = a.plan_code in ("now", "pace", "schedule", "later", "ahead", "window") -%}
 {%- set waits = held and a.enabled and not a.paid and (bursty or (held == "down" and a.working)) -%}
+{%- set held_key = "paused_working" if held == "paused" and a.working else held -%}
 {%- if a.plan %}
 <div class="plan{% if held %} is-held{% elif a.plan_code in ('now', 'pace', 'schedule') %} is-live{% endif %}">
-  <p>{% if waits %}{{ t("web.plan.held." ~ held) }}{% else %}{{ a.plan }}{% endif %}</p>
+  <p>{% if waits %}{{ t("web.plan.held." ~ held_key) }}{% else %}{{ a.plan }}{% endif %}</p>
   {%- if waits or a.plan_code in ("now", "later", "small") %}{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}
   {%- elif a.plan_code == "model" %}{{ help(hb, "common-window_model", t("web.help.common.window_model.title"), ["common.window_model"]) }}
   {%- elif a.plan_code in ("pace", "ahead", "spent", "no-budget") %}{{ help(hb, "common-budget", t("web.window.budget"), ["common.budget"]) }}

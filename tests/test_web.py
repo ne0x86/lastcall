@@ -1121,14 +1121,36 @@ def test_a_run_that_goes_on_while_paused_is_work_not_a_burst(web: Web) -> None:
     web.set_up()
     web.store.set_setting("heartbeat", str(NOW))
     web.store.set_setting("paused", "yes")
-    web.store.start_run("r1", "acme/api", "claude", "manual")
-    for path in ("/", "/accounts"):
-        page = web.client.get(path).get_data(as_text=True)
-        assert "Burst in progress" not in page and ">Bursting</span>" not in page
-        assert ">Working</span>" in page and "Working on acme/api" in page
-        assert page.count("Bursts are paused: this account spends no leftover quota on its own") == 2
+    paused = "Bursts are paused: this account spends no leftover quota on its own"
+    for trigger in ("manual", "burst"):  # a burst that began before the pause goes on, and so does an order
+        web.store.start_run(f"r-{trigger}", "acme/api", "claude", trigger)
+        for path in ("/", "/accounts"):
+            page = web.client.get(path).get_data(as_text=True)
+            assert "Burst in progress" not in page and ">Bursting</span>" not in page
+            assert ">Working</span>" in page and "Working on acme/api" in page
+            assert page.count("the run under way finishes") == 1, trigger  # the working card
+            assert page.count(paused) == 1, trigger  # the idle one
+        web.store.finish_run(f"r-{trigger}", "ok", None)
+    page = web.client.get("/accounts", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "la ejecución en curso termina" not in page  # nothing runs now
+    web.store.start_run("r2", "acme/api", "claude", "burst")
     page = web.client.get("/accounts", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert ">Trabajando</span>" in page and "En ráfaga" not in page
+    assert page.count("la ejecución en curso termina") == 1
+
+
+def test_a_key_account_without_its_key_asks_for_a_key_not_a_sign_in(web: Web) -> None:
+    from lastcall.accounts import tier_models
+
+    web.store.add_account(
+        "zen", "opencode", provider="openrouter", models=tier_models("qwen3-coder"), policy="budget", budget_usd=20
+    )
+    web.store.set_setting("heartbeat", str(NOW))
+    web.set_up()
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert ">Needs a key</span>" in page and "Needs sign-in" not in page
+    web.client.get("/language/es")
+    assert ">Falta la clave</span>" in web.client.get("/accounts").get_data(as_text=True)
 
 
 def test_every_field_of_the_add_forms_has_its_help(web: Web) -> None:

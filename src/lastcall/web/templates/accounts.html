@@ -31,7 +31,7 @@
   {%- set a = c.view %}
   {%- set row = c.row %}
   <article class="card account edge-{{ a.engine_key or 'other' }}{% if not row.enabled %} is-off{% endif %}" id="account-{{ a.id }}">
-    {{ card.head(hb, a, "h2", c.error, held) }}
+    {{ card.head(hb, a, "h2", c.chip, held) }}
     {{ card.details_line(hb, a, row.keyed) }}
     {{ card.plan(hb, a, held) }}
     {{ card.meters(hb, a, n) }}

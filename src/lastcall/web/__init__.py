@@ -796,6 +796,7 @@ def create_app(
             "row": row,
             "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
             "error": quota_errors.get(row.id, ""),
+            "chip": "unreadable" if row.id in quota_errors else "",  # what the state chip says of the error
             "login": f"ACCOUNT={row.id} ENGINE={row.engine} docker compose run --rm login",
             "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
             "policies": [],
@@ -820,6 +821,7 @@ def create_app(
         card["needs_key"] = account.needs_key()
         if account.needs_key() and secrets.get(account.key_name) is None:
             card["error"] = t("web.accounts.no_key")
+            card["chip"] = "nokey"
         return card
 
     @app.post("/accounts/add")
