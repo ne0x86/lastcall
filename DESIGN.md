@@ -736,8 +736,9 @@ Nothing loads from outside (no web fonts, no images as data), so the content sec
 The language is chosen in Settings, under Language, and in the header while signed out; until then it is the
 browser's. A "?" next to a label, a heading or a button opens a short bubble that explains what is confusing on that
 spot: it is the HTML `popover` attribute, so it needs no script. The bubbles of a page are also listed at its end
-under "Help on this page", for browsers without `popover`. A "?" shows only when its spot does (no tracker, no "?" for
-it), once per page for what repeats, and its text says only what the code does.
+under "Help on this page", for browsers without `popover`. Where CSS anchoring works, the bubble opens under its "?"
+and, when the room there is short, on the side with more room, and scrolls inside itself. A "?" shows only when its
+spot does (no tracker, no "?" for it), once per page for what repeats, and its text says only what the code does.
 
 It is a Flask application served by waitress, inside the service's process (`lastcall serve`), or alone
 (`lastcall web`). The texts come from the same catalogs as what lastcall publishes (`lastcall/locales`). So far it has
@@ -749,13 +750,16 @@ the command to restart it when the service stops writing its heartbeat) and the 
 (merge on approve, the watch after the merge and tests and dependencies too among them), an audit, tests, upgrades or
 an improvement on demand, adding a repository by its address, and the suggestions, which the service reads from GitHub
 every 6 hours and the owner can read again at any time. Pause holds the bursts only: an audit, tests, upgrades or an
-improvement plan that you start yourself still starts, on the free account with the most quota left before its reset,
+improvement plan that the owner starts still starts, on the free account with the most quota left before its reset,
 and the dashboard says so. While paused, or while the service is not running, no account card says it is bursting. A
 form that saves returns to its own card or section (`#project-owner--name`, `#account-id`, `#runs`, `#notify`), under
-the notice. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
-organization and a read-only token, saved only when one request with them gets through), the container logs (the
-host's containers, each with its project or the one lastcall suggests, and the label that works as well), the logs in
-Loki (the connection, the label that names the sources, and the project of each, with suggestions), and the
+the notice: the notice sticks to the top from 48 rem up (when the window is also at least 36 rem tall), and the page
+keeps that room clear when it scrolls to the card or to a focused control; on a phone it stays in the flow above the
+cards, so it never hides what it brought you to. The settings page holds the connection to an error tracker (Sentry
+or GlitchTip: the address, the organization and a read-only token, saved only when one request with them gets
+through), the container logs (the host's containers, each with its project or the one lastcall suggests, and the
+label that works as well), the logs in Loki (the connection, the label that names the sources, and the project of
+each, with suggestions), and the
 notifications: the destinations, chosen by service with only the fields that service needs (Telegram finds the owner's
 chat from the bot's recent messages) or as any Apprise URL, saved only when their test notification gets through, kept
 in the secret store and shown with their secrets hidden; the events (a pull request opens, decisions or ideas wait,

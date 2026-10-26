@@ -257,15 +257,16 @@ def working_on(running: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 def describe_plan(lang: str, p: Plan, now: float, budget_usd: float | None = None, schedule: str = "") -> str:
     leftover = percent(lang, max(0.0, p.leftover_pct))
     starts = until(lang, now + (p.starts_in_hours or 0) * HOUR, now)
+    cron = schedule.replace(" ", "\u00a0")  # the fields of a schedule never break across lines
     if p.budget is not None and budget_usd and p.code in ("pace", "ahead", "spent"):
         spent, total = money(lang, p.budget.used_pct * budget_usd / 100), money(lang, budget_usd)
         resets = until(lang, p.budget.resets_at or now, now)
         return text(lang, f"web.plan.{p.code}", spent=spent, budget=total, when=starts, resets=resets)
     match p.code:
         case "schedule" | "never" | "bad-schedule":
-            return text(lang, f"web.plan.{p.code}", cron=schedule)
+            return text(lang, f"web.plan.{p.code}", cron=cron)
         case "window":
-            return text(lang, "web.plan.window", when=starts, cron=schedule)
+            return text(lang, "web.plan.window", when=starts, cron=cron)
         case "no-budget":
             return text(lang, "web.plan.no-budget")
         case "now":

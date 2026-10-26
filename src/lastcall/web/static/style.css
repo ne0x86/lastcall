@@ -121,6 +121,7 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);  /* without it the one column grows to the widest unbreakable line and the page scrolls sideways */
   grid-template-rows: auto 1fr auto;
   min-height: 100vh;
   min-height: 100dvh;
@@ -235,6 +236,7 @@ header.top {
   white-space: nowrap;
   border-radius: var(--r-pill);
 }
+@media (max-width: 21.99rem) { .pages a { padding: 0 .2rem; font-size: .84rem; } }  /* four tabs in 288 px */
 .pages a:hover { color: var(--text); background: var(--sunk); }
 .pages a[aria-current] { color: var(--text); background: var(--surface); box-shadow: 0 1px 3px rgb(74 48 22 / .14), inset 0 -2px 0 var(--ember); }
 
@@ -308,7 +310,6 @@ footer.bottom {
 .grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--s4); margin: 0 0 var(--s5); }
 
 :target { scroll-margin-top: var(--s5); }
-main:has(> .notice.done) :target { scroll-margin-top: 6.5rem; }
 .card:target, section:target { outline: 3px solid color-mix(in srgb, var(--ember) 55%, transparent); outline-offset: 3px; }
 
 /* ---------- Status hero (dashboard) ---------- */
@@ -345,9 +346,17 @@ main:has(> .notice.done) :target { scroll-margin-top: 6.5rem; }
 .hero-head h2 { font-size: 1.45rem; }
 .hero-line { display: flex; align-items: flex-start; gap: var(--s1); }
 .hero-text { max-width: 60ch; }
+/* Wide: the text is narrower than its 60ch box, so the "?" would sit far from it. Both go inline: the "?" follows the
+   last word, however the text wraps. On a phone the text fills the line and the "?" sits beside it. */
+@media (min-width: 48rem) {
+  .hero-line { display: block; max-width: calc(60ch + 2rem); }  /* the text keeps its 60ch, and the "?" its room */
+  .hero-line > p { display: inline; }
+  .hero-line > .help { margin: 0 0 0 .3rem; }
+}
 .hero-seen { color: var(--muted); font-size: .92rem; }
 .hero-actions { display: flex; align-items: center; gap: var(--s2); }
 .hero .command { margin-top: var(--s2); }
+.hero .command pre { white-space: pre-wrap; overflow-wrap: anywhere; }  /* the one command to restart the service is read whole, even on a phone */
 
 .dot {
   flex: none;
@@ -365,7 +374,8 @@ main:has(> .notice.done) :target { scroll-margin-top: 6.5rem; }
 /* Readout: three numbers that link to their sections; whole items wrap, never their words. */
 .readout { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s3); margin: var(--s3) 0 0; padding: 0; list-style: none; }
 .readout li { display: flex; align-items: center; gap: var(--s3); }
-.readout li + li::before { content: ""; width: 4px; height: 4px; background: var(--line); border-radius: 50%; }
+.readout li:not(:last-child)::after { content: ""; width: 4px; height: 4px; background: var(--line); border-radius: 50%; }  /* ends a line, never starts one */
+@media (max-width: 23.99rem) { .readout { gap: 0 var(--s4); } .readout li::after { display: none; } }  /* on the narrowest phones the items wrap: no dots */
 .readout a { display: inline-flex; align-items: center; gap: .4rem; min-height: 44px; color: var(--text); text-decoration: none; white-space: nowrap; }
 .readout-n { color: var(--accent); font-family: var(--font-round); font-size: 1.35rem; font-weight: 800; font-variant-numeric: tabular-nums; }
 .readout-l { color: var(--muted); font-size: .92rem; font-weight: 600; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: .25em; }
@@ -554,7 +564,7 @@ h3.account-name { font-size: 1.1rem; }
   background: var(--raised);
   border-radius: var(--r-md);
 }
-.plan p { margin: 0; font-family: var(--font-round); font-size: 1.06rem; font-weight: 600; line-height: 1.4; }
+.plan p { margin: 0; overflow-wrap: anywhere; font-family: var(--font-round); font-size: 1.06rem; font-weight: 600; line-height: 1.4; }
 .plan p::before {  /* a little clock face */
   content: "";
   display: inline-block;
@@ -712,9 +722,9 @@ tbody th { font-weight: 650; }
     order: 3; color: var(--muted); font-size: .88rem; font-weight: 400;
   }
   .runs-table td::before { content: none !important; }
-  .runs-table td:nth-of-type(2)::before, .runs-table td:nth-of-type(3)::before, .runs-table td:nth-of-type(5):not(:empty)::before {
-    content: "\00a0·\00a0" !important; color: var(--muted);
-  }
+  /* The dot ends the item before it, so a wrapped line starts with text and never with a dot. */
+  .runs-table tbody th::after, .runs-table td:nth-of-type(2)::after,
+  .runs-table td:nth-of-type(3):has(~ td:nth-of-type(5):not(:empty))::after { content: "\00a0·"; margin-right: .4em; color: var(--muted); font-family: var(--font-body); }
 }
 
 /* ---------- Forms ---------- */
@@ -756,7 +766,7 @@ fieldset.tier .fields { grid-template-columns: repeat(auto-fit, minmax(min(100%,
 .check.plain { align-items: flex-start; min-height: 0; padding: .55rem 0; font-weight: 400; }
 .check.plain input { margin-top: .15rem; flex: none; }
 .check-row { position: relative; min-height: 44px; max-width: 64ch; padding: .45rem 0 .45rem 1.85rem; }
-.check-row .check, .check-row .check.plain { display: inline; padding: .45rem 0; }  /* the padding is the touch target */
+.check-row .check, .check-row .check.plain { display: inline-block; max-width: calc(100% - 2.1rem); padding: .45rem 0; vertical-align: middle; }  /* the padding is the touch target; the room left is the "?" */
 .check-row .check input { position: absolute; left: 0; top: .65rem; margin: 0; }
 .check-row .help { margin: 0 0 0 .3rem; }
 
@@ -985,9 +995,16 @@ ul.rows > li:last-child { border-bottom: 0; }
 .card.add-card { --edge: var(--accent); }
 main > .empty { margin-bottom: var(--s4); }
 
-/* After a save or an order the page jumps to the card: keep the notice in view, and clear it when scrolling to the card. */
-main > .notice.done { position: sticky; top: var(--s2); z-index: 3; box-shadow: inset 0 3px 0 var(--edge), var(--shadow); }
-.card.project { scroll-margin-top: 6rem; }
+/* After a save or an order the page jumps to its card. On a phone the notice stays in the flow, above the cards: it
+   wraps to several lines there, and a sticky one would hide the card it brought you to and the control you tab back to.
+   Where it stays one line (wide and tall enough) it sticks to the top, and the page keeps its height clear when it
+   scrolls to the card or to a focused control. */
+main > .notice.done { box-shadow: inset 0 3px 0 var(--edge), var(--shadow); }
+@media (min-width: 48rem) and (min-height: 36rem) {
+  main > .notice.done { position: sticky; top: var(--s2); z-index: 3; }
+  html:has(main > .notice.done) { scroll-padding-top: 6rem; }
+  main:has(> .notice.done) :target { scroll-margin-top: var(--s2); }
+}
 
 .project-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
 .project-name { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 700; letter-spacing: -.02em; overflow-wrap: anywhere; }
@@ -1080,6 +1097,7 @@ fieldset.has-help > legend { float: left; margin: 0; }
 @media (max-width: 47.99rem) {
   .sign-card { padding: var(--s5) var(--s4); }
   .sign-card pre, .sign-card pre code { font-size: .84rem; }
+  .sign-card pre { white-space: pre-wrap; overflow-wrap: anywhere; }  /* a short command wraps at its spaces: it must be read whole */
 }
 .sign-steps h2 { font-size: 1.12rem; line-height: 1.9rem; }
 .sign-steps .stack { grid-template-columns: minmax(0, 1fr); margin: 0; }
@@ -1143,7 +1161,8 @@ fieldset.has-help > legend { float: left; margin: 0; }
 .github-card > p:first-child { margin-top: 0; }
 .github-card .stack { margin: 0; }
 .github-card .stack > .field { max-width: 30rem; }
-.github-card .form-actions { margin: var(--s3) 0; }
+.github-card .form-actions { flex-wrap: nowrap; margin: var(--s3) 0; }  /* the button's own text wraps; its "?" stays beside it */
+.github-card .form-actions a.button { min-width: 0; text-align: center; }
 .github-card .hint { margin-top: 0; }
 .github-card .status-line { margin-bottom: var(--s3); }
 .github-card .found { margin: 0 0 var(--s3); font-family: var(--font-round); font-size: 1.1rem; font-weight: 700; overflow-wrap: anywhere; }
@@ -1184,6 +1203,10 @@ fieldset > .hint { margin: 0; }
 .help::after { content: ""; position: absolute; inset: -10px; }  /* a 44 px target */
 .help:hover, .help:focus-visible { color: var(--on-accent); background: var(--accent); }
 .details-line .help, .line .help, .plan .help, .hero-line .help { margin-top: .05rem; }
+/* A short text and its "?" that stay side by side: the text wraps inside its own box, the "?" never drops to a line alone. */
+.with-help { display: inline-flex; align-items: flex-start; gap: .3rem; max-width: 100%; vertical-align: top; }
+.with-help > :first-child { min-width: 0; }
+.with-help .help { margin: 0; }
 
 .bubbles-title { display: none; }
 .bubble {
@@ -1230,6 +1253,10 @@ fieldset > .hint { margin: 0; }
       margin: .5rem;
       position-area: block-end span-inline-end;
       position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+      /* Never taller than the room beside the "?": take the side with more room and scroll inside the bubble. */
+      max-height: calc(100% - 1rem);
+      position-try-order: most-height;
+      overscroll-behavior: contain;
     }
     .bubble::backdrop { background: transparent; }
   }
@@ -1266,18 +1293,20 @@ fieldset > .hint { margin: 0; }
   .hero { padding: var(--s5) var(--s6); }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .waiting-groups { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
-  tbody th { white-space: nowrap; }
+  .runs-table tbody th { white-space: nowrap; }
+  .projects-table tbody th { min-width: 12rem; overflow-wrap: anywhere; }  /* a long repository wraps instead of squeezing the other columns */
   .destinations > li { grid-template-columns: minmax(0, 1fr) auto; }
   .settings-layout { grid-template-columns: 13.5rem minmax(0, 1fr); align-items: start; gap: var(--s5); }
   .toc { position: sticky; top: var(--s4); padding: var(--s4); }
-  main:has(> .notice.done) .toc { top: 5rem; }
+  main:has(> .notice.done) .toc { top: 6rem; }
   .toc ul { display: grid; gap: 2px; }
-  .toc a { display: flex; min-height: 44px; background: none; border: 0; border-radius: var(--r-sm); }
+  .toc a { display: flex; min-height: 44px; padding-block: .5rem; line-height: 1.3; background: none; border: 0; border-radius: var(--r-sm); }
   .toc a:hover { background: var(--surface); }
   .toc-group { display: block; }
   .toc-group > a { display: flex; color: var(--muted); }
-  .toc-group ul { display: grid; padding-left: var(--s3); border-left: 2px solid var(--border); margin-left: var(--s3); }
+  .toc-group ul { display: grid; padding-left: var(--s3); border-left: 2px solid var(--border); margin: .1rem 0 .1rem var(--s3); }
   .bubble { width: 24rem; }
+  @supports not selector(:popover-open) { .bubble { width: auto; } }
   .choices { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); }
 }
 

@@ -34,7 +34,7 @@
     </div>
     <div class="suggestion-meta"><span class="chip score">{{ s.score }}</span>{{ help(hb, "projects-score", t("web.help.projects.score.title"), ["projects.score"], again) }}
       {%- if s.language %} <span class="muted small">{{ s.language }}</span>{% endif %}
-      {%- if s.size %} <span class="muted small">{{ s.size }}</span>{{ help(hb, "projects-size", t("web.help.projects.size.title"), ["projects.size"], again) }}{% endif %}</div>
+      {%- if s.size %} <span class="with-help"><span class="muted small">{{ s.size }}</span>{{ help(hb, "projects-size", t("web.help.projects.size.title"), ["projects.size"], again) }}</span>{% endif %}</div>
     <p class="small">{{ s.reasons|join(" · ") }}</p>
   </li>
 {%- endmacro %}
@@ -92,7 +92,7 @@
       </header>
       <dl class="facts">
         <div><dt>{{ t("web.projects.last") }}</dt><dd>{{ p.last }}{% if p.last_status %} <span class="run run-{{ p.last_key }}">{{ p.last_status }}</span>{% endif %}</dd></div>
-        <div><dt>{{ t("web.projects.findings") }}</dt><dd>{{ p.findings }}{{ help(hb, "common-findings", t("web.projects.findings"), ["common.findings"]) }}</dd></div>
+        <div><dt>{{ t("web.projects.findings") }}</dt><dd><span class="with-help"><span>{{ p.findings }}</span>{{ help(hb, "common-findings", t("web.projects.findings"), ["common.findings"]) }}</span></dd></div>
         <div><dt>{{ t("web.projects.prs") }}</dt><dd>{{ p.prs }}</dd></div>
       </dl>
       {%- if p.tickets %}

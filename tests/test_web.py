@@ -682,7 +682,9 @@ def test_accounts_on_an_api_key_and_on_a_local_model(web: Web) -> None:
     assert "On OpenRouter · model qwen/qwen3-coder · writes in English" in page
     assert "Budget this month" in page and "$5.00 of $20.00" in page
     assert "Burst in progress: $5.00 of $20.00 spent this month, behind the calendar." in page
-    assert "Local models cost nothing." in page and "at the hours of its schedule (* 1-6 * * *, UTC)" in page
+    assert "Local models cost nothing." in page
+    # the five fields of a schedule never break across lines: they are joined by no-break spaces
+    assert "at the hours of its schedule (*\u00a01-6\u00a0*\u00a0*\u00a0*, UTC)" in page
     assert "ACCOUNT=openrouter" not in page  # an API key has no login
 
     form = {
@@ -1638,3 +1640,27 @@ def test_the_sign_cards_keep_their_commands_small_and_the_error_edge_red() -> No
     css = (Path(__file__).parent.parent / "src/lastcall/web/static/style.css").read_text(encoding="utf-8")
     assert ".sign-card pre, .sign-card pre code { font-size: .84rem; }" in css  # the code inside the pre too
     assert ".card.edge-bad { --edge: var(--bad); }" in css
+
+
+def test_the_layout_never_makes_the_page_wider_than_the_screen() -> None:
+    css = (Path(__file__).parent.parent / "src/lastcall/web/static/style.css").read_text(encoding="utf-8")
+    body = re.search(r"\nbody \{(.*?)\n\}", css, re.S)
+    assert body is not None and "grid-template-columns: minmax(0, 1fr);" in body.group(1)  # no line widens the page
+    # the notice sticks only where it stays one line, and the page then keeps its room clear
+    sticky = re.search(r"@media \(min-width: 48rem\) and \(min-height: 36rem\) \{(.*?)\n\}", css, re.S)
+    assert sticky is not None and "position: sticky" in sticky.group(1)
+    assert "scroll-padding-top: 6rem" in sticky.group(1)
+    assert css.count("position: sticky; top: var(--s2)") == 1
+    # a long repository wraps in its column; only the short dates of the runs stay on one line
+    assert ".runs-table tbody th { white-space: nowrap; }" in css
+    assert not re.search(r"\n  tbody th \{ white-space: nowrap", css)
+    assert "position-try-order: most-height" in css and "max-height: calc(100% - 1rem)" in css  # it scrolls inside
+    assert ".sign-card pre { white-space: pre-wrap; overflow-wrap: anywhere; }" in css  # a command is read whole
+
+
+def test_a_projects_findings_keep_their_help_beside_them(github_web: Web) -> None:
+    github_web.store.add_project("acme/api")
+    page = github_web.client.get("/projects").get_data(as_text=True)
+    # the text wraps in its own box, and its "?" is never left alone on a line
+    assert '<dd><span class="with-help"><span>none yet</span><button type="button" class="help"' in page
+    assert 'aria-label="Help: Findings">?</button></span></dd>' in page
