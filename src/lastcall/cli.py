@@ -11,6 +11,7 @@ lastcall audit <owner/name> --account <account> # audit, then pull requests; --a
 lastcall deliver <run> --account <account>      # the pull requests of a report-only audit
 lastcall improve <owner/name> --account <account> # an improvement plan; later runs build the ideas you tick
 lastcall issues <owner/name> --account <account>  # work now on the issues labelled `lastcall`
+lastcall tests <owner/name> --account <account>   # tests for the behavior that no test checks
 lastcall sync                                   # what the owner did with lastcall's pull requests and issues
 lastcall status                                 # accounts, projects and what happened to their findings
 lastcall serve [--port 8080]                    # the service, which bursts on its own, and its web UI
@@ -60,6 +61,7 @@ from lastcall.runs import (
     improve_repo,
     issues_repo,
     save,
+    tests_repo,
 )
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
@@ -161,6 +163,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     issues_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
     issues_cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
+    tests_cmd = commands.add_parser(
+        "tests", help="tests for the behavior that no test checks, one pull request each; they change only tests"
+    )
+    tests_cmd.add_argument("repo", help="owner/name: the GitHub App must be installed on it")
+    tests_cmd.add_argument("--account", required=True, help="the account whose quota the steps spend")
 
     commands.add_parser("sync", help="what the owner did with lastcall's pull requests and issues")
     commands.add_parser("status", help="accounts, projects and what happened to their findings")
@@ -234,6 +241,8 @@ def dispatch(args: argparse.Namespace) -> int:
             return improve(args.repo, account(args.account))
         case "issues", _:
             return issues(args.repo, account(args.account))
+        case "tests", _:
+            return tests(args.repo, account(args.account))
         case "sync", _:
             client = github_client()
             if client is None:
@@ -399,6 +408,19 @@ def issues(repo: str, acc: Account) -> int:
         return 1
     try:
         run_dir, report = issues_repo(instance(client), repo, acc, options(acc, repo), progress, log)
+    except GitHubError as e:
+        print(e, file=sys.stderr)
+        return 1
+    print("\n" + (run_dir / "report.md").read_text(encoding="utf-8"))
+    return 1 if report.status == "failed" else 0
+
+
+def tests(repo: str, acc: Account) -> int:
+    client = github_client()
+    if client is None:
+        return 1
+    try:
+        run_dir, report = tests_repo(instance(client), repo, acc, options(acc, repo), progress, log)
     except GitHubError as e:
         print(e, file=sys.stderr)
         return 1

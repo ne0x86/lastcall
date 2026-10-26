@@ -83,6 +83,18 @@ def stage_all(repo: Path) -> str:
     ).stdout
 
 
+def staged_paths(repo: Path) -> list[str]:
+    """The paths of the staged change, both sides of a rename."""
+    out = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--cached", "--name-only", "--no-renames", "-z"],
+        check=True,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    ).stdout
+    return [path for path in out.split("\0") if path]
+
+
 def files(repo: Path) -> list[str]:
     """Tracked and new files, without what .gitignore excludes: what a clean verification copy gets."""
     out = subprocess.run(

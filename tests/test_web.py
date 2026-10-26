@@ -717,6 +717,28 @@ def test_improve_now(github_web: Web) -> None:
     assert "lastcall is improving this project." in web.client.get("/projects").get_data(as_text=True)
 
 
+def test_tests_from_the_web(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_account("claude", "claude-code")
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'formaction="/projects/acme/api/tests">Write tests now</button>' in page
+    assert 'name="tests" value="1"> Tests too: every other burst on this project writes tests' in page
+    csrf = web.csrf()
+    form = {"csrf": csrf, "weight": "1", "language": "", "max_prs": "3", "active": "1", "tests": "1"}
+    assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
+    assert web.store.projects()[0].tests
+    response = web.client.post("/projects/acme/api/tests", data={"csrf": csrf, "account": "claude"}, headers=SITE)
+    assert response.headers["Location"] == "/projects?done=tests"
+    assert [(o["kind"], o["repo"], o["account"]) for o in web.store.orders()] == [("tests", "acme/api", "claude")]
+    page = web.client.get("/projects?done=tests").get_data(as_text=True)
+    assert "Tests queued. They start within a minute" in page and "Tests queued: they start" in page
+    web.store.start_order(web.store.orders()[0]["id"], NOW)
+    web.store.start_run("r1", "acme/api", "claude", "manual", recipe="tests")
+    assert "lastcall is writing tests for this project." in web.client.get("/projects").get_data(as_text=True)
+    assert "manual · tests" in web.client.get("/").get_data(as_text=True)
+
+
 def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:
     from lastcall.recipes.improve import ImproveReport
 

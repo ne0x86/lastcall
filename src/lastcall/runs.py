@@ -1,5 +1,5 @@
-"""One run from start to end, an audit, an improvement or the labelled issues, as the command line and the service
-both run it.
+"""One run from start to end, an audit, tests, an improvement or the labelled issues, as the command line and the
+service both run it.
 
 The run's folder lives in the data volume (`runs/<repo>-<engine>-<time>`, or `<repo>-<recipe>-<engine>-<time>`) and
 holds the clone, the context pack, a working copy per pull request and the report. The store keeps the run, its
@@ -22,8 +22,10 @@ from lastcall.environment import TOOL_ENV, Environment
 from lastcall.github import GitHub, GitHubForge
 from lastcall.quota import Gate, QuotaError, Reading, SpendPolicy, gate
 from lastcall.recipes.audit import (
+    AUDIT,
     AuditReport,
     Peer,
+    Recipe,
     deliver,
     markdown,
     models,
@@ -36,6 +38,7 @@ from lastcall.recipes.improve import markdown as improve_markdown
 from lastcall.recipes.issues import LABEL, IssuesReport, build_issues, comments, why
 from lastcall.recipes.issues import markdown as issues_markdown
 from lastcall.recipes.steps import QuotaCheck, StepRecord, StepRunner
+from lastcall.recipes.tests import TESTER, TESTS
 from lastcall.sandbox import Sandbox, SandboxError
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
@@ -44,6 +47,7 @@ if TYPE_CHECKING:
     from lastcall.notify import Notifier
 
 VERIFY_TIMEOUT = 25 * 60.0
+RECIPES = {AUDIT.name: AUDIT, TESTS.name: TESTS}  # the recipes of the audit's shape, by the name a report keeps
 Log = Callable[[str], None]
 
 
@@ -177,29 +181,36 @@ def audit_repo(
     on_step: Callable[[StepRecord], None] | None = None,
     log: Log = print,
     peers: Sequence[tuple[Account, SpendPolicy]] = (),
+    recipe: Recipe = AUDIT,
 ) -> tuple[Path, AuditReport]:
     """Clone, pack, find and judge; then, unless the run is report-only, implement, verify and deliver. `peers`
-    are other accounts whose reviewers take part, each behind its own quota gate (fan-out)."""
+    are other accounts whose reviewers take part, each behind its own quota gate (fan-out). With the tests recipe,
+    the one reviewer looks for behavior that no test checks, and the pull requests may change only tests."""
     token = inst.client.repository_token(repo)
     meta = inst.client.repository(token, repo)
-    run_dir = inst.box.data_root / "runs" / f"{meta['name']}-{account.engine}-{time.strftime('%Y%m%d-%H%M%S')}"
+    kind = "" if recipe is AUDIT else f"-{recipe.name}"
+    run_dir = inst.box.data_root / "runs" / f"{meta['name']}{kind}-{account.engine}-{time.strftime('%Y%m%d-%H%M%S')}"
     run_dir.mkdir(parents=True)
-    inst.store.start_run(run_dir.name, repo, account.id, opts.trigger, [p.id for p, _ in peers])
+    inst.store.start_run(run_dir.name, repo, account.id, opts.trigger, [p.id for p, _ in peers], recipe.name)
     try:
         git.clone(repo, run_dir / "clone", token, str(meta["default_branch"]))
         own = environment.settings(run_dir / "clone")  # a wrong .lastcall.yml stops the run before any spending
-        panel = team(run_dir / "clone", own.reviewers if own else ())  # and so does a wrong reviewer of its own
+        # and so does a wrong reviewer of its own; the tests have their one reviewer
+        panel = team(run_dir / "clone", own.reviewers if own else ()) if recipe is AUDIT else [TESTER]
         env = environment.detect(run_dir / "clone", own)
         log(f"Checks of {repo} run in {env.name} ({env.source})" + (f"; {env.note}" if env.note else ""))
         log(f"Reviewers: {', '.join(rv.name for rv in panel)}")
-        log(f"Scanning {repo}: gitleaks, osv-scanner, semgrep and hadolint, in the sandbox.")
-        found = scanners.scan(inst.box, account.engine, run_dir / "clone")
+        found: dict[str, str] = {}
+        if recipe is AUDIT:  # what the scanners report is for the audit; the tests do not need it
+            log(f"Scanning {repo}: gitleaks, osv-scanner, semgrep and hadolint, in the sandbox.")
+            found = scanners.scan(inst.box, account.engine, run_dir / "clone")
         if own and own.focus:
             found[FOCUS] = own.focus
         context = pack.build(run_dir / "clone", run_dir, repo, extra=found, exclude=own.exclude if own else ())
         log(
-            f"Auditing {repo} @ {context.sha} with {account.id} ({account.engine}): {context.files} files, "
-            f"~{context.tokens / 1000:.0f}k tokens of code. Run: {run_dir.name}"
+            f"{'Auditing' if recipe is AUDIT else 'Looking for untested behavior in'} {repo} @ {context.sha} with "
+            f"{account.id} ({account.engine}): {context.files} files, ~{context.tokens / 1000:.0f}k tokens of code. "
+            f"Run: {run_dir.name}"
         )
         run_step, check_quota = agent_hooks(inst, account, opts.policy, opts.wait, log, run=run_dir.name)
         crew = [
@@ -222,10 +233,11 @@ def audit_repo(
             check_quota=check_quota,
             language=opts.language,
             max_prs=opts.max_prs,
-            earlier=inst.store.earlier(repo),
+            earlier=inst.store.earlier(repo, recipe.name),
             team=panel,
             on_step=on_step,
             peers=crew,
+            recipe=recipe,
         )
         report.environment = f"{env.name} ({env.source})"
         inst.store.record_findings(run_dir.name, report)
@@ -235,11 +247,25 @@ def audit_repo(
     except Exception as e:
         inst.store.finish_run(run_dir.name, "failed", None)
         if inst.notify:
-            inst.notify.notify("failed", repo=repo, reason=f"{type(e).__name__}: {e}"[:400])
+            key = "failed" if recipe is AUDIT else f"{recipe.name}-failed"
+            inst.notify.notify("failed", key, repo=repo, reason=f"{type(e).__name__}: {e}"[:400])
         raise
     inst.store.finish_run(run_dir.name, report.status, report.sha)
-    tell(inst, run_dir.name, report)
+    tell(inst, run_dir.name, report, "" if recipe is AUDIT else f"{recipe.name}-")
     return run_dir, report
+
+
+def tests_repo(
+    inst: Instance,
+    repo: str,
+    account: Account,
+    opts: Options,
+    on_step: Callable[[StepRecord], None] | None = None,
+    log: Log = print,
+) -> tuple[Path, AuditReport]:
+    """Tests for the behavior of the project that no test checks, one pull request each: the audit's shape with the
+    tests' recipe."""
+    return audit_repo(inst, repo, account, opts, on_step, log, recipe=TESTS)
 
 
 def improve_repo(
@@ -428,6 +454,7 @@ def deliver_report(
         max_prs=max_prs,
         on_step=on_step,
         environment=env,
+        recipe=RECIPES.get(report.recipe, AUDIT),
     )
     inst.store.record_deliveries(run_dir.name, report)
     save(run_dir, report)

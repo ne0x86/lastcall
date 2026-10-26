@@ -7,6 +7,8 @@ and decides what becomes a pull request, what needs the owner, and what is disca
 Fix, verify and deliver (`deliver`): one implementer per planned pull request, each in its own clone. lastcall, not
 the agent, checks the change in a clean container, scans what it would publish for secrets, commits, pushes and
 opens the pull request. Findings that need the owner go to one issue per run.
+
+The tests recipe (`lastcall.recipes.tests`) has the same shape, with its own prompts: a `Recipe` says which.
 """
 
 from __future__ import annotations
@@ -36,6 +38,22 @@ MAX_PROJECT_REVIEWERS = 4  # each one is a step of every run
 MAX_REVIEWER_BYTES = 8_000
 REVIEWER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 REVIEWER_PREFIX = re.compile(r"[A-Z]{1,3}")  # finding ids: A1, A2...
+
+
+@dataclass(frozen=True)
+class Recipe:
+    """What tells one find-judge-fix recipe from another: its prompts, the footer of its pull requests, and the paths
+    that those may change."""
+
+    name: str = "audit"
+    reviewer: str = "reviewer.md"
+    judge: str = "judge.md"
+    implementer: str = "implementer.md"
+    footer: str = "pr.footer"  # the catalog key of its pull requests' footer
+    allowed: Callable[[str], bool] | None = None  # the paths its pull requests may change; None: any
+
+
+AUDIT = Recipe()
 
 
 @dataclass(frozen=True)
@@ -135,6 +153,7 @@ class AuditReport:
     environment: str = ""  # where the checks run: an image, or the runner, and what decided it
     peers: list[str] = field(default_factory=list)  # other accounts whose reviewers took part (fan-out)
     notes: list[str] = field(default_factory=list)  # what happened to them, such as a peer stopped by its quota
+    recipe: str = "audit"  # or "tests"
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=1)
@@ -173,10 +192,11 @@ def run_audit(
     team: Sequence[Reviewer] | None = None,
     on_step: Callable[[StepRecord], None] | None = None,
     peers: Sequence[Peer] = (),
+    recipe: Recipe = AUDIT,
 ) -> AuditReport:
     """First half: find and judge. With peers, every account's reviewers work at the same time, one after another
     within each account, on the same pack; one judge, this account's, weighs all their findings."""
-    report = AuditReport(repo, pack.sha, engine.name, language, peers=[p.name for p in peers])
+    report = AuditReport(repo, pack.sha, engine.name, language, peers=[p.name for p in peers], recipe=recipe.name)
     steps = Steps(report, engine, tiers, run_step, check_quota, pack.path, on_step)
     project = repo.split("/")[-1]
     crew = list(team if team is not None else reviewers())
@@ -187,7 +207,7 @@ def run_audit(
         found: list[dict[str, Any]] = []
         needed = models(steps.tiers, crew) if not mark else [steps.tiers[rv.tier][0] for rv in crew]
         for n, rv in enumerate(crew):
-            text = render(prompt("reviewer.md"), role=rv.name, project=project, focus=rv.focus, language=language)
+            text = render(prompt(recipe.reviewer), role=rv.name, project=project, focus=rv.focus, language=language)
             then = needed if n == 0 else ()
             res = steps.run(f"reviewer:{rv.name}{mark}", rv.tier, text, "findings", pack.src, then=then)
             if res is None:
@@ -216,7 +236,7 @@ def run_audit(
         return report
 
     text = render(
-        prompt("judge.md"),
+        prompt(recipe.judge),
         project=project,
         max_prs=str(max_prs),
         max_per_pr=str(max_per_pr),
@@ -258,6 +278,7 @@ def deliver(
     max_prs: int | None = None,
     on_step: Callable[[StepRecord], None] | None = None,
     environment: Environment = RUNNER,
+    recipe: Recipe = AUDIT,
 ) -> AuditReport:
     """Second half: implement each planned pull request, verify it outside the agent, in the project's environment,
     and open it. Pull requests already opened for this report are not opened again."""
@@ -274,7 +295,7 @@ def deliver(
 
         def ask(branch: str, check: str, pr: Mapping[str, Any] = pr, covered: list[Any] = covered) -> str:
             return render(
-                prompt("implementer.md"),
+                prompt(recipe.implementer),
                 project=project,
                 branch=branch,
                 title=pr["title"],
@@ -286,9 +307,9 @@ def deliver(
             )
 
         def footer(checked: str, model: str, effort: str | None, ids: Sequence[str] = pr["ids"]) -> str:
-            return pr_footer(report, ids, model, effort, checked)
+            return pr_footer(report, ids, model, effort, checked, recipe.footer)
 
-        job = Job(pr["title"], ask, f"Findings: {', '.join(pr['ids'])}", footer)
+        job = Job(pr["title"], ask, f"Findings: {', '.join(pr['ids'])}", footer, recipe.allowed)
         record = build(
             job,
             {"title": pr["title"], "ids": pr["ids"]},
@@ -314,10 +335,12 @@ def deliver(
     return report
 
 
-def pr_footer(report: AuditReport, ids: Sequence[str], model: str, effort: str | None, checked: str) -> str:
+def pr_footer(
+    report: AuditReport, ids: Sequence[str], model: str, effort: str | None, checked: str, key: str = "pr.footer"
+) -> str:
     return i18n.text(
         report.language,
-        "pr.footer",
+        key,
         sha=report.sha,
         engine=report.engine,
         ids=", ".join(ids),
@@ -361,7 +384,8 @@ def markdown(report: AuditReport) -> str:
             v.get("reason") or f["why"]
         )
 
-    out = [f"# Audit of {report.repo} @ {report.sha} ({report.engine})", ""]
+    heading = "Tests for" if report.recipe == "tests" else "Audit of"
+    out = [f"# {heading} {report.repo} @ {report.sha} ({report.engine})", ""]
     out.append(f"Status: **{report.status}**" + (f" ({report.stopped})" if report.stopped else ""))
     if report.peers:
         out.append(f"Also reviewed by: {', '.join(report.peers)}. One judge weighed every finding.")

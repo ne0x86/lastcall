@@ -11,9 +11,9 @@ Every minute it ticks:
   audit can start on all of them together (fan-out);
 - with fan-out on, accounts that burst at the same time review one project together, with one judge;
 - each bursting account that is free starts a full audit of the project the ranking puts first; what the owner
-  asked for goes first: the ideas ticked in an improvement plan, then the issues labelled `lastcall`. One run per
-  account
-  at a time, and never the same project by two accounts at once. Inside a run, a full 5-hour window makes the run
+  asked for goes first: the ideas ticked in an improvement plan, then the issues labelled `lastcall`. A project whose
+  owner wants tests too gets them every other run, after an audit. One run per account at a time, and never the same
+  project by two accounts at once. Inside a run, a full 5-hour window makes the run
   wait for its reset; the reserve or any paid usage stops it. An account does not burst while the window of a model
   that the audit needs, such as Claude's weekly window for Opus, is at the reserve.
 
@@ -34,7 +34,7 @@ from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, account_rate, plan
 from lastcall.ranking import rank
-from lastcall.runs import Instance, Options, audit_models, audit_repo, improve_repo, issues_repo
+from lastcall.runs import Instance, Options, audit_models, audit_repo, improve_repo, issues_repo, tests_repo
 from lastcall.sandbox import SandboxError
 from lastcall.store import AccountRow
 from lastcall.sync import sync
@@ -56,6 +56,7 @@ class Service:
         audit: Callable[[str, AccountRow, str, list[AccountRow]], Any] | None = None,
         improve: Callable[[str, AccountRow, str], Any] | None = None,
         issues: Callable[[str, AccountRow, str], Any] | None = None,
+        tests: Callable[[str, AccountRow, str], Any] | None = None,
         start: Callable[[Callable[[], None]], None] | None = None,
         clock: Callable[[], float] = time.time,
         log: Log = print,
@@ -65,6 +66,7 @@ class Service:
         self.audit = audit or self._audit
         self.improve = improve or self._improve
         self.issues = issues or self._issues
+        self.tests = tests or self._tests
         self.start = start or (lambda work: threading.Thread(target=work, daemon=True).start())
         self.running: dict[str, str] = {}  # account id -> repository
         self.plans: dict[str, Plan] = {}
@@ -200,7 +202,7 @@ class Service:
             if not free:
                 continue
             account = max(free, key=self.leftover)
-            recipe = order["kind"] if order["kind"] in ("improve", "issues") else "audit"
+            recipe = order["kind"] if order["kind"] in ("improve", "issues", "tests") else "audit"
             crew = [a for a in free if a is not account] if order["account"] == "*" and recipe == "audit" else []
             store.start_order(order["id"], now)
             self.log(f"{account.id}: {recipe} of {order['repo']} ordered by the owner")
@@ -230,10 +232,16 @@ class Service:
 
     def recipe(self, repo: str) -> str:
         """What a burst does with a project: what the owner asked for first (the ideas ticked in a plan, then the
-        labelled issues), or else an audit."""
-        if self.inst.store.wanted_count(repo):
+        labelled issues), or else an audit; or tests, after an audit, when the owner wants them for the project."""
+        store = self.inst.store
+        if store.wanted_count(repo):
             return "improve"
-        return "issues" if self.inst.store.waiting_count(repo) else "audit"
+        if store.waiting_count(repo):
+            return "issues"
+        project, last = store.project(repo), store.latest_runs().get(repo)
+        if project and project.tests and last and last.get("recipe") == "audit":
+            return "tests"
+        return "audit"
 
     # projects
 
@@ -286,6 +294,8 @@ class Service:
                     self.improve(repo, account, trigger)
                 elif recipe == "issues":
                     self.issues(repo, account, trigger)
+                elif recipe == "tests":
+                    self.tests(repo, account, trigger)
                 else:
                     self.audit(repo, account, trigger, list(crew))
             except Exception:
@@ -322,6 +332,17 @@ class Service:
     def _issues(self, repo: str, account: AccountRow, trigger: str) -> Any:
         prefix = f"[{account.id} {repo}]"
         return issues_repo(
+            self.inst,
+            repo,
+            account.account(),
+            self.options(repo, account, trigger),
+            on_step=lambda s: self.log(f"{prefix} {s.role}: {'ok' if s.ok else 'failed'} in {s.seconds:g} s"),
+            log=lambda message: self.log(f"{prefix} {message}"),
+        )
+
+    def _tests(self, repo: str, account: AccountRow, trigger: str) -> Any:
+        prefix = f"[{account.id} {repo}]"
+        return tests_repo(
             self.inst,
             repo,
             account.account(),

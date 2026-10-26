@@ -42,6 +42,7 @@ class Job:
     ask: Callable[[str, str], str]  # (branch, how the change is checked) -> the implementer's prompt
     trailer: str  # the commit message's last line, such as "Findings: B1, S2"
     footer: Callable[[str, str, str | None], str]  # (what was checked, model, effort) -> the pull request's footer
+    allowed: Callable[[str], bool] | None = None  # the paths that the change may touch; None: any
 
 
 def slug(title: str, size: int = 40) -> str:
@@ -66,7 +67,8 @@ def build(
 ) -> dict[str, Any]:
     """Build the job's pull request in `run_dir/pr<n>`. Its record (`base` and the branch) is in `deliveries` from
     the start, in place of one with the same title, and ends with `status`: `opened` with its `url`, or why not
-    (`stopped` by a gate, `not_done`, `unchanged`, `red`, `secrets`) with a `note`."""
+    (`stopped` by a gate, `not_done`, `unchanged`, `outside` what the job may touch, `red`, `secrets`) with a
+    `note`."""
     branch = f"lastcall/{stamp}-{n}-{slug(job.title)}"
     work = run_dir / f"pr{n}"
     git.remove(work)
@@ -92,6 +94,10 @@ def build(
         diff = git.stage_all(work)
         if not diff.strip():
             record |= {"status": "unchanged", "note": "the implementer reported done but changed nothing"}
+            return record
+        outside = [path for path in git.staged_paths(work) if job.allowed and not job.allowed(path)]
+        if outside:
+            record |= {"status": "outside", "note": f"it changed what it may not: {', '.join(outside[:10])}"}
             return record
         command, kind = check_command(work)  # the implementer may have added the project's first tests
         if environment.test:
