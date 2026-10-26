@@ -264,3 +264,25 @@ def test_the_deps_probe_reads_the_latest_versions_through_the_proxy(workspace: P
     found = dependencies(SANDBOX, "claude-code", workspace)
     assert "- requests 2.19.0 → " in found[VERSIONS]
     assert "requests 2.19.0: " in found[TITLES["osv-scanner"]]  # it has known vulnerabilities
+
+
+def test_the_supervisor_lists_the_containers_and_reads_the_logs_of_a_projects() -> None:
+    """compose.dev.yaml's log-source carries the label lastcall.project=it/logs and prints a traceback and an error.
+    The supervisor lists it with its label, and reads its logs by its name."""
+    from lastcall import logs
+
+    names = logs.names_for("it/logs", SANDBOX.containers(), {})
+    assert len(names) == 1 and names[0].endswith("log-source-1")
+    for _ in range(30):  # it may still be printing
+        found = SANDBOX.logs(names, 3600)
+        if found and len(found[0]["stdout"]) >= 4 and found[0]["stderr"]:
+            break
+        time.sleep(1)
+    containers, kinds = logs.errors(found, {"shop/pricing.py"})
+    assert [c.status for c in containers] == ["running"]
+    by_sample = {k.sample: k for k in kinds}  # once each: the latest goes first
+    assert set(by_sample) == {"ZeroDivisionError: division by zero", "ERROR payment failed for <email>"}
+    assert by_sample["ZeroDivisionError: division by zero"].frames == ("shop/pricing.py:3 in average",)
+    assert SANDBOX.logs(["no-such-container"], 3600) == []
+    with pytest.raises(SandboxError, match="not a container name"):
+        SANDBOX.logs(["../etc"], 3600)

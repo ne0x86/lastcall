@@ -30,7 +30,7 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, cron, destinations, engines, i18n, projects, signals
+from lastcall import __version__, cron, destinations, engines, i18n, logs, projects, signals
 from lastcall.accounts import ACCOUNT_ID, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
@@ -51,6 +51,7 @@ CRON_HELP = "https://crontab.guru/"  # reads a cron expression back in words
 SENTRY_TOKENS = "https://sentry.io/settings/account/api/auth-tokens/"  # where a Sentry user creates a token
 ORG_SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 TRACKER_PROJECT = re.compile(r"[A-Za-z0-9._-]{0,100}")
+CONTAINER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 SERVICES = "https://github.com/caronc/apprise#supported-notifications"  # every service Apprise reaches, with its URL
 STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
@@ -88,6 +89,7 @@ def create_app(
     exchange: Exchange = exchange_code,
     fetch: Fetch = urlopen,
     signals_fetch: signals.Fetch = signals.fetch_json,
+    containers: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> Flask:
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
@@ -433,11 +435,12 @@ def create_app(
             "chats": list(chats),
             "fanout": store.setting("fanout") == "yes",
             "tracker": tracker,
+            "logs": containers_view(),
             "signals_url": (tried or {}).get("url") or (tracker.url if tracker else "https://sentry.io"),
             "signals_org": (tried or {}).get("org") or (tracker.org if tracker else ""),
         }
         done = request.args.get("done", "")
-        known = ("saved", "notify_added", "notify_removed", "notify_sent", "signals", "signals_removed")
+        known = ("saved", "notify_added", "notify_removed", "notify_sent", "signals", "signals_removed", "logs")
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page(
             "settings.html",
@@ -471,6 +474,42 @@ def create_app(
         tracker.save(secrets)
         log(f"Web UI: errors in production read from {url}, organization {org}")
         return redirect(url_for("settings_page", done="signals") + "#signals")
+
+    @app.post("/settings/logs")
+    @signed_in
+    def logs_settings() -> ResponseReturnValue:
+        """The project of each container, as the owner chooses it: lastcall reads the containers that have one."""
+        form, repos = request.form, {p.repo for p in store.projects()}
+        choices = logs.chosen(store)
+        for key, name in form.items():
+            if not key.startswith("name-"):
+                continue
+            index = key.removeprefix("name-")
+            project = form.get("project-" + index, "")
+            if not CONTAINER.fullmatch(name) or project not in {"", *repos}:
+                return problem(400, "web.error.form")
+            if project or form.get("shown-" + index):  # a project, or a no to the one that the page showed
+                choices[name] = project
+        logs.choose(store, choices)
+        log(f"Web UI: containers read for their projects: {', '.join(sorted(k for k, v in choices.items() if v))}")
+        return redirect(url_for("settings_page", done="logs") + "#logs")
+
+    def containers_view() -> dict[str, Any]:
+        """The containers of this host, each with its project, or the one lastcall suggests."""
+        if containers is None:
+            return {"error": t("web.logs.unavailable"), "rows": [], "repos": []}
+        try:
+            listed = containers()
+        except (SandboxError, OSError) as e:
+            return {"error": t("web.logs.failed", error=str(e)[:200]), "rows": [], "repos": []}
+        repos, choices = [p.repo for p in store.projects()], logs.chosen(store)
+        rows = []
+        for c in listed:
+            name = str(c.get("name") or "")
+            choice = choices.get(name, "")
+            hint = "" if c.get("label") or name in choices else logs.suggest(c, repos)
+            rows.append({**c, "selected": choice or hint, "suggested": hint})
+        return {"error": "", "rows": rows, "repos": repos}
 
     @app.post("/settings/signals/remove")
     @signed_in

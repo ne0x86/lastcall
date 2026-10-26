@@ -816,6 +816,49 @@ def test_errors_in_production_from_the_web(tmp_path: Path) -> None:
     assert 'name="signals"' not in web.client.get("/projects").get_data(as_text=True)
 
 
+def test_container_logs_from_the_web(tmp_path: Path) -> None:
+    from lastcall import logs
+    from lastcall.sandbox import SandboxError
+
+    listed = [
+        {"name": "shop-web-1", "image": "ghcr.io/acme/shop:1.2", "state": "running", "compose_project": "shop"},
+        {"name": "blog", "image": "nginx:1.27", "state": "running", "label": "acme/blog"},
+        {"name": "redis", "image": "redis:7", "state": "running"},
+    ]
+    web = Web(tmp_path, containers=lambda: listed)
+    web.set_up()
+    web.store.add_project("acme/shop")
+    web.store.add_project("acme/blog")
+    csrf = web.csrf()
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "Container logs" in page and "Suggested: acme/shop. Save to read it." in page
+    assert '<option value="acme/shop" selected>acme/shop</option>' in page  # the suggestion comes chosen
+    assert "Read for acme/blog, from its label." in page and "lastcall.project: owner/name" in page
+    assert '<input type="hidden" name="shown-1" value="acme/shop">' in page
+    form = {"csrf": csrf, "name-1": "shop-web-1", "project-1": "acme/shop", "shown-1": "acme/shop"}
+    form |= {"name-3": "redis", "project-3": "", "shown-3": ""}
+    response = web.client.post("/settings/logs", data=form, headers=SITE)
+    assert response.headers["Location"] == "/settings?done=logs#logs"
+    assert logs.chosen(web.store) == {"shop-web-1": "acme/shop"}  # redis: no project, and none was shown
+    bad = {**form, "project-3": "someone/else"}
+    assert web.client.post("/settings/logs", data=bad, headers=SITE).status_code == 400
+    web.client.post("/settings/logs", data={**form, "project-1": ""}, headers=SITE)  # the owner says no to it
+    assert logs.chosen(web.store) == {"shop-web-1": ""}
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert "Suggested:" not in page and '<option value="acme/shop" selected>' not in page  # not suggested again
+
+    def broken() -> list[dict[str, Any]]:
+        raise SandboxError("supervisor unreachable")
+
+    alone = Web(tmp_path / "alone")  # `lastcall web` with no sandbox
+    alone.set_up()
+    assert "only when lastcall runs with docker compose" in alone.client.get("/settings").get_data(as_text=True)
+    failing = Web(tmp_path / "failing", containers=broken)
+    failing.set_up()
+    page = failing.client.get("/settings").get_data(as_text=True)
+    assert "The containers could not be listed: supervisor unreachable" in page
+
+
 def test_the_dashboard_lists_plans_and_improvement_runs(web: Web) -> None:
     from lastcall.recipes.improve import ImproveReport
 

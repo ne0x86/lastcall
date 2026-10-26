@@ -63,6 +63,53 @@
   {%- endif %}
 </section>
 
+<section class="card" aria-labelledby="logs-title" id="logs">
+  <h2 id="logs-title">{{ t("web.logs.title") }}</h2>
+  <p>{{ t("web.logs.intro") }}</p>
+  <ol class="steps">
+    <li>{{ t("web.logs.step1") }}</li>
+    <li>{{ t("web.logs.step2") }}</li>
+  </ol>
+  {%- if v.logs.error %}
+  <p class="card notice error" role="alert">{{ v.logs.error }}</p>
+  {%- elif not v.logs.rows %}
+  <p class="muted">{{ t("web.logs.none") }}</p>
+  {%- else %}
+  <form method="post" action="{{ url_for('logs_settings') }}#logs" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <ul class="plain">
+      {%- for c in v.logs.rows %}
+      <li>
+        <p><strong>{{ c.name }}</strong> <span class="badge">{{ c.state }}</span></p>
+        <p class="muted small">{{ c.image }}</p>
+        {%- if c.label %}
+        <p class="small">{{ t("web.logs.from_label", project=c.label) }}</p>
+        {%- else %}
+        <input type="hidden" name="name-{{ loop.index }}" value="{{ c.name }}">
+        <input type="hidden" name="shown-{{ loop.index }}" value="{{ c.selected }}">
+        <label for="logs-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>
+        <select id="logs-{{ loop.index }}" name="project-{{ loop.index }}">
+          <option value="">{{ t("web.logs.not_read") }}</option>
+          {%- for repo in v.logs.repos %}<option value="{{ repo }}"{% if repo == c.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
+        </select>
+        {%- if c.suggested %}<p class="hint muted">{{ t("web.logs.suggested", project=c.suggested) }}</p>{% endif %}
+        {%- endif %}
+      </li>
+      {%- endfor %}
+    </ul>
+    <button>{{ t("web.logs.save") }}</button>
+  </form>
+  {%- endif %}
+  <details>
+    <summary>{{ t("web.logs.label_title") }}</summary>
+    <p class="small">{{ t("web.logs.label_how") }}</p>
+    <pre><code>services:
+  your-app:
+    labels:
+      lastcall.project: owner/name</code></pre>
+  </details>
+</section>
+
 <section class="card" aria-labelledby="notify-title">
   <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
   <p>{{ t("web.notify.intro") }}</p>

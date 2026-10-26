@@ -125,7 +125,9 @@ flowchart LR
   network of its own and listens on a Unix socket. A request names an engine (never an image), the workspace, the
   files for `/ctx`, the account volume and a timeout. The supervisor refuses any path outside `runs/` on the data
   volume, any volume that is not an account volume and any proxy setting, and it always applies the same flags. A
-  bug in the service cannot start an arbitrary container.
+  bug in the service cannot start an arbitrary container. For the signals it also lists the containers on its host,
+  and reads, and only reads, the recent logs and state of those that the service names; never those of lastcall's
+  steps (section 8).
 - **Runners.** One ephemeral container per step: user 1000, `--cap-drop ALL`, `no-new-privileges`, memory, CPU and
   process limits, on an `internal` Docker network whose only way out is the egress proxy. Mounts: the workspace
   (read-only for reviewers and the judge, writable for an implementer, on its own clone), `/ctx` read-only, and the
@@ -397,8 +399,8 @@ When an account bursts, it picks the next project with a cheap score:
 - pending findings;
 - what the owner asked for, which goes first and instead of an audit: the ideas ticked in an improvement plan, then
   the issues labelled `lastcall`;
-- errors in production in the last day, when the owner connected an error tracker (5 points each, up to 25); the
-  service counts them every 30 minutes. Restarts come later, with container logs.
+- errors in production in the last day, from the owner's error tracker and the kinds of errors in the logs of the
+  project's containers (5 points each, up to 25); the service counts them every 30 minutes.
 
 It skips projects that the same account audited recently, unless the owner asked for something there; projects with
 unreviewed lastcall pull requests piling up; and very large projects when little quota is left. The project weight
@@ -422,7 +424,28 @@ multiplies the score.
   - What reaches a model is masked: emails, IP addresses, credentials in URLs, tokens (the secret scanner's rules,
     and any long opaque string) and long numbers. Variables, request data, user data, tags and breadcrumbs are never
     read.
-  - Container logs and health, read on the host as the prototype did, may come later.
+- **Container logs** (`lastcall.logs`), for apps that run in Docker on lastcall's own host, with no change to their
+  code. None is read until the owner gives it a project:
+  - The settings page lists the host's containers (`lastcall logs list` in the terminal), and the owner chooses the
+    project of each one to read. lastcall suggests one from the container's image (`ghcr.io/<owner>/<name>`, without
+    its tag), else its Compose project, else its name (`<name>-web-1`), when only one project fits. A suggestion is
+    read only once the owner saves it, and a no to it is remembered, so that it is not suggested again. The choices
+    live in the service's database.
+  - A container labelled `lastcall.project=<owner/name>` in its compose file is read for that project, matched
+    without regard to case, with no choice: the choice can live with the app.
+  - The supervisor lists the containers (their names, images, state and Compose labels) and reads, and only reads,
+    those that the service names: their state (restarts, the kernel killing them for lack of memory, the exit code)
+    and the logs of the last 24 hours, 5,000 lines and 2 MB per stream at most, from 10 containers at most. It keeps
+    the two streams apart: Docker stamps the lines of each as it reads them, so the order between the two is not
+    known. It never lists or reads the containers of lastcall's steps, and it never starts, stops or changes a
+    container.
+  - lastcall groups the lines into kinds of errors: a Python traceback by its exception and the place in the code
+    where it happened (the last exception of a chain), a stack of Node.js or Java by its first line with its
+    frames, and any other line with an error level (`ERROR`, `CRITICAL`, `FATAL`, `PANIC`, `level=error`,
+    `[error]`) by its text without the app's own timestamp, numbers, ids and quoted values.
+  - The pack gets the 8 most frequent kinds, each with one masked sample line, how often and when, and the frames,
+    and the state of each container. The service counts the kinds for the ranking.
+  - Container logs on other hosts may come later: from a log store such as Loki, an agent, or SSH.
 
 ### Other forges
 
@@ -663,7 +686,8 @@ runs, and different network rights for setup and verify.
 | An agent copies its CLI credentials into its output | Every text lastcall publishes (pull request, issue, comment) goes through the secret scanner first, and a hit blocks it. |
 | Unexpected bills | Hard stop when paid usage is active, and a reserve per account. An API key has a monthly budget that the gate checks before every step, and a step whose tokens have no price stops the run. |
 | An API key leaks | It lives in the secret store, and only the steps of its account get it, as a read-only file in `/ctx` that the supervisor deletes after the step; never on a command line, in the environment or in a log. An agent can read it, as it can read its CLI's login: the secret scanner blocks it in what lastcall publishes, and the egress allowlist limits where it can go. The owner gives the key a spending limit at the provider. |
-| Data from production reaches a model | Only an error's type, its message masked (emails, addresses, credentials, tokens, long numbers), its counts, and the file, line, function and code line of the project's own frames. Never variables, request data, user data, tags or breadcrumbs. The tracker's token can only read, and lives in the secret store. |
+| Data from production reaches a model | Only an error's type, its message masked (emails, addresses, credentials, tokens, long numbers), its counts, and the file, line, function and code line of the project's own frames. Never variables, request data, user data, tags or breadcrumbs. The tracker's token can only read, and lives in the secret store. From container logs, one masked line per kind of error. |
+| lastcall reads the logs of the owner's containers | None until the owner gives a container a project, on the settings page or with a label. The supervisor reads only the containers that the service names, and of them only their logs and state, within limits of time, lines and bytes; never the containers of lastcall's steps, whose output is the agents'. It never acts on a container, and the service never gets the Docker socket. The choice lives in the service: a bug there could name another container of the host, and get its logs and state, never more. |
 | A step abuses the local model server | The server runs on the sandbox network with no way out, so no step can make it download anything. Models come in only through `ollama-pull`, which the owner runs. |
 | Takeover of the web UI | It listens only on the host by default. The password is chosen with a one-time code that only the service's log shows, and kept as an scrypt hash. Sign-in locks after repeated failures. Sessions live in the store; the `HttpOnly`, `SameSite=Lax` cookie (`Secure` over HTTPS) holds only a random token. Every POST needs this site's `Origin` and, when signed in, the session's CSRF token. A strict CSP, and no JavaScript. |
 
@@ -689,8 +713,9 @@ and tests and dependencies too among them), an audit, tests, upgrades or an impr
 service reads from GitHub every 6 hours and the owner can read again at any time. Pause holds the bursts only: an
 audit or an improvement that the owner orders still starts, on the free account with the most quota left before its
 reset. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the address, the
-organization and a read-only token, saved only when one request with them gets through), and the notifications: the
-destinations, chosen by service with only the fields that
+organization and a read-only token, saved only when one request with them gets through), the container logs (the
+host's containers, each with its project or the one lastcall suggests, and the label that works as well), and the
+notifications: the destinations, chosen by service with only the fields that
 service needs (Telegram finds the owner's chat from the bot's recent messages) or as any Apprise URL, saved only when
 their test notification gets through, kept in the secret store and shown with their secrets hidden; the events (a pull
 request opens, decisions or ideas wait, lastcall merges an approved pull request or proposes a revert, a run fails or
@@ -778,10 +803,15 @@ forges, notifiers, secret stores and signals, so that a plugin can be a normal P
 - Recipes `issues`, `tests` and `deps`, and the turn of the recipes that the owner wants for a project.
 - Signals: errors in production from Sentry or GlitchTip, in the audits, the tests and the ranking.
 
+**v0.6: closer to the owner's apps**
+
+- Container logs as signals, on lastcall's own host: the owner chooses the containers of each project, with
+  suggestions, or labels them (section 8). Done.
+
 **Next, as people ask for it**
 
 - GitLab or Forgejo, through the `Forge` interface (section 8).
-- Container logs and health as signals, read on the host as the prototype did.
+- Container logs on other hosts: from a log store such as Loki, an agent, or SSH.
 - Asking once for a repair when an engine without structured output answers with something that is not the JSON
   (section 7).
 

@@ -37,6 +37,23 @@ services:
   login:
     image: lastcall-runner:dev
 
+  log-source:  # an app whose container logs the integration tests read: the label lets lastcall read them
+    image: busybox:1.36.1
+    profiles: [test]
+    network_mode: none
+    labels:
+      lastcall.project: it/logs
+    command:
+      - sh
+      - -c
+      - |
+        echo 'Traceback (most recent call last):'
+        echo '  File "/app/shop/pricing.py", line 3, in average'
+        echo '    return total / len(prices)'
+        echo 'ZeroDivisionError: division by zero'
+        echo 'ERROR payment failed for maria@example.com' >&2
+        exec sleep 3600
+
   it:  # the integration tests play lastcall's part against the real supervisor, proxy and runner
     build:
       context: .
@@ -54,3 +71,5 @@ services:
     depends_on:
       supervisor:
         condition: service_healthy
+      log-source:
+        condition: service_started

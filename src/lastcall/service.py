@@ -7,8 +7,8 @@ Every minute it ticks:
   lastcall's own ledger, by its policy: its monthly budget at the pace of the month, or its schedule;
 - every 10 minutes it reads from GitHub what the owner did with lastcall's pull requests and issues;
 - every 6 hours it refreshes the suggestions for the installed repositories;
-- every 30 minutes, when the owner connected an error tracker, it counts each project's errors in production in the
-  last day: projects with errors rank higher;
+- every 30 minutes it counts each project's errors in production in the last day, from the owner's error tracker
+  and from the logs of the project's containers: projects with errors rank higher;
 - the owner's orders ("audit this project now" or "improve it now", from the web UI) start on a free account; an
   audit can start on all of them together (fan-out);
 - with fan-out on, accounts that burst at the same time review one project together, with one judge;
@@ -31,7 +31,7 @@ import traceback
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from lastcall import i18n, projects, signals
+from lastcall import i18n, logs, projects, signals
 from lastcall.accounts import Account, read_quota
 from lastcall.github import GitHubError
 from lastcall.quota import Plan, QuotaError, Reading, account_rate, plan
@@ -195,19 +195,30 @@ class Service:
             )
 
     def read_signals(self, now: float) -> None:
-        """How many errors each active project had in production in the last day, from the owner's error tracker."""
+        """How many errors each active project had in production in the last day: from the owner's error tracker,
+        and kinds of errors in the logs of its containers."""
         tracker = signals.Tracker.load(self.inst.secrets) if self.inst.secrets is not None else None
+        choices, listed = logs.chosen(self.inst.store), list[dict[str, Any]]()
+        try:
+            listed = self.inst.box.containers() if self.inst.box is not None else []
+        except SandboxError as e:
+            self.log(f"the containers were not listed: {e}")
         counts: dict[str, int] = {}
-        for p in self.inst.store.projects(active_only=True) if tracker else []:
-            if not p.signals or tracker is None:
-                continue
-            try:
-                found = signals.errors(tracker, p.signals, (), now, self.inst.fetch, days=1, limit=100, frames=False)
-            except signals.SignalsError as e:
-                self.log(f"{p.repo}: the errors in production were not read: {e}")
-                continue
-            counts[p.repo] = len(found)
-        self.errors = counts
+        for p in self.inst.store.projects(active_only=True):
+            if tracker is not None and p.signals:
+                try:
+                    found = signals.errors(tracker, p.signals, (), now, self.inst.fetch, 1, 100, frames=False)
+                    counts[p.repo] = counts.get(p.repo, 0) + len(found)
+                except signals.SignalsError as e:
+                    self.log(f"{p.repo}: the errors in production were not read: {e}")
+            names = logs.names_for(p.repo, listed, choices)
+            if names:
+                try:
+                    kinds = logs.errors(self.inst.box.logs(names, logs.HOURS * 3600))[1]
+                    counts[p.repo] = counts.get(p.repo, 0) + len(kinds)
+                except SandboxError as e:
+                    self.log(f"{p.repo}: the container logs were not read: {e}")
+        self.errors = {repo: n for repo, n in counts.items() if n}
 
     def alert(self, account: str, event: str, on: bool, **values: str) -> None:
         """Tell the owner when a problem starts, once; forget it when it ends, so the next one is told again."""
