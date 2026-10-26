@@ -734,7 +734,7 @@ input, select, textarea {
   border: 1.5px solid var(--line);
   border-radius: var(--r-sm);
 }
-input::placeholder { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+input::placeholder { color: var(--muted); opacity: 1; }
 input:hover, select:hover { border-color: var(--accent); }
 input[type="checkbox"], input[type="radio"] { width: 1.25rem; min-height: 1.25rem; height: 1.25rem; margin: 0; padding: 0; }
 input:focus-visible, select:focus-visible { outline-offset: 1px; }
@@ -1011,11 +1011,12 @@ main > .notice.done { position: sticky; top: var(--s2); z-index: 3; box-shadow: 
 
 /* Run now: the account, four buttons (2 by 2 on a phone, in one row when the card is wide) and what each does. */
 .run-form { container-type: inline-size; }
+fieldset.has-help { gap: var(--s2) var(--s1); }
 fieldset.run-now { gap: var(--s3) var(--s1); padding: var(--s3); background: var(--raised); border-radius: var(--r-md); }
 fieldset.has-help { grid-template-columns: max-content max-content minmax(0, 1fr); align-items: center; }
 fieldset.has-help > * { grid-column: 1 / -1; }
 fieldset.has-help > legend, fieldset.has-help > .help { grid-column: auto; }
-fieldset.has-help > legend { margin: 0; }
+fieldset.has-help > legend { float: left; margin: 0; }
 .run-now legend, .project-settings legend { float: left; padding: 0; font-family: var(--font-round); font-size: 1.02rem; font-weight: 700; }
 .project-settings legend { width: 100%; margin: 0 0 var(--s1); }
 .run-now select { background: var(--surface); }

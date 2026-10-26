@@ -51,9 +51,9 @@
       <summary>{{ t("web.accounts.login_title") }}</summary>
       <div class="fold-body">
         <div class="line"><p class="small">{{ t("web.accounts.login") }}</p>{{ help(hb, "accounts-login", t("web.accounts.login_title"), ["accounts.login"], true) }}</div>
-        <pre><code>{{ c.login }}</code></pre>
+        <pre tabindex="0" role="region" aria-label="{{ t('web.accounts.login_title') }}"><code>{{ c.login }}</code></pre>
         <p class="small">{{ t("web.accounts.login_ps") }}</p>
-        <pre><code>{{ c.login_ps }}</code></pre>
+        <pre tabindex="0" role="region" aria-label="{{ t('web.accounts.login_title') }}"><code>{{ c.login_ps }}</code></pre>
         <div class="line caption"><p class="small muted">{{ t("web.help.common.terminal") }}</p></div>
       </div>
     </details>
@@ -239,8 +239,8 @@
           <input id="key-budget" name="budget" type="number" min="0.01" step="0.01" value="{{ f.budget or '' }}" placeholder="20" required aria-describedby="key-budget-hint">
           <p id="key-budget-hint" class="hint">{{ t("web.accounts.budget_hint") }}</p>
         </div>
-        <fieldset>
-          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys, true) }}</div>
+        <fieldset class="has-help">
+          <legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys, true) }}
           {%- for kind in ("budget", "schedule", "manual") %}
           <label class="check plain"><input type="radio" name="policy" value="{{ kind }}"{% if (f.policy or "budget") == kind %} checked{% endif %}> {{ t("web.spend." ~ kind) }}</label>
           {%- endfor %}
@@ -266,8 +266,8 @@
     <div class="dest dest-local">
       <h3>{{ t("web.accounts.kind.local") }}</h3>
       <ol class="steps">
-        <li>{{ t("web.accounts.local.step1") }}<pre><code>docker compose --profile local up -d ollama</code></pre></li>
-        <li>{{ t("web.accounts.local.step2") }} <a href="{{ p.models }}">{{ t("web.accounts.local.library") }}</a><pre><code>docker compose --profile local run --rm ollama-pull qwen3-coder</code></pre></li>
+        <li>{{ t("web.accounts.local.step1") }}<pre tabindex="0"><code>docker compose --profile local up -d ollama</code></pre></li>
+        <li>{{ t("web.accounts.local.step2") }} <a href="{{ p.models }}">{{ t("web.accounts.local.library") }}</a><pre tabindex="0"><code>docker compose --profile local run --rm ollama-pull qwen3-coder</code></pre></li>
         <li>{{ t("web.accounts.local.step3") }}</li>
       </ol>
       <div class="line caption"><p class="small muted">{{ t("web.help.common.terminal") }}</p></div>
@@ -286,8 +286,8 @@
           <input id="local-model" name="model" type="text" value="{{ f.model or '' }}" placeholder="qwen3-coder" autocomplete="off" spellcheck="false" required aria-describedby="local-model-hint">
           <p id="local-model-hint" class="hint">{{ t("web.accounts.local.model_hint") }}</p>
         </div>
-        <fieldset>
-          <div class="label-row"><legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys, true) }}</div>
+        <fieldset class="has-help">
+          <legend>{{ t("web.accounts.policy_label") }}</legend>{{ help(hb, "accounts-policy", t("web.accounts.policy_label"), policy_keys, true) }}
           {%- for kind in ("schedule", "manual") %}
           <label class="check plain"><input type="radio" name="policy" value="{{ kind }}"{% if (f.policy or "schedule") == kind %} checked{% endif %}> {{ t("web.spend." ~ kind) }}</label>
           {%- endfor %}

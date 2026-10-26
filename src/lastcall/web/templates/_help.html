@@ -2,14 +2,17 @@
     A page makes `{% set hb = namespace(items=[], seen=[]) %}`, calls help(hb, ...) next to whatever needs it, and
     bubbles(hb) once, at the end of main. Each popover renders once per page, and only when one of its "?" did.
     A "?" renders once per page too, on the first card or field of its kind, unless the call passes `repeat=true`
-    (for forms that show one at a time, such as the forms of the add picker).
+    (for forms that show one at a time, such as the forms of the add picker, and for fields inside a closed fold).
+    A repeat call always draws its "?" and registers the popover, but it never uses up the page's one plain "?":
+    a card's own line still gets its "?" when a fold of an earlier card repeated the same bubble.
     `keys` are catalog keys under web.help.*; their paragraphs make the popover's text. -#}
 {% macro help(hb, id, title, keys, repeat=false) -%}
 {%- set target = "help-" ~ id -%}
 {%- if repeat or target not in hb.seen -%}
 <button type="button" class="help" popovertarget="{{ target }}" aria-label="{{ t('web.help.label', topic=title) }}">?</button>
 {%- endif -%}
-{%- if target not in hb.seen %}{% set hb.seen = hb.seen + [target] %}{% set hb.items = hb.items + [(target, title, keys)] %}{% endif -%}
+{%- if target not in hb.items|map(attribute=0) %}{% set hb.items = hb.items + [(target, title, keys)] %}{% endif -%}
+{%- if not repeat and target not in hb.seen %}{% set hb.seen = hb.seen + [target] %}{% endif -%}
 {%- endmacro %}
 
 {% macro bubbles(hb) -%}

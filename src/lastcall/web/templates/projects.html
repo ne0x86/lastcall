@@ -18,7 +18,7 @@
 {% if error %}
 <div class="notice error" role="alert">
   <p>{{ error }}</p>
-  {%- if install %}<p class="notice-link"><a href="{{ install }}">{{ t("web.add.install") }}</a>{{ help(hb, "projects-install", t("web.suggest.install"), ["projects.install"]) }}</p>{% endif %}
+  {%- if install %}<div class="line notice-link"><p><a href="{{ install }}">{{ t("web.add.install") }}</a></p>{{ help(hb, "projects-install", t("web.suggest.install"), ["projects.install"]) }}</div>{% endif %}
 </div>
 {% endif %}
 
@@ -32,9 +32,9 @@
         <button class="secondary" aria-label="{{ t('web.suggest.add') }} {{ s.repo }}">{{ t("web.suggest.add") }}</button>
       </form>
     </div>
-    <p class="suggestion-meta"><span class="chip score">{{ s.score }}</span>{{ help(hb, "projects-score", t("web.help.projects.score.title"), ["projects.score"], again) }}
+    <div class="suggestion-meta"><span class="chip score">{{ s.score }}</span>{{ help(hb, "projects-score", t("web.help.projects.score.title"), ["projects.score"], again) }}
       {%- if s.language %} <span class="muted small">{{ s.language }}</span>{% endif %}
-      {%- if s.size %} <span class="muted small">{{ s.size }}</span>{{ help(hb, "projects-size", t("web.help.projects.size.title"), ["projects.size"], again) }}{% endif %}</p>
+      {%- if s.size %} <span class="muted small">{{ s.size }}</span>{{ help(hb, "projects-size", t("web.help.projects.size.title"), ["projects.size"], again) }}{% endif %}</div>
     <p class="small">{{ s.reasons|join(" · ") }}</p>
   </li>
 {%- endmacro %}
@@ -56,7 +56,7 @@
   {%- else %}
   <p class="muted">{{ t("web.suggest.intro") }}</p>
   <div class="status">
-    <p class="muted small">{{ v.refreshed }}{{ help(hb, "projects-refresh", t("web.help.projects.refresh.title"), ["projects.refresh"]) }}</p>
+    <div class="line"><p class="muted small">{{ v.refreshed }}</p>{{ help(hb, "projects-refresh", t("web.help.projects.refresh.title"), ["projects.refresh"]) }}</div>
     <form method="post" action="{{ url_for('refresh_projects') }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="secondary">{{ t("web.suggest.refresh") }}</button>
@@ -72,7 +72,7 @@
     <ul class="plain suggestions">{% for s in v.others %}{{ suggestion(s, loop.first) }}{% endfor %}</ul>
   </details>
   {%- endif %}
-  <p class="install-link"><a href="{{ v.install_url }}">{{ t("web.suggest.install") }}</a>{{ help(hb, "projects-install", t("web.suggest.install"), ["projects.install"], true) }}</p>
+  <div class="line install-link"><p><a href="{{ v.install_url }}">{{ t("web.suggest.install") }}</a></p>{{ help(hb, "projects-install", t("web.suggest.install"), ["projects.install"], true) }}</div>
   {%- endif %}
 </section>
 {%- endmacro %}

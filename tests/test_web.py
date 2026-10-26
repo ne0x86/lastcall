@@ -927,6 +927,11 @@ def test_container_logs_from_the_web(tmp_path: Path) -> None:
     assert '<option value="acme/shop" selected>acme/shop</option>' in page  # the suggestion comes chosen
     assert "Read for acme/blog, from its label." in page and "lastcall.project: owner/name" in page
     assert '<input type="hidden" name="shown-1" value="acme/shop">' in page
+    # each source's select says which container it is for, not only "Project"
+    assert (
+        '<strong id="logs-name-1">shop-web-1</strong>' in page
+        and 'id="logs-1" aria-describedby="logs-name-1"' in page
+    )
     form = {"csrf": csrf, "name-1": "shop-web-1", "project-1": "acme/shop", "shown-1": "acme/shop"}
     form |= {"name-3": "redis", "project-3": "", "shown-3": ""}
     response = web.client.post("/settings/logs", data=form, headers=SITE)
@@ -992,6 +997,7 @@ def test_loki_from_the_web(tmp_path: Path) -> None:
     assert "Connected to http://loki.example.com:3100." in page
     assert '<option value="container" selected>container</option>' in page
     assert "Compose project: shop" in page and "Suggested: acme/shop. Save to read it." in page
+    assert 'id="loki-1" aria-describedby="loki-name-1"' in page and 'id="loki-name-1"' in page
     rows = {"csrf": csrf, "label": "container", "name-1": "redis", "project-1": "", "shown-1": ""}
     rows |= {"name-2": "shop-web-1", "project-2": "acme/shop", "shown-2": "acme/shop"}
     response = web.client.post("/settings/loki/sources", data=rows, headers=SITE)
@@ -1147,6 +1153,106 @@ def test_every_field_of_the_add_forms_has_its_help(web: Web) -> None:
     targets = re.findall(r'popovertarget="(help-[^"]+)"(?! popovertargetaction)', page)
     for target in set(targets):
         assert page.count(f'id="{target}" popover') == 1, target
+
+
+def help_buttons_inside_a_paragraph(page: str) -> list[str]:
+    from html.parser import HTMLParser
+
+    found: list[str] = []
+
+    class Walk(HTMLParser):
+        depth = 0
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag == "p":
+                self.depth += 1
+            elif tag == "button" and self.depth and "help" in (dict(attrs).get("class") or "").split():
+                found.append(dict(attrs).get("popovertarget") or "")
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag == "p" and self.depth:
+                self.depth -= 1
+
+    Walk().feed(page)
+    return found
+
+
+def test_a_help_button_never_sits_inside_a_paragraph(github_web: Web) -> None:
+    web = github_web
+    two_accounts(web)
+    web.store.add_project("acme/api")
+    web.store.set_setting("heartbeat", str(NOW))
+    pages = [web.client.get(path).get_data(as_text=True) for path in ("/", "/accounts", "/projects", "/settings")]
+    refused = web.client.post("/projects/add", data={"csrf": web.csrf(), "repo": "acme/elsewhere"}, headers=SITE)
+    assert "installations/new" in refused.get_data(as_text=True)
+    pages.append(refused.get_data(as_text=True))
+    for page in pages:
+        assert 'class="help"' in page
+        assert help_buttons_inside_a_paragraph(page) == []
+
+
+def test_the_help_of_a_page_sits_next_to_what_it_explains(github_web: Web) -> None:
+    web = github_web
+    web.store.add_account("claude", "claude-code", "English", 10)
+    page = web.client.get("/accounts").get_data(as_text=True)
+    # the legend is the fieldset's first child, or the group has no name; the "?" comes after it
+    groups = re.findall(
+        r'<fieldset class="has-help">\s*<legend>When it spends</legend><button type="button" class="help"', page
+    )
+    assert len(groups) == 2
+    # every long command can be scrolled from the keyboard
+    assert "<pre>" not in page and page.count('<pre tabindex="0"') >= 4
+    settings = web.client.get("/settings").get_data(as_text=True)
+    assert "<pre>" not in settings and '<pre tabindex="0"' in settings
+
+
+def test_every_destination_of_the_picker_has_the_help_of_its_test_button(web: Web) -> None:
+    web.set_up()
+    page = web.client.get("/settings").get_data(as_text=True)
+    panels = page.split('<div class="dest dest-')[1:]
+    assert len(panels) == 6
+    for panel in panels:
+        assert 'popovertarget="help-settings-save_test"' in panel.split('<div class="form-actions">')[-1], panel[:20]
+    assert page.count('id="help-settings-save_test" popover') == 1
+
+
+def test_a_cards_plan_keeps_its_help_when_an_earlier_card_repeated_it_in_a_fold(web: Web) -> None:
+    web.store.add_account("api", "opencode", provider="openrouter", policy="budget", budget_usd=20)
+    web.store.add_account("box", "opencode", provider="ollama", policy="schedule", schedule="* 1-6 * * *")
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    page = web.client.get("/accounts").get_data(as_text=True)
+    box = page.split('id="account-box"')[1].split("</article>")[0]
+    plan = box.split('<div class="plan')[1].split("</div>")[0]
+    assert 'popovertarget="help-common-schedule"' in plan
+    assert page.count('id="help-common-schedule" popover') == 1
+
+
+def test_the_help_of_a_models_own_window_is_titled_for_it(web: Web) -> None:
+    web.store.add_account("claude", "claude-code", "Spanish", 10)
+    week = Window("week", 30, NOW + 30 * HOUR, "expiring", 168.0)
+    opus = Window("week", 93, NOW + 30 * HOUR, "expiring", 168.0, "Opus")
+    web.store.record_reading(Reading("claude", (week, opus), False, "exact", NOW - 600))
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    page = web.client.get("/", headers={"Accept-Language": "en"}).get_data(as_text=True)
+    assert (
+        "Help: A model&#39;s own window" in page
+        and 'id="help-common-window_model-title">A model&#39;s own window' in page
+    )
+    page = web.client.get("/", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Ayuda: La ventana propia de un modelo" in page
+
+
+def test_the_two_tables_of_the_dashboard_name_their_own_help(web: Web) -> None:
+    seed(web.store)
+    web.set_up()
+    web.store.set_setting("heartbeat", str(NOW))
+    page = web.client.get("/").get_data(as_text=True)
+    assert (
+        'id="help-dashboard-projects-title">Projects<' in page
+        and 'id="help-dashboard-runs-title">Recent runs<' in page
+    )
 
 
 def test_the_readout_counts_what_waits_and_says_one_in_the_singular(web: Web) -> None:

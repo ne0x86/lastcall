@@ -72,7 +72,7 @@
   {%- if error %}
   <div class="notice error" role="alert">
     <p>{{ error }}</p>
-    {%- if details %}<pre><code>{{ details }}</code></pre>{% endif %}
+    {%- if details %}<pre tabindex="0"><code>{{ details }}</code></pre>{% endif %}
   </div>
   {%- endif %}
   {%- set val = v.filled %}
@@ -114,7 +114,7 @@
           <p id="telegram-chat-hint" class="hint">{{ t("web.dest.telegram.chat_hint") }}</p>
         </div>
         {%- endif %}
-        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"]) }}</div>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -136,7 +136,7 @@
           <input id="ntfy-server" name="server" type="url" value="{{ val.server if v.service == 'ntfy' and val.server else 'https://ntfy.sh' }}" autocomplete="off" spellcheck="false" aria-describedby="ntfy-server-hint">
           <p id="ntfy-server-hint" class="hint">{{ t("web.dest.ntfy.server_hint") }}</p>
         </div>
-        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"]) }}</div>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -153,7 +153,7 @@
           <label for="discord-webhook">{{ t("web.dest.webhook") }}</label>
           <input id="discord-webhook" name="webhook" type="url" value="{{ val.webhook if v.service == 'discord' else '' }}" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false" required>
         </div>
-        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"]) }}</div>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -170,7 +170,7 @@
           <label for="slack-webhook">{{ t("web.dest.webhook") }}</label>
           <input id="slack-webhook" name="webhook" type="url" value="{{ val.webhook if v.service == 'slack' else '' }}" placeholder="https://hooks.slack.com/services/…" autocomplete="off" spellcheck="false" required>
         </div>
-        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"]) }}</div>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -198,7 +198,7 @@
           <label for="email-smtp">{{ t("web.dest.email.smtp") }}</label>
           <input id="email-smtp" name="smtp" type="text" value="{{ val.smtp if v.service == 'email' else '' }}" placeholder="smtp.example.com" autocomplete="off" spellcheck="false">
         </div>
-        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"]) }}</div>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -212,7 +212,7 @@
           <label for="apprise-url">{{ t("web.dest.apprise.url") }}</label>
           <input id="apprise-url" name="url" type="text" value="{{ val.url if v.service == 'apprise' else '' }}" autocomplete="off" spellcheck="false" required>
         </div>
-        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"]) }}</div>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
   </div>
@@ -327,7 +327,7 @@
       <ul class="rows sources">
         {%- for c in v.logs.rows %}
         <li>
-          <p class="source-name"><strong>{{ c.name }}</strong> <span class="chip">{{ c.state }}</span></p>
+          <p class="source-name"><strong id="logs-name-{{ loop.index }}">{{ c.name }}</strong> <span class="chip">{{ c.state }}</span></p>
           <p class="hint">{{ c.image }}</p>
           {%- if c.label %}
           <p class="small">{{ t("web.logs.from_label", project=c.label) }}</p>
@@ -335,7 +335,7 @@
           <input type="hidden" name="name-{{ loop.index }}" value="{{ c.name }}">
           <input type="hidden" name="shown-{{ loop.index }}" value="{{ c.selected }}">
           <div class="label-row"><label for="logs-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>{{ help(hb, "settings-logs_project", t("web.logs.project"), ["settings.logs_project"]) }}</div>
-          <select id="logs-{{ loop.index }}" name="project-{{ loop.index }}">
+          <select id="logs-{{ loop.index }}" aria-describedby="logs-name-{{ loop.index }}" name="project-{{ loop.index }}">
             <option value="">{{ t("web.logs.not_read") }}</option>
             {%- for repo in v.logs.repos %}<option value="{{ repo }}"{% if repo == c.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
           </select>
@@ -351,7 +351,7 @@
       <summary>{{ t("web.logs.label_title") }}</summary>
       <div class="fold-body">
         <p class="small">{{ t("web.logs.label_how") }}</p>
-        <pre><code>services:
+        <pre tabindex="0"><code>services:
   your-app:
     labels:
       lastcall.project: owner/name</code></pre>
@@ -425,12 +425,12 @@
       <ul class="rows sources">
         {%- for s in v.loki.rows %}
         <li>
-          <p class="source-name"><strong>{{ s.name }}</strong>{% for host in s.hosts %} <span class="chip">{{ host }}</span>{% endfor %}</p>
+          <p class="source-name"><strong id="loki-name-{{ loop.index }}">{{ s.name }}</strong>{% for host in s.hosts %} <span class="chip">{{ host }}</span>{% endfor %}</p>
           {%- if s.compose_project %}<p class="hint">{{ t("web.loki.compose", project=s.compose_project) }}</p>{% endif %}
           <input type="hidden" name="name-{{ loop.index }}" value="{{ s.name }}">
           <input type="hidden" name="shown-{{ loop.index }}" value="{{ s.selected }}">
           <label for="loki-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>
-          <select id="loki-{{ loop.index }}" name="project-{{ loop.index }}">
+          <select id="loki-{{ loop.index }}" aria-describedby="loki-name-{{ loop.index }}" name="project-{{ loop.index }}">
             <option value="">{{ t("web.logs.not_read") }}</option>
             {%- for repo in v.loki.repos %}<option value="{{ repo }}"{% if repo == s.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
           </select>

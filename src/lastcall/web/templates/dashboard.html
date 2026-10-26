@@ -41,7 +41,7 @@
     <p class="hero-text">{{ t("web.service.down") }}</p>
     {%- if v.seen %}<p class="hero-seen">{{ v.seen }}</p>{% endif %}
     <p class="hero-text">{{ t("web.service.start") }}</p>
-    <div class="command"><pre><code>docker compose restart lastcall</code></pre>{{ help(hb, "common-terminal", t("web.help.common.terminal.title"), ["common.terminal"]) }}</div>
+    <div class="command"><pre tabindex="0"><code>docker compose restart lastcall</code></pre>{{ help(hb, "common-terminal", t("web.help.common.terminal.title"), ["common.terminal"]) }}</div>
     {%- if v.paused %}<p class="hero-seen">{{ v.service }}</p>{% endif %}
     {%- else %}
     <div class="hero-line"><p class="hero-text">{{ v.service }}</p>{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}</div>
@@ -115,7 +115,7 @@
 {% endif %}
 
 <section class="card" id="projects" aria-labelledby="projects-title">
-  <div class="section-head"><h2 id="projects-title">{{ t("web.projects.title") }}</h2>{{ help(hb, "dashboard-projects", t("web.help.common.table.title"), ["dashboard.state", "common.findings", "dashboard.prs"]) }}</div>
+  <div class="section-head"><h2 id="projects-title">{{ t("web.projects.title") }}</h2>{{ help(hb, "dashboard-projects", t("web.projects.title"), ["dashboard.state", "common.findings", "dashboard.prs"]) }}</div>
   {%- if v.projects %}
   <div class="table projects-table">
     <table>
@@ -145,7 +145,7 @@
 </section>
 
 <section class="card" id="runs" aria-labelledby="runs-title">
-  <div class="section-head"><h2 id="runs-title">{{ t("web.runs.title") }}</h2>{{ help(hb, "dashboard-runs", t("web.help.common.table.title"), ["dashboard.trigger", "dashboard.status"]) }}</div>
+  <div class="section-head"><h2 id="runs-title">{{ t("web.runs.title") }}</h2>{{ help(hb, "dashboard-runs", t("web.runs.title"), ["dashboard.trigger", "dashboard.status"]) }}</div>
   {%- if v.runs %}
   <div class="table runs-table">
     <table>

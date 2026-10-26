@@ -38,7 +38,7 @@
 <div class="plan{% if held %} is-held{% elif a.plan_code in ('now', 'pace', 'schedule') %} is-live{% endif %}">
   <p>{% if waits %}{{ t("web.plan.held." ~ held) }}{% else %}{{ a.plan }}{% endif %}</p>
   {%- if waits or a.plan_code in ("now", "later", "small") %}{{ help(hb, "common-burst", t("web.help.common.burst.title"), ["common.burst"]) }}
-  {%- elif a.plan_code == "model" %}{{ help(hb, "common-window_model", t("web.help.common.burst.title"), ["common.window_model"]) }}
+  {%- elif a.plan_code == "model" %}{{ help(hb, "common-window_model", t("web.help.common.window_model.title"), ["common.window_model"]) }}
   {%- elif a.plan_code in ("pace", "ahead", "spent", "no-budget") %}{{ help(hb, "common-budget", t("web.window.budget"), ["common.budget"]) }}
   {%- elif a.plan_code in ("schedule", "window", "never", "bad-schedule") %}{{ help(hb, "common-schedule", t("web.accounts.schedule_label"), ["common.schedule"]) }}
   {%- elif a.plan_code == "paid" %}{{ help(hb, "common-paid", t("web.help.common.paid.title"), ["common.paid"]) }}
@@ -53,12 +53,12 @@
 {%- set id = "window-" ~ n ~ "-" ~ loop.index %}
 {%- if w.role == "throttle" %}{% set limit = 90 %}{% elif w.role == "budget" %}{% set limit = 100 %}{% else %}{% set limit = 100 - w.reserve %}{% endif %}
 <div class="window">
-  <p class="window-label"><span class="window-name"><span id="{{ id }}">{{ w.label }}</span>
+  <div class="window-label"><span class="window-name"><span id="{{ id }}">{{ w.label }}</span>
     {%- if w.role == "throttle" %}{{ help(hb, "common-window_throttle", w.label, ["common.window_throttle"]) }}
     {%- elif w.role == "budget" %}{{ help(hb, "common-budget", w.label, ["common.budget"]) }}
-    {%- elif w.model %}{{ help(hb, "common-window_model", w.label, ["common.window_model"]) }}
+    {%- elif w.model %}{{ help(hb, "common-window_model", t("web.help.common.window_model.title"), ["common.window_model"]) }}
     {%- else %}{{ help(hb, "common-window_expiring", w.label, ["common.window_expiring"]) }}{% endif -%}
-  </span> <span class="window-used">{{ w.used_text }}{% if w.resets %} · {{ w.resets }}{% endif %}</span></p>
+  </span> <span class="window-used">{{ w.used_text }}{% if w.resets %} · {{ w.resets }}{% endif %}</span></div>
   <div class="bar reserve-{{ w.reserve }}">
     <meter class="role-{{ w.role }}" aria-labelledby="{{ id }}" min="0" max="100" low="{{ limit }}" high="{{ limit }}" optimum="0" value="{{ w.used }}">{{ w.used_text }}</meter>
   </div>

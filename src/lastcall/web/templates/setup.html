@@ -14,7 +14,7 @@
       <li>
         <h2>{{ t("web.setup.step1") }}</h2>
         <p>{{ t("web.setup.step1_text") }}</p>
-        <div class="command"><pre><code>docker compose logs lastcall</code></pre></div>
+        <div class="command"><pre tabindex="0"><code>docker compose logs lastcall</code></pre></div>
         <div class="field">
           <div class="label-row"><label for="code">{{ t("web.setup.code") }}</label>{{ help(hb, "setup-code", t("web.setup.code"), ["setup.code", "common.terminal"]) }}</div>
           <input id="code" name="code" type="text" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
