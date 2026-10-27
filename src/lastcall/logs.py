@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -29,9 +29,13 @@ if TYPE_CHECKING:
     from lastcall.store import Store
 
 LABEL = "lastcall.project"
+OWN = "lastcall"  # lastcall's own Compose project (compose.yaml): its containers are named lastcall-<service>-<n>
 CHOSEN = "container_projects"  # the owner's choices: container name -> owner/name, as JSON
 HOURS = 24
 MAX_CONTAINERS = 10  # per project
+MAX_PROJECT = (
+    140  # characters of a repository's name (owner/name) at most: what a refusal gives back of what was typed
+)
 TITLE = f"Errors in the container logs (last {HOURS} hours)"
 MAX_KINDS = 8
 MAX_FRAMES = 6
@@ -71,16 +75,132 @@ def shown(choice: str, repos: Iterable[str]) -> tuple[str, str]:
     """What the Settings page shows of the owner's choice for a container or a source: the project, as the projects
     page writes it, while it is one; or, apart, the name that the choice keeps after the owner removed the project.
     Settings keeps that choice, so that adding the project again brings it back, and the page shows none meanwhile:
-    a form that sent the removed name back as the one it showed would erase it."""
+    no form asks for it to go, and an empty field changes nothing (`apply_form`)."""
     for repo in repos:
         if repo.lower() == choice.lower():
             return repo, ""
     return "", choice
 
 
+def project_named(typed: str, repos: Iterable[str]) -> str | None:
+    """The project that `typed` names, as the Projects page writes it, whatever the case; None when it names none."""
+    wanted = typed.strip().lower()
+    return next((repo for repo in repos if repo.lower() == wanted), None)
+
+
 def project_of(container: Mapping[str, Any], choices: Mapping[str, str]) -> str:
     """The project of a container: its label, or else the owner's choice; "" for none."""
     return str(container.get("label") or "") or choices.get(str(container.get("name") or ""), "")
+
+
+def is_own(item: Mapping[str, Any]) -> bool:
+    """Whether a container, or a source in Loki, is one of lastcall's own: in its Compose project, or named
+    `lastcall-...`. The settings page never lists them: lastcall does not read its own logs."""
+    return str(item.get("compose_project") or "").lower() == OWN or str(item.get("name") or "").lower().startswith(
+        OWN + "-"
+    )
+
+
+@dataclass(frozen=True)
+class Parts:
+    """The containers of a host, or the sources of a Loki, in the three parts that the settings page shows."""
+
+    read: list[dict[str, Any]]  # lastcall reads them: by their label, or by the owner's choice of a project
+    suggested: list[dict[str, Any]]  # lastcall found a project for them, which the owner has not chosen yet
+    others: list[dict[str, Any]]  # the rest: no project fits, the owner said no, or the chosen project is gone
+
+    @property
+    def count(self) -> int:
+        return len(self.read) + len(self.suggested) + len(self.others)
+
+    def others_named(self, query: str) -> list[dict[str, Any]]:
+        """The others whose name contains `query`, whatever the case; all of them for an empty one."""
+        wanted = query.casefold()
+        return [o for o in self.others if wanted in str(o["name"]).casefold()]
+
+
+def parts(listed: Iterable[Mapping[str, Any]], repos: Sequence[str], choices: Mapping[str, str]) -> Parts:
+    """Sort what is listed into read, suggested and the rest, never lastcall's own. A read one has `project`, as the
+    Projects page writes it, and `by` ("label" or "choice"); a label names a project that may not exist (`unknown`).
+    The others carry `suggested` and `gone` (see `shown`). A label wins over a choice, and a suggestion is no choice:
+    nothing is read until the owner chooses it."""
+    read: list[dict[str, Any]] = []
+    suggested: list[dict[str, Any]] = []
+    others: list[dict[str, Any]] = []
+    for item in listed:
+        if is_own(item):
+            continue
+        name, label = str(item.get("name") or ""), str(item.get("label") or "")
+        choice, gone = shown(choices.get(name, ""), repos)
+        if label:
+            project, unnamed = shown(label, repos)
+            read.append({**item, "project": project or unnamed, "by": "label", "unknown": not project})
+        elif choice:
+            read.append({**item, "project": choice, "by": "choice"})
+        else:
+            hint = "" if name in choices else suggest(item, repos)
+            (suggested if hint else others).append({**item, "suggested": hint, "gone": gone})
+    return Parts(read, suggested, others)
+
+
+class Refused(ValueError):
+    """What the settings page's forms send is not acceptable. `reason` is "form" (a form that the page never sends),
+    "none" (a button for the ticked ones, with none ticked) or "project" (a project that is not one: `typed` has what
+    the owner wrote next to each container, `wrong` the first name that is not a project). The text that it gives
+    back is cut at the length of a repository's name: nothing longer is a project, and the page shows it again."""
+
+    def __init__(self, reason: str, typed: Mapping[str, str] | None = None, wrong: str = "") -> None:
+        super().__init__(reason)
+        self.reason, self.wrong = reason, wrong[:MAX_PROJECT]
+        self.typed = {name: text[:MAX_PROJECT] for name, text in (typed or {}).items()}
+
+
+def apply_form(
+    form: Mapping[str, str],
+    ticked: Collection[str],
+    choices: Mapping[str, str],
+    repos: Sequence[str],
+    valid: Callable[[str], bool],
+) -> dict[str, str]:
+    """The owner's choices after one of the settings page's forms, for containers or for sources in Loki. Each row
+    of a form is `name-N`, and, for a project, `project-N`; `pick` says what the button asks for:
+
+    - `selected`, `suggested`: read the rows that are ticked (`ticked` holds their N), or all of them, for the project
+      that the page showed in `project-N`;
+    - `skip`: say no to the ticked rows, so that they are not suggested again;
+    - `stop`: say no to the rows, which were read;
+    - anything else: the rows with a project typed in `project-N`. An empty one changes nothing, so that saving never
+      erases a choice that the page shows apart (a project that was removed).
+
+    A project is checked against `repos`, whatever the case, and written as the Projects page writes it. Nothing is
+    changed unless every row is acceptable: `Refused` says why."""
+    rows = []
+    for key, name in form.items():
+        if key.startswith("name-"):
+            if not valid(name):
+                raise Refused("form")
+            rows.append((key.removeprefix("name-"), name))
+    pick, chosen = form.get("pick", ""), dict(choices)
+    if pick in ("selected", "suggested", "skip", "stop"):
+        picked = [(n, name) for n, name in rows if pick in ("suggested", "stop") or n in ticked]
+        if not picked:
+            raise Refused("none")
+        for n, name in picked:
+            if pick in ("skip", "stop"):
+                chosen[name] = ""
+                continue
+            project = project_named(form.get("project-" + n, ""), repos)
+            if project is None:  # the page showed a project for each suggestion: a form that says another is forged
+                raise Refused("form")
+            chosen[name] = project
+        return chosen
+    typed = {name: text for n, name in rows if (text := form.get("project-" + n, "").strip())}
+    for name, text in typed.items():
+        project = project_named(text, repos)
+        if project is None:
+            raise Refused("project", typed, text)
+        chosen[name] = project
+    return chosen
 
 
 def names_for(repo: str, listed: Iterable[Mapping[str, Any]], choices: Mapping[str, str]) -> list[str]:

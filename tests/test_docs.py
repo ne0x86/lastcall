@@ -3,6 +3,7 @@
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -103,3 +104,66 @@ def test_the_documents_describe_the_state_chip_and_the_trash_button() -> None:
     assert '"/projects/<owner>/<name>/active"' in source and '"/projects/<owner>/<name>/remove"' in source
     cli = (ROOT / "src/lastcall/cli.py").read_text(encoding="utf-8")
     assert "lastcall project remove <owner/name>" in cli and "cli project remove <owner/name>" in README
+
+
+def tiers_json() -> dict[str, Any]:
+    found: dict[str, Any] = json.loads((ROOT / "src/lastcall/data/tiers.json").read_text(encoding="utf-8"))
+    return found
+
+
+def test_the_readme_example_of_a_default_is_the_one_in_data_tiers_json() -> None:
+    model, effort = tiers_json()["claude-code"]["deep"]
+    assert f"such as {model} at `{effort}` effort for Claude Code's *deep*" in " ".join(README.split())
+
+
+def test_the_documents_say_why_the_efforts_differ_and_name_the_ones_of_data_tiers_json() -> None:
+    data = tiers_json()
+    efforts = {tier: data["claude-code"][tier][1] for tier in ("fast", "balanced", "deep")}
+    assert efforts == {tier: data["codex"][tier][1] for tier in efforts}  # one reason for both engines
+    assert len(set(efforts.values())) == 3  # they differ
+    readme = " ".join(README.split())
+    assert "The efforts differ because the work does" in readme
+    assert f"*deep* runs at `{efforts['deep']}`" in readme and f"*balanced* at `{efforts['balanced']}`" in readme
+    assert f"at `{efforts['fast']}`." in readme
+    section = " ".join(DESIGN.split("### Tiers and models")[1].split("### Engines")[0].split())
+    assert "The default efforts differ by tier because the work does" in section
+    assert f"so it takes `{efforts['fast']}`" in section and f"at `{efforts['balanced']}`" in section
+    assert f"at `{efforts['deep']}`" in section and "where quality matters most" in section
+
+
+def test_the_documents_say_where_the_suggested_models_come_from() -> None:
+    import lastcall.web as site
+    from lastcall import catalog
+
+    section = " ".join(DESIGN.split("### Tiers and models")[1].split("### Engines")[0].split())
+    for words in (
+        "**Suggested models.**",
+        "`<datalist>`",
+        "the `models` of its engine in the data file",
+        "https://models.dev/api.json",
+        "`Provider.catalog`",
+        "A local model server (Ollama) gets no suggestions",
+        "`fable` is left out on purpose",
+    ):
+        assert words in section, words
+    for name in tiers_json()["models"]["claude-code"]:
+        assert f"`{name}`" in section, name  # the aliases that the data file lists
+    # the numbers that it gives are the code's
+    assert (site.CATALOG_TIMEOUT, site.CATALOG_SECONDS, site.CATALOG_RETRY_SECONDS) == (5, 86_400, 600)
+    assert "waits 5 seconds at most" in section and "stays in memory for a day" in section
+    assert "A failure is kept for 10 minutes" in section
+    assert catalog.MAX_MODELS == 1000 and "at most 1000 models" in section
+    assert "ask [models.dev](https://models.dev), about once a day, for the names of the models" in " ".join(
+        README.split()
+    )
+
+
+def test_the_documents_say_that_only_the_checks_and_the_health_address_take_part_in_the_watch() -> None:
+    after = " ".join(README.split("**After the merge.**")[1].split("\n## ")[0].split())
+    assert (
+        "Nothing else takes part in the watch: container logs, Loki and your error tracker feed the audits" in after
+    )
+    deployment = " ".join(DESIGN.split("## 11. Delivery, approval and after the merge")[1].split("## 12.")[0].split())
+    assert (
+        "Errors in production feed the audits since v0.5, and container logs and their state since v0.6" in deployment
+    )

@@ -1,14 +1,19 @@
 {
-  "_about": "Default model and effort for each tier, per engine (DESIGN.md, section 6), and the effort levels that each engine's CLI takes. Catalogs change every month: update this file, not the code. An account can override any tier's model and effort.",
+  "_about": "Default model and effort for each tier, per engine (DESIGN.md, section 6), the model names that each engine's CLI takes and the effort levels that it takes. Catalogs change every month: update this file, not the code. An account can override any tier's model and effort. The effort follows the work: fast is only asked for by a repository's own reviewers, balanced runs the reviewers and deep runs the judge, the implementers and the improvement plans, where quality matters most.",
   "claude-code": {
     "fast": ["haiku", "medium"],
     "balanced": ["sonnet", "high"],
-    "deep": ["opus", "high"]
+    "deep": ["opus", "xhigh"]
   },
   "codex": {
-    "fast": ["gpt-6-luna", "high"],
+    "fast": ["gpt-6-luna", "medium"],
     "balanced": ["gpt-6.1-sol", "high"],
-    "deep": ["gpt-6.1-sol", "high"]
+    "deep": ["gpt-6.1-sol", "xhigh"]
+  },
+  "models": {
+    "_about": "Names that each engine's CLI takes: the Accounts page suggests them for the model of a tier, and an owner can type any other. Claude Code: the aliases, which mean the newest model of their family on the Anthropic API. `fable` is left out on purpose, since `claude -p` can bill a Fable request to usage credits without asking. Codex: the models that its own catalog lists for choosing (`codex debug models --bundled`) and has not replaced with a newer one, in the order of its picker. An API key's models come from models.dev instead, and a local model server's are the owner's.",
+    "claude-code": ["haiku", "sonnet", "opus"],
+    "codex": ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]
   },
   "efforts": {
     "_about": "Lowest first. Claude Code's --effort; Codex's model_reasoning_effort; OpenCode's --variant, whose levels depend on the model.",

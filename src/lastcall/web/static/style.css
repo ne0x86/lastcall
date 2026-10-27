@@ -913,7 +913,32 @@ ul.rows > li:last-child { border-bottom: 0; }
 .row-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .row-actions form { margin: 0; }
 .source-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin: 0; }
-.sources select { margin-top: var(--s1); }
+.source-name strong { overflow-wrap: anywhere; }
+
+/* A long list of containers or sources in three parts: what is read comes first, as short rows with a way to stop it; the
+   suggestions are the Projects page's tiles (ul.suggestions); the rest is a fold with a filter by name and, for each one,
+   a field whose datalist narrows the projects as you type. */
+.parts { display: grid; gap: var(--s4); margin: var(--s3) 0; }
+.part-title { margin: 0 0 var(--s2); font-family: var(--font-round); font-size: 1.02rem; font-weight: 700; }
+.part > .section-head .part-title { margin: 0; }
+.part > p { margin: 0; }
+ul.reading { margin: 0; }
+ul.reading > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s3); }
+.read-main { flex: 1 1 9rem; min-width: 0; }
+.read-main p { margin: 0; }
+.read-main .hint { margin-top: var(--s1); }
+.read-project { overflow-wrap: anywhere; }
+.reading .row-actions { flex: none; }
+.others-fold { margin: 0; }
+.others-form { display: grid; gap: var(--s3); margin: 0; }
+.others-form > button { justify-self: start; }
+ul.others { margin: 0; }
+ul.others > li { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.other-main > p { margin: 0; }
+.other-main > .hint { margin-top: var(--s1); }
+@media (min-width: 48rem) {
+  ul.others > li { grid-template-columns: minmax(0, 1fr) minmax(14rem, 20rem); align-items: center; gap: var(--s1) var(--s3); }
+}
 
 /* ---------- Settings ---------- */
 .settings-layout { display: grid; gap: var(--s4); }
@@ -1111,6 +1136,7 @@ fieldset.has-help > legend { float: left; margin: 0; }
 .project-settings fieldset { gap: var(--s3); padding: var(--s3); background: var(--surface); border-radius: var(--r-md); }
 .project-settings .check-row { min-height: 0; }
 .project-settings .check-row .hint { margin-top: 0; }
+.project-settings .fields { grid-template-columns: minmax(0, 1fr); }  /* a select a row: a closed select cuts its text short */
 
 /* Add a project: the manual field, then suggestions as rows. */
 .add-card .inline { margin-bottom: var(--s2); }
@@ -1172,6 +1198,43 @@ ul.suggestions li:has(input:checked) .help { background: var(--surface); }
   .pick-all button, .pick-bar button { flex: 0 0 auto; padding-inline: 1.2rem; }
 }
 html:has(.pick-bar) { scroll-padding-bottom: 6rem; }  /* a field that takes focus is never behind the bar */
+
+/* Search and filters above the cards, from the seventh project on: the search is the suggestions' filter, and each link is a
+   pill with how many projects it leaves for the current search. The current one says so with a tick, not only a colour. */
+.find { display: grid; gap: var(--s2); margin: 0 0 var(--s4); }
+.find .filter, .find .filter-note { margin: 0; }
+.find .filter { max-width: 36rem; }
+.find-links ul { display: flex; flex-wrap: wrap; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+.find-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 44px;
+  padding: 0 var(--s3);
+  color: var(--text);
+  font-weight: 650;
+  text-decoration: none;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-pill);
+}
+.find-links a:hover { border-color: var(--accent); background: var(--accent-soft); }
+.find-links a[aria-current] { background: var(--accent-soft); border-color: var(--accent); }
+.find-links a[aria-current]::before { content: "\2713"; color: var(--accent); }
+.find-links .count {
+  min-width: 1.5rem;
+  padding: 0 .4rem;
+  color: var(--muted);
+  font-size: .85rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: var(--raised);
+  border-radius: var(--r-pill);
+}
+.find-links a[aria-current] .count { color: var(--on-accent); background: var(--accent); }
+
+/* With many projects, Run now is a fold, as Settings is: its form sits in it as the group's own panel. */
+.run-fold > .run-form { margin: 0 0 var(--s3); }
 
 /* ---------- Sign-in pages ---------- */
 .signed-out main { display: grid; align-content: start; }

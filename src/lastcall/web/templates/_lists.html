@@ -1,0 +1,148 @@
+{#- A long list of containers (Settings › Container logs) or of sources in Loki (Settings › Logs in Loki), in three parts so
+    that it stays short: what lastcall reads now, what it suggests, and everything else in a fold with a filter by name.
+    Import with context, after _help.html's help macro: `lists` takes the page's help namespace `hb`.
+    `kind` is "logs" or "loki": it names the ids, the filter's address parameter (`logs_q`, `loki_q`) and the catalog
+    keys that differ. `v` is the view of the list (web.lists_view). `action` is where its forms post, `extra` the hidden
+    fields that each of them carries (the label that names the sources), `carry` the other list's filter, kept by this
+    list's own. `level` is the heading of the parts. -#}
+{% from "_help.html" import help with context %}
+
+{#- The name of a container or a source, with its state or the machines where it ran. -#}
+{% macro identity(item) -%}
+<p class="source-name"><strong class="mono">{{ item.name }}</strong>
+  {%- if item.state %} <span class="chip">{{ item.state }}</span>{% endif %}
+  {%- for host in item.hosts %} <span class="chip">{{ host }}</span>{% endfor %}</p>
+{%- endmacro %}
+
+{#- What helps to tell it from the others: a source's Compose project, a container's image. -#}
+{% macro clue(item, kind) -%}
+{%- if kind == "loki" and item.compose_project %}<p class="hint">{{ t("web.loki.compose", project=item.compose_project) }}</p>
+{%- elif kind == "logs" and item.image %}<p class="hint">{{ item.image }}</p>{% endif %}
+{%- endmacro %}
+
+{% macro hidden(extra) -%}
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{%- for name, value in extra %}
+<input type="hidden" name="{{ name }}" value="{{ value }}">
+{%- endfor %}
+{%- endmacro %}
+
+{% macro lists(hb, kind, v, action, level="h4", extra=(), carry=()) %}
+{%- set post = action ~ "#" ~ kind %}
+<div class="parts">
+  <div class="part">
+    <{{ level }} class="part-title" id="{{ kind }}-read-title">{{ t("web.logs.read_title") }}</{{ level }}>
+    {%- if v.read %}
+    <ul class="rows reading" aria-labelledby="{{ kind }}-read-title">
+      {%- for r in v.read %}
+      <li>
+        <div class="read-main">
+          {{ identity(r) }}
+          <p class="small read-project"><span class="mono">{{ r.project }}</span> <span class="muted">· {{ t("web.logs.label_decides") if r.by == "label" else t("web.logs.chosen_here") }}</span></p>
+          {%- if r.unknown %}
+          <p class="hint">{{ t("web.logs.label_unknown", project=r.project) }}</p>
+          {%- endif %}
+          {%- if kind == "loki" %}{{ clue(r, kind) }}{% endif %}
+        </div>
+        {%- if r.by == "choice" %}
+        <form method="post" action="{{ post }}" class="row-actions">
+          {{ hidden(extra) }}
+          <input type="hidden" name="pick" value="stop">
+          <input type="hidden" name="name-1" value="{{ r.name }}">
+          <button class="secondary small-button" aria-label="{{ t('web.logs.stop_label', name=r.name) }}">{{ t("web.logs.stop") }}</button>
+        </form>
+        {%- endif %}
+      </li>
+      {%- endfor %}
+    </ul>
+    {%- else %}
+    <p class="muted small">{{ t("web.logs.read_none") }}</p>
+    {%- endif %}
+  </div>
+
+  {%- if v.suggested %}
+  <div class="part">
+    <div class="section-head"><{{ level }} class="part-title" id="{{ kind }}-suggested-title">{{ t("web.logs.suggested_title") }}</{{ level }}>{{ help(hb, "settings-logs_suggested", t("web.logs.suggested_title"), ["settings.logs_suggested"], true) }}</div>
+    <form method="post" action="{{ post }}" class="pick">
+      {{ hidden(extra) }}
+      <div class="pick-all">
+        <button class="secondary" name="pick" value="suggested">{{ tn("web.logs.read_suggested", v.suggested|length) }}</button>
+        <button class="secondary" name="pick" value="skip">{{ t("web.logs.skip_ticked") }}</button>
+      </div>
+      <fieldset class="picks" aria-labelledby="{{ kind }}-suggested-title">
+        <ul class="suggestions">
+          {%- for s in v.suggested %}
+          {%- set n = loop.index %}
+          <li class="suggestion">
+            <div class="pick-line">
+              <input id="{{ kind }}-pick-{{ n }}" type="checkbox" name="tick" value="{{ n }}" aria-describedby="{{ kind }}-for-{{ n }}">
+              <label for="{{ kind }}-pick-{{ n }}" class="suggestion-name">{{ s.name }}</label>
+            </div>
+            <p class="suggestion-meta" id="{{ kind }}-for-{{ n }}"><span>{{ t("web.logs.for_project", project=s.suggested) }}</span>
+              {%- if s.state %} <span class="chip">{{ s.state }}</span>{% endif %}
+              {%- for host in s.hosts %} <span class="chip">{{ host }}</span>{% endfor %}</p>
+            {%- if kind == "loki" %}{{ clue(s, kind) }}{% endif %}
+            <input type="hidden" name="name-{{ n }}" value="{{ s.name }}">
+            <input type="hidden" name="project-{{ n }}" value="{{ s.suggested }}">
+          </li>
+          {%- endfor %}
+        </ul>
+      </fieldset>
+      {#- Only the main action stays at the bottom of the screen, so that the bar is one button high on a phone. -#}
+      <div class="pick-bar">
+        <button name="pick" value="selected">{{ t("web.logs.read_ticked") }}</button>
+      </div>
+    </form>
+  </div>
+  {%- endif %}
+
+  {%- if v.total %}
+  <details class="fold others-fold"{% if v.query or v.typed %} open{% endif %}>
+    <summary>{{ tn("web." ~ kind ~ ".others", v.total) }}</summary>
+    <div class="fold-body">
+      {%- if v.filterable %}
+      <form method="get" action="{{ url_for('settings_page') }}#{{ kind }}" class="filter" role="search">
+        <label for="{{ kind }}-q">{{ t("web.suggest.filter") }}</label>
+        <div class="row">
+          <input id="{{ kind }}-q" name="{{ kind }}_q" type="search" value="{{ v.query }}" maxlength="100" autocomplete="off" spellcheck="false">
+          <button class="secondary">{{ t("web.suggest.filter_go") }}</button>
+        </div>
+        {%- for name, value in carry %}
+        <input type="hidden" name="{{ name }}" value="{{ value }}">
+        {%- endfor %}
+      </form>
+      {%- endif %}
+      {%- if v.query %}
+      <p class="filter-note">{{ tn("web.logs.matching", v.total, shown=v.others|length, query=v.query) }} <a href="{{ url_for('settings_page', **dict(carry)) }}#{{ kind }}">{{ t("web.suggest.show_all") }}</a></p>
+      {%- endif %}
+      {%- if v.others %}
+      <form method="post" action="{{ post }}" class="others-form">
+        {{ hidden(extra) }}
+        <div class="line"><p class="small muted">{{ t("web.logs.others_hint") }}</p>{{ help(hb, "settings-logs_project", t("web.logs.project"), ["settings.logs_project"], true) }}</div>
+        <ul class="rows others">
+          {%- for o in v.others %}
+          {%- set n = loop.index %}
+          <li>
+            <div class="other-main">
+              {{ identity(o) }}
+              {{ clue(o, kind) }}
+              {%- if o.gone %}
+              <p class="hint">{{ t("web.logs.gone", project=o.gone) }}</p>
+              {%- endif %}
+            </div>
+            <input type="hidden" name="name-{{ n }}" value="{{ o.name }}">
+            <input id="{{ kind }}-project-{{ n }}" name="project-{{ n }}" type="text" list="{{ kind }}-projects" value="{{ o.typed }}" placeholder="{{ t('web.logs.pick_placeholder') }}" aria-label="{{ t('web.logs.project_for', name=o.name) }}" maxlength="140" autocomplete="off" autocapitalize="none" spellcheck="false">
+          </li>
+          {%- endfor %}
+        </ul>
+        <datalist id="{{ kind }}-projects">
+          {%- for repo in v.repos %}<option value="{{ repo }}"></option>{% endfor %}
+        </datalist>
+        <button name="pick" value="others">{{ t("web.logs.save") }}</button>
+      </form>
+      {%- endif %}
+    </div>
+  </details>
+  {%- endif %}
+</div>
+{%- endmacro %}

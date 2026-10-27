@@ -102,6 +102,7 @@ class Provider:
     title: str  # as people know it: "OpenRouter"
     keys: str  # where the owner creates an API key; "" for a local model server, which needs none
     models: str  # where the owner finds the names of its models
+    catalog: str = ""  # its id in models.dev, whose catalog lists its models; "" when there is none to ask
 
 
 @runtime_checkable

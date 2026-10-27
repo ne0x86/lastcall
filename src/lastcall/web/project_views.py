@@ -17,6 +17,9 @@ WEIGHTS = (("0.5", "low"), ("1", "normal"), ("2", "high"), ("3", "top"))
 LANGUAGES = ("English", "Spanish")
 MAX_PRS = range(1, 6)
 MAX_QUERY = 100  # characters of what the filter of the suggestions looks for: a repository's name has 140 at most
+MANY = 6  # with more than this, lists get a filter by name (the suggestions, the projects, the settings' lists) and a
+# project's Run now starts folded
+FILTERS = ("all", "active", "inactive", "waiting")  # what the filter links of the cards show
 # what a project's card says while an order of each recipe waits, or while a run of it works
 QUEUED = {
     "audit": "web.project.queued",
@@ -81,12 +84,20 @@ class SuggestionView:
     left_out: bool = False  # archived, a fork or empty: "Add all" skips it
 
 
+@dataclass(frozen=True)
+class FilterLink:
+    key: str  # one of FILTERS
+    label: str
+    count: int  # the projects that it shows, for the current search
+    current: bool
+
+
 @dataclass
 class ProjectsPage:
     github_ready: bool
     install_url: str
     refreshed: str
-    projects: list[ProjectCard] = field(default_factory=list)
+    projects: list[ProjectCard] = field(default_factory=list)  # what the search and the filter leave
     accounts: list[Option] = field(default_factory=list)
     suggested: list[SuggestionView] = field(default_factory=list)  # what the filter shows
     others: list[SuggestionView] = field(default_factory=list)
@@ -94,6 +105,20 @@ class ProjectsPage:
     tracker: bool = False  # the owner connected an error tracker: each project may name its project there
     query: str = ""  # what the filter looks for in their names; "" for no filter
     total: int = 0  # the repositories that are not projects yet, before the filter
+    known: int = 0  # how many projects there are, whatever the search and the filter
+    search: str = ""  # what the search looks for in the names of the projects; "" for none
+    show: str = "all"  # the filter of the cards: one of FILTERS
+    filters: list[FilterLink] = field(default_factory=list)
+
+    @property
+    def many(self) -> bool:
+        """Whether there are so many projects that each card starts with its Run now folded."""
+        return self.known > MANY
+
+    @property
+    def can_search(self) -> bool:
+        """Whether the page offers the search and the filters: with many projects, or while one of them is set."""
+        return self.many or bool(self.search) or self.show != "all"
 
     @property
     def has_all(self) -> bool:
@@ -119,15 +144,26 @@ def build(
     reading: bool,
     permissions_url: Callable[[str], str],
     query: str = "",
+    search: str = "",
+    show: str = "all",
 ) -> ProjectsPage:
     """`permissions_url` says, for a repository, where its owner gives the App what reading checks takes: "" when the
-    App has it already, or when that is not known. It is asked only for the projects that read checks. `query` is
-    what the filter looks for in the names of the suggestions."""
+    App has it already, or when that is not known. It is asked only for the cards that show, and for the projects that
+    read checks. `query` is what the filter looks for in the names of the suggestions; `search` and `show` are what
+    the owner looks for in the names of the projects, and which of FILTERS to show."""
     projects = store.projects()
     busy = {o["repo"].lower(): text(lang, QUEUED.get(o["kind"], QUEUED["audit"])) for o in store.orders()}
     busy |= {r["repo"].lower(): text(lang, RUNNING.get(r["recipe"], RUNNING["audit"])) for r in store.running()}
     latest = store.latest_runs()
     page = ProjectsPage(bool(install_url), install_url, refreshed(store, lang, now, reading))
+    search, show = clean_query(search), clean_show(show)
+    page.known, page.search, page.show = len(projects), search, show
+    waiting = waiting_for_the_owner(store)
+    named = [p for p in projects if search.casefold() in p.repo.casefold()]
+    counts = {key: sum(passes(key, p, waiting) for p in named) for key in FILTERS}
+    page.filters = [
+        FilterLink(key, text(lang, f"web.projects.filter.{key}"), counts[key], key == show) for key in FILTERS
+    ]
     page.projects = [
         card(
             store,
@@ -138,7 +174,8 @@ def build(
             busy.get(p.repo.lower(), ""),
             permissions_url(p.repo) if p.merge_on_approve or p.watch else "",
         )
-        for p in projects
+        for p in named
+        if passes(show, p, waiting)
     ]
     enabled = store.accounts(enabled_only=True)
     page.accounts = [Option("", text(lang, "web.project.any"), True)]
@@ -163,8 +200,37 @@ def left_to_add(projects: Iterable[ProjectRow], found: Iterable[Suggestion]) -> 
 
 
 def clean_query(typed: str) -> str:
-    """What the filter of the suggestions looks for: the text without the spaces around it, cut at 100 characters."""
+    """What a filter or a search looks for: the text without the spaces around it, cut at 100 characters."""
     return typed.strip()[:MAX_QUERY]
+
+
+def clean_show(typed: str) -> str:
+    """The filter of the cards that an address asks for: one of FILTERS, and "all" for any other value."""
+    return typed if typed in FILTERS else "all"
+
+
+def is_active(p: ProjectRow) -> bool:
+    """Whether bursts may pick the project: its flag is on and it has a priority (a weight of 0 or less is off)."""
+    return p.active and p.weight > 0
+
+
+def waiting_for_the_owner(store: Store) -> set[str]:
+    """The projects, in lower case, that wait for the owner: they have pull requests to review, decisions in an issue,
+    or ideas to choose in a plan, as the dashboard lists them under Waiting for you."""
+    found = {pr["repo"] for pr in store.open_prs()} | {d["repo"] for d in store.decisions()}
+    return {repo.lower() for repo in found | {plan["repo"] for plan in store.plans()}}
+
+
+def passes(show: str, p: ProjectRow, waiting: set[str]) -> bool:
+    """Whether the filter `show` leaves the project."""
+    match show:
+        case "active":
+            return is_active(p)
+        case "inactive":
+            return not is_active(p)
+        case "waiting":
+            return p.repo.lower() in waiting
+    return True
 
 
 def addable(found: Iterable[Suggestion]) -> list[Suggestion]:
@@ -181,7 +247,7 @@ def matching(found: Iterable[Suggestion], query: str) -> list[Suggestion]:
 def card(
     store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any] | None, busy: str, permissions_url: str
 ) -> ProjectCard:
-    active = p.active and p.weight > 0
+    active = is_active(p)
     view = project_view(store, p.repo, active, p.weight, lang, now, last)
     waiting = store.waiting_count(p.repo)
     weights = [Option(v, text(lang, f"web.project.weight.{k}"), float(v) == p.weight) for v, k in WEIGHTS]

@@ -32,7 +32,7 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, cron, destinations, engines, i18n, logs, loki, projects, signals
+from lastcall import __version__, catalog, cron, destinations, engines, i18n, logs, loki, projects, signals
 from lastcall.accounts import ACCOUNT_ID, MODEL, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, lacking, permissions_of, urlopen
@@ -45,6 +45,7 @@ from lastcall.secretstore import SecretStore
 from lastcall.store import AccountRow, Store
 from lastcall.supervisor import STEP
 from lastcall.tiers import TIERS, defaults, efforts
+from lastcall.tiers import models as cli_models
 from lastcall.web import auth, dashboard, project_views
 
 COOKIE = "lastcall_session"
@@ -66,6 +67,10 @@ GRANT_SECONDS = 600.0  # what GitHub says an installation was granted, kept 10 m
 RETRY_SECONDS = 60.0  # a gap (the owner is fixing it) or a miss is kept only a minute, so that the notice goes soon
 GRANT_TIMEOUT = 5  # seconds that the Projects page waits for GitHub's answer on one installation
 MAX_GRANTS = 100
+CATALOG_SECONDS = 86_400.0  # the models that models.dev lists for an API's provider, kept a day: they weigh 6 MB
+CATALOG_RETRY_SECONDS = 600.0  # a miss is kept 10 minutes, so that a models.dev that is down costs one wait
+CATALOG_TIMEOUT = 5  # seconds that the Accounts page waits for models.dev
+KEYS_LIST = "models-keys"  # the datalist of the form that adds an API key: the models of every provider
 MAX_ADDED = 100_000  # the most that a "N projects added" notice says: the number is in the address
 CREDENTIAL = re.compile(r"(?i)\b(bearer|basic)\s+[^\"']*|\b(authorization|header value)\W+.*")
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
@@ -109,8 +114,9 @@ def create_app(
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
     reads an account's quota in the sandbox; without it, the web UI cannot check a new account's login.
-    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats, and
-    GitHub whether an owner is a person or an organization, and what the App's installation was granted."""
+    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats,
+    GitHub whether an owner is a person or an organization, and what the App's installation was granted, and
+    models.dev which models an API key's provider offers."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -125,7 +131,8 @@ def create_app(
     app_states: dict[str, float] = {}  # manifest forms shown, by state, with when they were shown
     owner_answers: dict[str, tuple[str, float]] = {}  # what GitHub said an owner is ("user", "org", "missing"), when
     grant_answers: dict[str, tuple[str | None, float]] = {}  # permissions_page of an owner's installation, and when
-    cache_lock = threading.Lock()  # for app_states, owner_answers and grant_answers: waitress answers on 8 threads
+    catalog_answers: dict[str, tuple[tuple[str, ...], float]] = {}  # a provider's models in models.dev, until when
+    cache_lock = threading.Lock()  # for the four above: waitress answers on 8 threads
     quota_errors: dict[str, tuple[float, str]] = {}  # the last failed quota reading of each account, and when
 
     def connect() -> GitHub | None:
@@ -280,13 +287,30 @@ def create_app(
     @app.get("/projects")
     @signed_in
     def projects_page() -> ResponseReturnValue:
-        return show_projects(query=request.args.get("q", ""))
+        args = request.args
+        return show_projects(query=args.get("q", ""), search=args.get("search", ""), show=args.get("show", "all"))
 
-    def show_projects(status: int = 200, error: str = "", install: str = "", query: str = "") -> ResponseReturnValue:
-        """The Projects page. `query` is what its filter looks for in the suggestions' names."""
+    def show_projects(
+        status: int = 200,
+        error: str = "",
+        install: str = "",
+        query: str = "",
+        search: str = "",
+        show: str = "all",
+    ) -> ResponseReturnValue:
+        """The Projects page. `query` is what its filter looks for in the suggestions' names; `search` and `show` are
+        what the owner looks for in the projects' names, and which filter of the cards (project_views.FILTERS)."""
         found = App.load(secrets)
         view = project_views.build(
-            store, g.lang, clock(), found.install_url if found else "", reading.is_set(), permissions_link, query
+            store,
+            g.lang,
+            clock(),
+            found.install_url if found else "",
+            reading.is_set(),
+            permissions_link,
+            query,
+            search,
+            show,
         )
         view.tracker = signals.Tracker.load(secrets) is not None
         done = request.args.get("done", "")
@@ -340,6 +364,32 @@ def create_app(
             while len(grant_answers) > MAX_GRANTS:
                 del grant_answers[next(iter(grant_answers))]
         return found or ""
+
+    def catalog_models(provider: str) -> tuple[str, ...]:
+        """The models that models.dev lists for a provider of API keys (its id there), from the last day when it was
+        asked: the Accounts page asks on every load, and the answer weighs 6 MB. One request answers for every
+        provider. A failure is kept 10 minutes, so that a models.dev that is down costs the page one wait in that
+        time, not one at every load; meanwhile it suggests no models. Bounded: one entry for each provider that an
+        engine offers, and `catalog.MAX_MODELS` models in each."""
+        asked = catalog_providers()
+        if provider not in asked:
+            return ()
+        now = clock()
+        with cache_lock:
+            known = catalog_answers.get(provider)
+        if known is not None and now < known[1]:
+            return known[0]
+        try:
+            found = catalog.models(fetch, asked, CATALOG_TIMEOUT)
+            until = now + CATALOG_SECONDS
+        except Exception as e:  # an optional lookup never takes the page down
+            log(f"Web UI: models.dev gave no models: {brief(e)}")
+            found, until = {}, now + CATALOG_RETRY_SECONDS
+        with cache_lock:
+            for name in asked:
+                catalog_answers.pop(name, None)  # asked again: it goes to the end, as the newest
+                catalog_answers[name] = (found.get(name, ()), until)
+        return found.get(provider, ())
 
     @app.post("/projects/add")
     @signed_in
@@ -548,8 +598,16 @@ def create_app(
         tried: Mapping[str, str] | None = None,
         loki_error: str = "",
         loki_tried: Mapping[str, str] | None = None,
+        logs_error: str = "",
+        logs_typed: Mapping[str, str] | None = None,
+        loki_typed: Mapping[str, str] | None = None,
     ) -> ResponseReturnValue:
+        """The Settings page. A mistake in one of the forms of the lists of containers or sources says it in that
+        section (`logs_error`, `loki_error`) and gives back the projects that the owner typed there (`logs_typed`,
+        `loki_typed`). The filters by name of the two lists are in the address (`logs_q`, `loki_q`)."""
         chosen, filled = notifications.events(), dict(values or {})
+        logs_q = project_views.clean_query(request.args.get("logs_q", ""))
+        loki_q = project_views.clean_query(request.args.get("loki_q", ""))
         language = (
             notifications.language() if store.setting("notify_language") else g.lang
         )  # until saved: this page's
@@ -572,8 +630,8 @@ def create_app(
             "chats": list(chats),
             "fanout": store.setting("fanout") == "yes",
             "tracker": tracker,
-            "logs": containers_view(),
-            "loki": loki_view(loki_tried),
+            "logs": containers_view(logs_q, logs_typed),
+            "loki": loki_view(loki_tried, loki_q, loki_typed),
             "signals_url": (tried or {}).get("url") or (tracker.url if tracker else "https://sentry.io"),
             "signals_org": (tried or {}).get("org") or (tracker.org if tracker else ""),
         }
@@ -595,6 +653,7 @@ def create_app(
             signals_error=signals_error,
             sentry_tokens=SENTRY_TOKENS,
             loki_error=loki_error,
+            logs_error=logs_error,
         )
 
     @app.post("/settings/signals")
@@ -619,44 +678,56 @@ def create_app(
         log(f"Web UI: errors in production read from {url}, organization {org}")
         return redirect(url_for("settings_page", done="signals") + "#signals")
 
+    def refusal(refused: logs.Refused, kind: str) -> ResponseReturnValue:
+        """The answer to a form of a list of containers (`kind` "logs") or of sources in Loki ("loki") that
+        `logs.apply_form` refuses: an error page for a form that the page never sends, else the Settings page, with
+        the mistake said in the section and what the owner typed in its place."""
+        if refused.reason == "form":
+            return problem(400, "web.error.form")
+        if refused.reason == "none":
+            message = t(f"web.{kind}.none_ticked")
+        else:
+            message = t("web.logs.not_a_project", project=refused.wrong)
+        if kind == "logs":
+            return show_settings(400, logs_error=message, logs_typed=refused.typed)
+        return show_settings(400, loki_error=message, loki_typed=refused.typed)
+
     @app.post("/settings/logs")
     @signed_in
     def logs_settings() -> ResponseReturnValue:
-        """The project of each container, as the owner chooses it: lastcall reads the containers that have one."""
-        form, repos = request.form, {p.repo for p in store.projects()}
-        choices = logs.chosen(store)
-        for key, name in form.items():
-            if not key.startswith("name-"):
-                continue
-            index = key.removeprefix("name-")
-            project = form.get("project-" + index, "")
-            if not CONTAINER.fullmatch(name) or project not in {"", *repos}:
-                return problem(400, "web.error.form")
-            if project or form.get("shown-" + index):  # a project, or a no to the one that the page showed
-                choices[name] = project
+        """What the forms of the Container logs section ask (`logs.apply_form`): to read the ticked suggestions, or
+        all of them, to skip the ticked ones, to stop reading one, or to read the containers that got a project in
+        the fold of the others. The project of each is checked against the projects, whatever its case."""
+        form = request.form
+        try:
+            choices = logs.apply_form(
+                form,
+                form.getlist("tick"),
+                logs.chosen(store),
+                [p.repo for p in store.projects()],
+                lambda name: bool(CONTAINER.fullmatch(name)) and not name.startswith(STEP),  # never a step's
+            )
+        except logs.Refused as refused:
+            return refusal(refused, "logs")
         logs.choose(store, choices)
         log(f"Web UI: containers read for their projects: {', '.join(sorted(k for k, v in choices.items() if v))}")
         return redirect(url_for("settings_page", done="logs") + "#logs")
 
-    def containers_view() -> dict[str, Any]:
-        """The containers of this host, each with its project, or the one lastcall suggests."""
+    def containers_view(query: str = "", typed: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """The containers of this host in the three parts that the page shows (`logs.parts`)."""
         if containers is None:
-            return {"error": t("web.logs.unavailable"), "rows": [], "repos": []}
+            return {**lists_view(logs.Parts([], [], []), [], query, {}), "error": t("web.logs.unavailable")}
         try:
             listed = containers()
         except Exception as e:  # an optional integration never takes the page down
             known = isinstance(e, (SandboxError, OSError))
             if not known:
                 log(f"Web UI: the containers could not be listed: {brief(e)}")
-            return {"error": t("web.logs.failed", error=str(e)[:200] if known else brief(e)), "rows": [], "repos": []}
-        repos, choices = [p.repo for p in store.projects()], logs.chosen(store)
-        rows = []
-        for c in listed:
-            name = str(c.get("name") or "")
-            choice, gone = logs.shown(choices.get(name, ""), repos)
-            hint = "" if c.get("label") or name in choices else logs.suggest(c, repos)
-            rows.append({**c, "selected": choice or hint, "suggested": hint, "gone": gone})
-        return {"error": "", "rows": rows, "repos": repos}
+            failed = t("web.logs.failed", error=str(e)[:200] if known else brief(e))
+            return {**lists_view(logs.Parts([], [], []), [], query, {}), "error": failed}
+        repos = [p.repo for p in store.projects()]
+        found = logs.parts(listed, repos, logs.chosen(store))
+        return {**lists_view(found, repos, query, typed or {}), "error": ""}
 
     @app.post("/settings/loki")
     @signed_in
@@ -697,21 +768,22 @@ def create_app(
     @app.post("/settings/loki/sources")
     @signed_in
     def loki_sources() -> ResponseReturnValue:
-        """The project of each source in Loki, as the owner chooses it: lastcall reads the sources that have one."""
-        form, repos = request.form, {p.repo for p in store.projects()}
+        """What the forms of the sources in Loki ask, as the containers' do (`logs_settings`): lastcall reads the
+        sources that have a project. Each form says the label that names the sources: the choices belong to it."""
+        form = request.form
         label = form.get("label", "")
         if not loki.LABEL_NAME.fullmatch(label):
             return problem(400, "web.error.form")
-        choices = loki.chosen(store) if label == store.setting(loki.LABEL) else {}
-        for key, name in form.items():
-            if not key.startswith("name-"):
-                continue
-            index = key.removeprefix("name-")
-            project = form.get("project-" + index, "")
-            if not loki.SOURCE.fullmatch(name) or name.startswith(STEP) or project not in {"", *repos}:
-                return problem(400, "web.error.form")
-            if project or form.get("shown-" + index):  # a project, or a no to the one that the page showed
-                choices[name] = project
+        try:
+            choices = logs.apply_form(
+                form,
+                form.getlist("tick"),
+                loki.chosen(store) if label == store.setting(loki.LABEL) else {},
+                [p.repo for p in store.projects()],
+                lambda name: bool(loki.SOURCE.fullmatch(name)) and not name.startswith(STEP),
+            )
+        except logs.Refused as refused:
+            return refusal(refused, "loki")
         store.set_setting(loki.LABEL, label)
         loki.choose(store, choices)
         read = ", ".join(sorted(k for k, v in choices.items() if v))
@@ -725,15 +797,18 @@ def create_app(
         log("Web UI: Loki disconnected")
         return redirect(url_for("settings_page", done="loki_removed") + "#loki")
 
-    def loki_view(tried: Mapping[str, str] | None) -> dict[str, Any]:
-        """The connection to Loki, and its sources, each with its project, or the one lastcall suggests."""
+    def loki_view(
+        tried: Mapping[str, str] | None, query: str = "", typed: Mapping[str, str] | None = None
+    ) -> dict[str, Any]:
+        """The connection to Loki, and its sources in the three parts that the page shows (`logs.parts`)."""
         connection, tried = loki.Loki.load(secrets), tried or {}
         view: dict[str, Any] = {
             "connection": connection,
             "url": tried.get("url") or (connection.url if connection else ""),
             "user": tried.get("user") or (connection.user if connection else ""),
             "tenant": tried.get("tenant") or (connection.tenant if connection else ""),
-            **{"error": "", "labels": [], "label": "", "rows": [], "repos": []},
+            **lists_view(logs.Parts([], [], []), [], query, {}),
+            **{"error": "", "labels": [], "label": ""},
         }
         if connection is None:
             return view
@@ -747,13 +822,8 @@ def create_app(
             if not known:
                 log(f"Web UI: Loki's sources could not be listed: {brief(e)}")
             return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200] if known else brief(e))}
-        rows = []
-        for s in listed:
-            name = s["name"]
-            choice, gone = logs.shown(choices.get(name, ""), repos)
-            hint = "" if name in choices else logs.suggest(s, repos)
-            rows.append({**s, "selected": choice or hint, "suggested": hint, "gone": gone})
-        return {**view, "labels": names, "label": label, "rows": rows, "repos": repos}
+        found = logs.parts(listed, repos, choices)
+        return {**view, **lists_view(found, repos, query, typed or {}), "labels": names, "label": label}
 
     @app.post("/settings/signals/remove")
     @signed_in
@@ -951,13 +1021,23 @@ def create_app(
         message = t(f"web.done.{done}") if done in known and not error else ""
         all_engines = [engines.get(name) for name in sorted(engines.BUILTIN)]
         sources = [(e, p) for e in all_engines if isinstance(e, Keyed) for p in e.providers]
+        lists: dict[str, tuple[str, ...]] = {}  # the datalists of the page, by id: what its model fields suggest
+        cards = [account_card(row, now, working, lists) for row in store.accounts()]
+        keys = [(f"{e.name}/{p.name}", p) for e, p in sources if p.keys]
+        # Without a script, the form that adds an API key cannot follow the provider that it has chosen: its model
+        # fields suggest the models of every provider, and OpenRouter writes the maker first (qwen/qwen3-coder).
+        everyone = {name for _, p in keys for name in catalog_models(p.catalog)}
+        if everyone:
+            lists[KEYS_LIST] = tuple(sorted(everyone, key=lambda name: (name.casefold(), name)))
         return page(
             "accounts.html",
             status,
-            cards=[account_card(row, now, working) for row in store.accounts()],
+            cards=cards,
             held="down" if down else ("paused" if paused else ""),
             engines=[(e.name, f"{e.provider} ({e.title})") for e in all_engines if e.login],
-            keys=[(f"{e.name}/{p.name}", p) for e, p in sources if p.keys],
+            keys=keys,
+            datalists=lists,
+            key_list=KEYS_LIST if everyone else "",
             local=next(((f"{e.name}/{p.name}", p) for e, p in sources if not p.keys), None),
             writing=[(name, dashboard.language_name(g.lang, name).capitalize()) for name in project_views.LANGUAGES],
             known=project_views.LANGUAGES,
@@ -993,7 +1073,32 @@ def create_app(
             return ""
         return failed[1]
 
-    def account_card(row: AccountRow, now: float, working: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
+    def suggestions(row: AccountRow, lists: dict[str, tuple[str, ...]]) -> dict[str, str]:
+        """The datalist that suggests models in the fields of an account's tiers, and the note that says where its
+        names come from: for an account on a CLI login, the names that the CLI takes, from lastcall's data file; for
+        an account on an API key, what models.dev lists for its provider. Empty when there is nothing to suggest: a
+        local model server (the web UI cannot reach it), a models.dev that did not answer, an engine that is gone."""
+        if row.engine not in engines.BUILTIN:
+            return {}
+        engine = engines.get(row.engine)
+        if not row.keyed:
+            names, key, note = cli_models(row.engine), row.engine, t("web.tiers.suggest.cli", tool=engine.title)
+        elif isinstance(engine, Keyed):
+            source = next((p for p in engine.providers if p.name == row.provider), None)
+            if source is None:
+                return {}
+            names, key = catalog_models(source.catalog), f"{row.engine}-{source.name}"
+            note = t("web.tiers.suggest.catalog", provider=source.title)
+        else:
+            return {}
+        if not names:
+            return {}
+        lists[f"models-{key}"] = names
+        return {"list": f"models-{key}", "note": note}
+
+    def account_card(
+        row: AccountRow, now: float, working: Mapping[str, dict[str, Any]], lists: dict[str, tuple[str, ...]]
+    ) -> dict[str, Any]:
         try:
             base = defaults(row.engine)
         except ValueError:  # an engine with no defaults, such as opencode: the account names its models
@@ -1008,6 +1113,7 @@ def create_app(
             "policies": [],
             "needs_key": False,
             "levels": efforts(row.engine),
+            "suggest": suggestions(row, lists),
             "tiers": [
                 {
                     "tier": tier,
@@ -1236,11 +1342,40 @@ def create_app(
     return app
 
 
+def catalog_providers() -> tuple[str, ...]:
+    """The ids in models.dev of the providers that the engines on API keys offer: what the web UI asks it about."""
+    found: list[str] = []
+    for name in sorted(engines.BUILTIN):
+        engine = engines.get(name)
+        if isinstance(engine, Keyed):
+            found += [p.catalog for p in engine.providers if p.catalog]
+    return tuple(dict.fromkeys(found))
+
+
 def brief(error: BaseException) -> str:
     """An exception for the log: its type and a short line of its message. Never its repr, which can hold request
     data, and a header's value or an authorization is masked wherever it shows in the message."""
     message = CREDENTIAL.sub(lambda m: f"{(m.group(1) or m.group(2)).lower()} ***", " ".join(str(error).split()))
     return f"{type(error).__name__}: {message[:120]}" if message else type(error).__name__
+
+
+def lists_view(found: logs.Parts, repos: Sequence[str], query: str, typed: Mapping[str, str]) -> dict[str, Any]:
+    """What the template needs of a list of containers or sources in three parts: those that are read, those that
+    are suggested, and the others that the filter by name leaves, each with what the owner typed next to it before a
+    mistake in the form. The fold of the others says how many there are in all (`total`) and offers the filter once
+    there are many of them or while one is set."""
+    others = [{**o, "typed": typed.get(str(o["name"]), "")} for o in found.others_named(query)]
+    return {
+        "read": found.read,
+        "suggested": found.suggested,
+        "others": others,
+        "total": len(found.others),
+        "count": found.count,
+        "query": query,
+        "typed": bool(typed),
+        "filterable": len(found.others) > project_views.MANY or bool(query),
+        "repos": list(repos),
+    }
 
 
 def language() -> str:
