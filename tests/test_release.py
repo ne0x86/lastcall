@@ -21,6 +21,13 @@ def test_compose_readme_and_version_agree() -> None:
         assert pinned == __version__
 
 
+def test_the_egress_healthcheck_never_connects_to_the_proxy() -> None:
+    # a probe that connects and sends nothing put one ERROR line in tinyproxy's log every 5 seconds
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert '"nc", "-z"' not in compose
+    assert "netstat -ltn | grep -q ':8888 '" in compose
+
+
 def test_the_web_ui_listens_on_this_machine_unless_the_owner_says_otherwise() -> None:
     compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
     assert '"${LASTCALL_BIND:-127.0.0.1}:${LASTCALL_PORT:-8080}:8080"' in compose
