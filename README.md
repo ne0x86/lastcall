@@ -167,7 +167,8 @@ Projects, and Settings holds a fourth that is optional:
   docker compose --profile local run --rm ollama-pull qwen3-coder  # a model, about 19 GB: a graphics card helps
   ```
 - 📁 **Projects.** lastcall suggests your repositories and says why. Tick the ones you want, or add the suggested ones
-  or all of them at once, with a filter when you have many. Any other repository goes in by its address.
+  or all of them at once, with a filter when you have many. Any other repository goes in by its address. A click on
+  a project's state turns its bursts on or off, and its trash button removes it from lastcall but keeps its history.
 - 🔔 **Settings.** Where lastcall should notify you. Choose the service and fill in what it asks for: Telegram (paste
   your bot's token and lastcall finds your chat), ntfy, Discord, Slack or email, or any of the
   [services that Apprise reaches](https://github.com/caronc/apprise#supported-notifications). lastcall saves a
@@ -196,6 +197,7 @@ docker compose run --rm cli quota claude-max
 docker compose run --rm cli account tier claude-max deep --effort max                # the judge and fixes, at max
 docker compose run --rm cli github repos
 docker compose run --rm cli project add <owner/name> --signals <its project in Sentry or GlitchTip>
+docker compose run --rm cli project remove <owner/name>                              # its history stays
 docker compose run --rm cli signals connect --url https://sentry.io --org <slug>     # asks for the token
 docker compose run --rm cli signals show <owner/name>                                # its errors, as audits read them
 docker compose run --rm cli logs list                                                # containers, with suggestions

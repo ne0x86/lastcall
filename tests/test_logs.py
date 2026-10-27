@@ -237,3 +237,13 @@ def test_the_command_line_chooses_a_containers_project(monkeypatch: pytest.Monke
     assert logs.chosen(Store(tmp_path / "state" / "lastcall.db")) == {"shop-web-1": "acme/shop"}
     assert cli.main(["logs", "set", "shop-web-1", "-"]) == 0  # a no, so that lastcall stops suggesting one
     assert logs.chosen(Store(tmp_path / "state" / "lastcall.db")) == {"shop-web-1": ""}
+
+
+def test_the_settings_page_shows_a_choice_as_its_project_is_written_and_keeps_apart_one_that_is_not_a_project() -> (
+    None
+):
+    repos = ["acme/shop", "acme/Blog"]
+    assert logs.shown("acme/shop", repos) == ("acme/shop", "")
+    assert logs.shown("ACME/BLOG", repos) == ("acme/Blog", "")  # the command line takes the project in any case
+    assert logs.shown("acme/old", repos) == ("", "acme/old")  # the owner removed that project: kept, and shown apart
+    assert logs.shown("", repos) == ("", "")  # no choice, or a no

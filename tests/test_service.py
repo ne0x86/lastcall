@@ -190,6 +190,28 @@ def test_the_owners_orders_start_on_a_free_account_even_when_paused(store: Store
     assert store.orders() == []
 
 
+def test_an_order_whose_project_the_owner_removed_while_it_waited_never_starts(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audits: list[tuple[str, str]] = []
+    started: list[Callable[[], None]] = []
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 30, 150),
+        "chatgpt": reading("chatgpt", 30, 150),
+    }
+    store.add_order("audit", "ne0x86/a", None, NOW)
+    store.add_order("audit", "ne0x86/b", None, NOW)
+    waiting = store.orders()  # what the service has read when the owner removes the first project
+    assert store.remove_project("ne0x86/a") and [o["repo"] for o in store.orders()] == ["ne0x86/b"]
+    monkeypatch.setattr(store, "orders", lambda: waiting)
+    svc = service(store, readings, audits, Clock(), started)
+    svc.take_orders(NOW)
+    assert svc.running == {"claude": "ne0x86/b"} or svc.running == {"chatgpt": "ne0x86/b"}  # the other one goes on
+    for work in started:
+        work()
+    assert [repo for _, repo in audits] == ["ne0x86/b (manual)"]  # and nothing runs on the removed project
+
+
 def test_problems_and_bursts_are_told_once(store: Store, tmp_path: Path) -> None:
     told: list[str] = []
 

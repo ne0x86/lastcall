@@ -67,6 +67,17 @@ def choose(store: Store, choices: Mapping[str, str], key: str = CHOSEN) -> None:
     store.set_setting(key, json.dumps(dict(sorted(choices.items()))))
 
 
+def shown(choice: str, repos: Iterable[str]) -> tuple[str, str]:
+    """What the Settings page shows of the owner's choice for a container or a source: the project, as the projects
+    page writes it, while it is one; or, apart, the name that the choice keeps after the owner removed the project.
+    Settings keeps that choice, so that adding the project again brings it back, and the page shows none meanwhile:
+    a form that sent the removed name back as the one it showed would erase it."""
+    for repo in repos:
+        if repo.lower() == choice.lower():
+            return repo, ""
+    return "", choice
+
+
 def project_of(container: Mapping[str, Any], choices: Mapping[str, str]) -> str:
     """The project of a container: its label, or else the owner's choice; "" for none."""
     return str(container.get("label") or "") or choices.get(str(container.get("name") or ""), "")
