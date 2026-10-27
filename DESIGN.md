@@ -829,18 +829,18 @@ name that never changes.
 The trash button at the other end of the header removes a project from lastcall, and it only asks: it opens a popover
 (`popovertarget`, as the help bubbles do) that says what removing means, with a Cancel button that closes it and has the
 focus, and the Remove button of the form that posts `POST /projects/<owner>/<name>/remove`. Browsers without `popover`
-show that question inline in the card, with its Remove button, and hide the trash button. While a run is going on the
-project, the removal is refused and the Projects page says to remove it when the run ends. Otherwise one transaction
-deletes the owner's orders for the project that have not started (the service does not start one that it had already
-read) and the project's row, and the owner is told that its history stays. Nothing else goes: runs, findings, ideas,
-labelled issues and pull requests are keyed by the repository's name, not by the project, so adding the repository
-again, from the suggestions, where it is back at once, or by its address, picks up where it left off, and the judge does
-not propose again what the owner rejected. Only the project's own settings (priority, language, merge on approve and the
-rest) are forgotten. The choices of containers and Loki sources in the settings stay too, and come back with the
-project: the Settings page shows them apart, as chosen for a project that is not one now, and saving the page never
-erases them. While the project is out, sync goes on following its open pull requests, so that what the owner does with
-them is still recorded, but lastcall neither merges nor watches them. `lastcall project remove <owner/name>` follows the
-same rules from the command line.
+show neither the question nor the trash button, since inline the question would sit in every card one click away from
+removing it; `lastcall project remove` does it there. While a run is going on the project, the removal is refused and
+the Projects page says to remove it when the run ends. Otherwise one transaction deletes the owner's orders for the
+project that have not started (the service does not start one that it had already read) and the project's row, and the
+owner is told that its history stays. Nothing else goes: runs, findings, ideas, labelled issues and pull requests are
+keyed by the repository's name, not by the project, so adding the repository again, from the suggestions, where it is
+back at once, or by its address, picks up where it left off, and the judge does not propose again what the owner
+rejected. Only the project's own settings (priority, language, merge on approve and the rest) are forgotten. The choices
+of containers and Loki sources in the settings stay too, and come back with the project: the Settings page shows them
+apart, as chosen for a project that is not one now, and saving the page never erases them. While the project is out,
+sync goes on following its open pull requests, so that what the owner does with them is still recorded, but lastcall
+neither merges nor watches them. `lastcall project remove <owner/name>` follows the same rules from the command line.
 
 A project with merge on approve or the watch on shows a notice on its card while GitHub says that the App's installation
 cannot read checks and commit statuses (an App made before v0.7.2 cannot): the two steps, which are to set them to

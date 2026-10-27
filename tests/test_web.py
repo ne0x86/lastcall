@@ -3060,14 +3060,10 @@ def test_a_removed_project_keeps_its_container_and_source_choices_and_settings_n
     assert logs.names_for("acme/shop", listed, logs.chosen(web.store)) == ["shop-web-1"]
 
 
-def test_without_popover_support_the_question_shows_inline_and_the_trash_button_hides() -> None:
+def test_without_popover_support_neither_the_question_nor_the_trash_button_shows() -> None:
     css = (Path(__file__).parent.parent / "src/lastcall/web/static/style.css").read_text(encoding="utf-8")
     fallbacks = re.findall(r"@supports not selector\(:popover-open\) \{(.*?)\n\}", css, re.S)
     mine = next(block for block in fallbacks if ".bubble.confirm" in block)
-    assert (
-        ".trash, .bubble.confirm button[popovertargetaction] { display: none; }" in mine
-    )  # no button opens or closes
-    inline = re.search(r"\.bubble\.confirm \{(.*?)\}", mine, re.S)
-    assert inline is not None and "display" not in inline.group(1) and "max-height: none" in inline.group(1)
+    assert ".trash, .bubble.confirm { display: none; }" in mine  # never a Remove button one click away in a card
     # an author's display on a popover overrides the browser's, and would show the closed question
     assert not re.search(r"\.bubble\.confirm\s*\{[^}]*\bdisplay:", css.replace(mine, ""))

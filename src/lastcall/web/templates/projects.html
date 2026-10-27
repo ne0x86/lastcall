@@ -147,7 +147,7 @@
           <button type="button" class="trash" popovertarget="remove-{{ n }}" aria-label="{{ t('web.project.remove', repo=p.repo) }}" title="{{ t('web.project.remove', repo=p.repo) }}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6"/></svg></button>
         </div>
       </header>
-      {#- The question. Without popover support it shows inline (style.css), with its Remove button, and the trash button is hidden. -#}
+      {#- The question. Without popover support neither it nor the trash button shows (style.css). -#}
       <div id="remove-{{ n }}" popover class="bubble confirm" role="dialog" aria-labelledby="remove-title-{{ n }}" aria-describedby="remove-what-{{ n }}">
         <h3 id="remove-title-{{ n }}">{{ t("web.project.remove_title", repo=p.repo) }}</h3>
         <ul id="remove-what-{{ n }}">
