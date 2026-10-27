@@ -67,6 +67,7 @@
       {{ hidden(extra) }}
       <div class="pick-all">
         <button class="secondary" name="pick" value="suggested">{{ tn("web.logs.read_suggested", v.suggested|length) }}</button>
+        <button class="secondary" name="pick" value="skip">{{ t("web.logs.skip_ticked") }}</button>
       </div>
       <fieldset class="picks" aria-labelledby="{{ kind }}-suggested-title">
         <ul class="suggestions">
@@ -87,9 +88,9 @@
           {%- endfor %}
         </ul>
       </fieldset>
+      {#- Only the main action stays at the bottom of the screen, so that the bar is one button high on a phone. -#}
       <div class="pick-bar">
         <button name="pick" value="selected">{{ t("web.logs.read_ticked") }}</button>
-        <button class="secondary" name="pick" value="skip">{{ t("web.logs.skip_ticked") }}</button>
       </div>
     </form>
   </div>

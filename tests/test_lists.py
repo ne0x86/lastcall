@@ -133,6 +133,10 @@ def test_container_logs_come_in_three_parts_and_never_list_lastcalls_own(tmp_pat
     assert names(suggested) == ["shop-web-1", "shop-worker-1", "api-1"]
     assert suggested.count("for acme/shop") == 2 and suggested.count("for acme/api") == 1
     assert re.findall(r'type="checkbox" name="tick" value="(\d)"', suggested) == ["1", "2", "3"]
+    # the buttons for many at once come first; only "Read the ticked" stays in the bar at the bottom of the screen
+    top, bar = suggested.split('<div class="pick-all">')[1], suggested.split('<div class="pick-bar">')[1]
+    assert 'value="suggested"' in top.split("</div>")[0] and 'value="skip"' in top.split("</div>")[0]
+    assert re.findall(r'name="pick" value="(\w+)"', bar.split("</div>")[0]) == ["selected"]
     assert ">Read the 3 suggested</button>" in suggested and ">Read the ticked</button>" in suggested
     # the rest, in a fold that says how many: 29 caches (cache-01 is read), with the one that was said no to
     assert "<summary>29 other containers</summary>" in others and '<details class="fold others-fold">' in others
