@@ -295,6 +295,9 @@ def create_app(
         count = request.args.get("count", 0, type=int)  # how many projects "Add many" added
         if done == "added_many" and 0 < count <= MAX_ADDED and not error:
             message = i18n.plural(g.lang, "web.done.added_many", count)
+        gone = request.args.get("repo", "")  # the project that was removed: its name is in the address too
+        if done == "removed" and projects.REPO.fullmatch(gone) and not error:
+            message = t("web.done.removed", repo=gone)
         return page("projects.html", status, v=view, done=message, error=error, install=install)
 
     def permissions_page(repo: str) -> str | None:
@@ -449,6 +452,34 @@ def create_app(
             signals=tracked,
         )
         return redirect(url_for("projects_page", done="saved") + project_anchor(project.repo))
+
+    @app.post("/projects/<owner>/<name>/active")
+    @signed_in
+    def project_active(owner: str, name: str) -> ResponseReturnValue:
+        """The state chip of a card: bursts on or off with one click, and nothing else of the project changes. The
+        form says which state it wants, so that an old page cannot flip it the wrong way. The owner goes back to the
+        card, with no notice: the chip is the answer."""
+        project = store.project(f"{owner}/{name}")
+        if project is None:
+            return problem(404, "web.error.not_found")
+        on = request.form.get("active") == "1"
+        # A project with no priority (weight 0 or less, which only `lastcall project add --weight 0` makes) is off
+        # whatever its flag says: turning it on gives it weight 1, or the chip would still say that it is off.
+        store.set_active(project.repo, on, 1.0 if on and project.weight <= 0 else None)
+        return redirect(url_for("projects_page") + project_anchor(project.repo))
+
+    @app.post("/projects/<owner>/<name>/remove")
+    @signed_in
+    def remove_project(owner: str, name: str) -> ResponseReturnValue:
+        """Take a project out of lastcall, as the card's trash button asks after its popover. Its history stays (see
+        `Store.remove_project`), and it refuses while a run is going on the project."""
+        project = store.project(f"{owner}/{name}")
+        if project is None:
+            return problem(404, "web.error.not_found")
+        if not store.remove_project(project.repo):
+            return show_projects(409, t("web.project.remove_busy", repo=project.repo))
+        log(f"Web UI: project {project.repo} removed")
+        return redirect(url_for("projects_page", done="removed", repo=project.repo))
 
     @app.post("/projects/<owner>/<name>/audit")
     @signed_in
@@ -622,9 +653,9 @@ def create_app(
         rows = []
         for c in listed:
             name = str(c.get("name") or "")
-            choice = choices.get(name, "")
+            choice, gone = logs.shown(choices.get(name, ""), repos)
             hint = "" if c.get("label") or name in choices else logs.suggest(c, repos)
-            rows.append({**c, "selected": choice or hint, "suggested": hint})
+            rows.append({**c, "selected": choice or hint, "suggested": hint, "gone": gone})
         return {"error": "", "rows": rows, "repos": repos}
 
     @app.post("/settings/loki")
@@ -719,8 +750,9 @@ def create_app(
         rows = []
         for s in listed:
             name = s["name"]
+            choice, gone = logs.shown(choices.get(name, ""), repos)
             hint = "" if name in choices else logs.suggest(s, repos)
-            rows.append({**s, "selected": choices.get(name, "") or hint, "suggested": hint})
+            rows.append({**s, "selected": choice or hint, "suggested": hint, "gone": gone})
         return {**view, "labels": names, "label": label, "rows": rows, "repos": repos}
 
     @app.post("/settings/signals/remove")

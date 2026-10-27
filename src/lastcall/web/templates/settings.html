@@ -340,6 +340,7 @@
             {%- for repo in v.logs.repos %}<option value="{{ repo }}"{% if repo == c.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
           </select>
           {%- if c.suggested %}<p class="hint">{{ t("web.logs.suggested", project=c.suggested) }}</p>{% endif %}
+          {%- if c.gone %}<p class="hint">{{ t("web.logs.gone", project=c.gone) }}</p>{% endif %}
           {%- endif %}
         </li>
         {%- endfor %}
@@ -435,6 +436,7 @@
             {%- for repo in v.loki.repos %}<option value="{{ repo }}"{% if repo == s.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
           </select>
           {%- if s.suggested %}<p class="hint">{{ t("web.logs.suggested", project=s.suggested) }}</p>{% endif %}
+          {%- if s.gone %}<p class="hint">{{ t("web.logs.gone", project=s.gone) }}</p>{% endif %}
         </li>
         {%- endfor %}
       </ul>

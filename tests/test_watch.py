@@ -174,6 +174,41 @@ def test_nothing_is_watched_after_its_window(store: Store) -> None:
     assert store.watched(NOW + (WATCH_HOURS + 1) * 3600 + 10**10) == []
 
 
+def test_a_merged_pull_request_of_a_removed_project_is_left_alone_until_it_comes_back(store: Store) -> None:
+    watched(store)
+    assert store.remove_project(REPO)
+    client = FakeGitHub({})  # it must not be asked anything
+    reverts = Reverts()
+    assert watch(store, cast(GitHub, client), lambda m: None, now=NOW, revert=reverts) == 0
+    assert client.calls == [] and reverts.asked == []
+    store.add_project(REPO)  # the owner adds it again, and its settings start again: no watch
+    assert watch(store, cast(GitHub, client), lambda m: None, now=NOW, revert=reverts) == 0
+    assert client.calls == []
+    store.update_project(REPO, active=True, weight=1, language=None, max_prs=3, watch=True)
+    client.answers = {
+        ("GET", f"/repos/{REPO}/commits/merged1/check-runs?per_page=100"): runs("success"),
+    }
+    assert watch(store, cast(GitHub, client), lambda m: None, now=NOW, revert=reverts) == 0
+    assert len(client.calls) == 1  # watched again, as its pull request still is under watch
+
+
+def test_sync_goes_on_with_the_pull_requests_of_a_removed_project_but_never_merges_or_watches_them(
+    store: Store,
+) -> None:
+    store.update_project(REPO, active=True, weight=1, language=None, max_prs=3, merge_on_approve=True, watch=True)
+    assert store.remove_project(REPO)
+    pull = {"state": "open", "number": 5, "head": {"sha": "h1"}, "base": {"ref": "main"}, "mergeable": True}
+    client = FakeGitHub({("GET", f"/repos/{REPO}/pulls/5"): pull})  # not a word about reviews or checks
+    assert sync(store, cast(GitHub, client), lambda m: None) == 0
+    assert [(method, path) for method, path, _ in client.calls] == [("GET", f"/repos/{REPO}/pulls/5")]
+    assert len(store.open_prs(REPO)) == 1
+    merged = {"state": "closed", "merged_at": "2026-10-27T10:00:00Z", "merge_commit_sha": "merged1"}
+    client.answers[("GET", f"/repos/{REPO}/pulls/5")] = merged  # the owner merges it on GitHub
+    assert sync(store, cast(GitHub, client), lambda m: None) == 1
+    assert status(store) == "merged" and store.open_prs(REPO) == []  # its story goes on
+    assert store.watched(NOW) == []  # and nobody watches it: its project is gone
+
+
 def test_sync_merges_what_the_owner_approved_and_watches_it(store: Store) -> None:
     store.update_project(REPO, active=True, weight=1, language=None, max_prs=3, merge_on_approve=True, watch=True)
     head = {

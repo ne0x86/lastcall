@@ -2712,3 +2712,362 @@ def test_the_layout_of_the_add_many_form_keeps_its_buttons_in_view() -> None:
     assert (
         "button.secondary, a.button.secondary {" in css
     )  # "Next: choose your projects" is a link in a button's look
+
+
+# the state of a card is a button, and the trash button removes a project after asking
+
+
+def head(page: str, repo: str) -> str:
+    """The header of a project's card: its name, its state with its "?", and its trash button."""
+    return card(page, repo).split("</header>")[0]
+
+
+def question(page: str, number: int) -> str:
+    """What the trash button of the `number`-th card opens: the popover that asks before a project is removed."""
+    found = re.search(rf'<div id="remove-{number}" popover class="bubble confirm"[^>]*>(.*?)</div>', page, re.S)
+    assert found, number
+    return found.group(1)
+
+
+def test_the_state_of_a_card_is_a_button_in_a_small_form_that_says_what_a_press_does(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")  # on, with priority 1
+    web.store.add_project("acme/web", active=False)
+    csrf = web.csrf()
+    page = web.client.get("/projects").get_data(as_text=True)
+    on, off = head(page, "acme/api"), head(page, "acme/web")
+    # a form with the CSRF field and the state that a press asks for
+    assert '<form method="post" action="/projects/acme/api/active" class="state-form">' in on
+    assert f'<input type="hidden" name="csrf" value="{csrf}">' in on and f'name="csrf" value="{csrf}"' in off
+    assert '<input type="hidden" name="active" value="0">' in on
+    assert '<input type="hidden" name="active" value="1">' in off
+    # it keeps its look and its text; its name says what a press does, and keeps the text that the chip shows
+    state = "active · priority\u00a0\u00d71"
+    assert (
+        f'<button class="chip state-active" aria-label="Turn off bursts on acme/api ({state})">{state}</button>' in on
+    )
+    assert (
+        '<button class="chip state-off" aria-label="Turn on bursts on acme/web (inactive)">inactive</button>' in off
+    )
+    # its "?" (one for the page: the first card has it) comes right after it, and says what a click does
+    assert re.search(r'</form>\s*<button type="button" class="help" popovertarget="help-projects-active"', on)
+    assert 'popovertarget="help-projects-active"' not in off
+    assert "Click the state at the top of a card to turn bursts on or off; the “Active” box in Settings" in page
+    assert "aria-pressed" not in page  # its name changes with its state, and a toggle's name must not
+    # the Active box in Settings stays, as it was
+    assert '<input type="checkbox" aria-describedby="active-hint-1" name="active" value="1" checked>' in page
+    assert '<input type="checkbox" aria-describedby="active-hint-2" name="active" value="1">' in page
+
+
+def test_a_press_on_the_state_turns_bursts_on_or_off_and_returns_to_the_card_with_no_notice(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.update_project(
+        "acme/api",
+        active=True,
+        weight=2,
+        language="Spanish",
+        max_prs=1,
+        merge_on_approve=True,
+        watch=True,
+        health_url="https://example.com/health",
+        tests=True,
+        deps=True,
+        signals="shop",
+    )
+    settings = web.store.project("acme/api")
+    assert settings is not None
+    csrf = web.csrf()
+
+    def press(active: str) -> TestResponse:
+        return web.client.post("/projects/acme/api/active", data={"csrf": csrf, "active": active}, headers=SITE)
+
+    response = press("0")
+    assert response.status_code == 302 and response.headers["Location"] == "/projects#project-acme--api"
+    assert web.store.project("acme/api") == replace(settings, active=False)  # the flag, and nothing else
+    page = web.client.get(response.headers["Location"]).get_data(as_text=True)
+    assert 'role="status"' not in page and 'class="card project is-off" id="project-acme--api"' in page
+    assert ">inactive</button>" in page and 'aria-label="Turn on bursts on acme/api (inactive)"' in page
+    assert press("1").headers["Location"] == "/projects#project-acme--api"
+    assert web.store.project("acme/api") == settings
+    assert "priority\u00a0\u00d72</button>" in web.client.get("/projects").get_data(as_text=True)
+    # the form says the state that it wants: a page that is out of date cannot flip the project the wrong way
+    press("1")
+    assert web.store.project("acme/api") == settings
+    press("0")
+    press("0")
+    assert web.store.project("acme/api") == replace(settings, active=False)
+    press("1")
+    press("")  # a form that says nothing wants it off
+    assert web.store.project("acme/api") == replace(settings, active=False)
+    # the Active box in Settings goes on working
+    form = {"csrf": csrf, "weight": "2", "language": "Spanish", "max_prs": "1", "active": "1"}
+    assert web.client.post("/projects/acme/api", data=form, headers=SITE).status_code == 302
+    project = web.store.project("acme/api")
+    assert project is not None and project.active and project.weight == 2
+    web.client.post("/projects/acme/api", data={k: v for k, v in form.items() if k != "active"}, headers=SITE)
+    project = web.store.project("acme/api")
+    assert project is not None and not project.active
+
+
+def test_turning_on_a_project_that_has_no_priority_gives_it_weight_1_or_it_would_stay_off(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.update_project("acme/api", active=True, weight=0, language=None, max_prs=3)  # `project add --weight 0`
+    csrf = web.csrf()
+
+    def press(active: str) -> None:
+        web.client.post("/projects/acme/api/active", data={"csrf": csrf, "active": active}, headers=SITE)
+
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'aria-label="Turn on bursts on acme/api (inactive)"' in page  # active, and yet off
+    press("0")
+    project = web.store.project("acme/api")
+    assert project is not None and (project.active, project.weight) == (False, 0)  # turning off changes the flag only
+    press("1")
+    project = web.store.project("acme/api")
+    assert project is not None and (project.active, project.weight) == (True, 1)
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert 'aria-label="Turn off bursts on acme/api (active · priority\u00a0\u00d71)"' in page
+    web.store.update_project("acme/api", active=False, weight=0.5, language=None, max_prs=3)
+    press("1")
+    project = web.store.project("acme/api")
+    assert project is not None and (project.active, project.weight) == (True, 0.5)  # a priority of 0.5 stays
+
+
+def test_the_state_and_the_trash_button_need_the_csrf_token_this_sites_origin_and_a_signed_in_owner(
+    tmp_path: Path,
+) -> None:
+    web = Web(tmp_path / "state-and-trash", github=FakeGitHub())
+    web.set_up()
+    web.store.add_project("acme/api")
+    web.store.add_order("audit", "acme/api", None, NOW)
+    before = web.store.project("acme/api")
+    for action in ("active", "remove"):
+        url, form = f"/projects/acme/api/{action}", {"active": "0"}
+        missing = web.client.post(url, data=form, headers=SITE)
+        forged = web.client.post(url, data={**form, "csrf": "forged"}, headers=SITE)
+        for refused in (missing, forged):
+            assert refused.status_code == 403 and "This form has expired" in refused.get_data(as_text=True)
+        elsewhere = web.client.post(
+            url, data={**form, "csrf": web.csrf()}, headers={"Origin": "https://evil.example"}
+        )
+        assert elsewhere.status_code == 403 and "Form not accepted" in elsewhere.get_data(as_text=True)
+        stranger = web.app.test_client()
+        signed_out = stranger.post(url, data={**form, "csrf": web.csrf()}, headers=SITE)
+        assert signed_out.status_code == 302 and signed_out.headers["Location"] == "/login"
+        assert web.client.get(url).status_code == 405  # a link cannot do it
+        nothing = web.client.post(f"/projects/acme/nothing/{action}", data={**form, "csrf": web.csrf()}, headers=SITE)
+        assert nothing.status_code == 404 and "This page does not exist" in nothing.get_data(as_text=True)
+    assert web.store.project("acme/api") == before and len(web.store.orders()) == 1  # nothing happened
+    fresh = Web(tmp_path / "fresh")  # no password yet: the owner signs up first
+    for action in ("active", "remove"):
+        sign_up = fresh.client.post(f"/projects/acme/api/{action}", data={"csrf": "x"}, headers=SITE)
+        assert sign_up.status_code == 302 and sign_up.headers["Location"] == "/setup"
+
+
+def test_the_state_and_the_trash_button_have_a_name_in_english_and_in_spanish(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_project("acme/web", active=False)
+    english = web.client.get("/projects").get_data(as_text=True)
+    spanish = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    names = {
+        "en": (
+            "Turn off bursts on acme/api (active · priority\u00a0\u00d71)",
+            "Turn on bursts on acme/web (inactive)",
+            "Remove acme/api from lastcall",
+            "Remove acme/web from lastcall",
+        ),
+        "es": (
+            "Desactivar las ráfagas en acme/api (activo · prioridad\u00a0\u00d71)",
+            "Activar las ráfagas en acme/web (inactivo)",
+            "Quitar acme/api de lastcall",
+            "Quitar acme/web de lastcall",
+        ),
+    }
+    for lang, page in (("en", english), ("es", spanish)):
+        for name in names[lang]:
+            assert f'aria-label="{name}"' in page, name
+    assert "Haz clic en el estado, arriba en la tarjeta, para activar o desactivar las ráfagas" in spanish
+    assert '<h3 id="remove-title-1">¿Quitar acme/api de lastcall?</h3>' in spanish
+    assert '<button class="danger">Quitar</button>' in spanish and ">Cancelar</button>" in spanish
+
+
+def test_the_trash_button_only_opens_a_question_whose_form_holds_the_removal(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_project("acme/web")
+    csrf = web.csrf()
+    page = web.client.get("/projects").get_data(as_text=True)
+    # it is no submit button and it is in no form of its own: it opens its popover and removes nothing by itself
+    top = head(page, "acme/api")
+    trash = re.search(
+        r'<button type="button" class="trash" popovertarget="remove-1" aria-label="Remove acme/api from lastcall" '
+        r'title="Remove acme/api from lastcall"><svg [^>]*aria-hidden="true"[^>]*><path d="[^"]+"/></svg></button>',
+        top,
+    )
+    assert trash and top.index("</form>") < trash.start()
+    assert top.count("<form") == 1 == head(page, "acme/web").count("<form")  # only the state's own
+    asked = question(page, 1)
+    assert '<h3 id="remove-title-1">Remove acme/api from lastcall?</h3>' in asked
+    for line in (
+        "lastcall stops working on this repository.",
+        "Its history and what lastcall learned stay. Add it again and it picks up where it left off, without "
+        "proposing again what you rejected.",
+        "Its settings (priority, language and the rest) are forgotten.",
+        "Nothing changes on GitHub: the repository and its pull requests stay.",
+        "It goes back to the list of repositories to add.",
+    ):
+        assert f"<li>{line}</li>" in asked
+    assert '<form method="post" action="/projects/acme/api/remove" class="form-actions">' in asked
+    assert f'<input type="hidden" name="csrf" value="{csrf}">' in asked
+    cancel = '<button type="button" class="secondary" popovertarget="remove-1" popovertargetaction="hide" autofocus>'
+    assert f"{cancel}Cancel</button>" in asked  # it closes the popover, and has the focus when it opens
+    assert '<button class="danger">Remove</button>' in asked  # the only button that submits
+    assert asked.count("<button") == 2
+    # each card asks about its own project, and the removal is posted from there and from nowhere else
+    assert page.count('action="/projects/acme/api/remove"') == 1
+    assert 'action="/projects/acme/web/remove"' in question(page, 2)
+    assert 'popovertarget="remove-2"' in head(page, "acme/web")
+    # it reads as a dialog with its title and what it says, and it takes no part in the help bubbles' bookkeeping
+    assert 'role="dialog" aria-labelledby="remove-title-1" aria-describedby="remove-what-1"' in page
+    targets = set(re.findall(r'popovertarget="(help-[^"]+)"(?! popovertargetaction)', page))
+    assert sorted(re.findall(r'id="(help-[^"]+)" popover', page)) == sorted(targets)
+    assert help_buttons_inside_a_paragraph(page) == []
+    # nothing that the content security policy blocks
+    assert "<script" not in page and "<style" not in page
+    assert "<img" not in card(page, "acme/api") and not re.search(r"\s(style|on[a-z]+)=", card(page, "acme/api"))
+
+
+def test_removing_a_project_keeps_its_history_and_it_returns_to_the_suggestions(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    assert add_many(web, "selected", "acme/api", "acme/web").status_code == 302
+    web.store.add_account("claude", "claude-code")
+    report = AuditReport("acme/api", "abc1234", "claude-code", "English")
+    finding = {"title": "T", "severity": "high", "file": "a.py", "lines": "1", "why": "w", "fix": "f"}
+    report.findings = [{**finding, "id": f"B{n}"} for n in (1, 2, 3)]
+    report.verdicts = [{"id": f"B{n}", "verdict": "valid", "decision": "pr"} for n in (1, 2, 3)]
+    report.deliveries = [
+        {"status": "opened", "url": "https://github.com/acme/api/pull/7", "title": "Fix B1", "ids": ["B1"]},
+        {"status": "opened", "url": "https://github.com/acme/api/pull/8", "title": "Fix B2", "ids": ["B2"]},
+    ]
+    web.store.start_run("api-1", "acme/api", "claude", "burst")
+    web.store.finish_run("api-1", "ok", "abc1234")
+    web.store.record_findings("api-1", report)
+    web.store.record_deliveries("api-1", report)
+    web.store.close_pr("https://github.com/acme/api/pull/7", merged=False)  # the owner rejected one
+    web.store.add_order("audit", "acme/api", None, NOW)
+    web.store.add_order("audit", "acme/web", None, NOW)
+    earlier = web.store.earlier("acme/api")
+    assert {e["state"] for e in earlier} == {"rejected", "in_pr", "pending"}
+    web.logs.clear()
+    response = web.client.post("/projects/acme/api/remove", data={"csrf": web.csrf()}, headers=SITE)
+    assert response.status_code == 302 and response.headers["Location"] == "/projects?done=removed&repo=acme/api"
+    assert web.logs == ["Web UI: project acme/api removed"]  # one line
+    assert added(web) == {"acme/web"} and [o["repo"] for o in web.store.orders()] == ["acme/web"]
+    assert web.store.earlier("acme/api") == earlier and [r["id"] for r in web.store.runs()] == ["api-1"]
+    page = web.client.get(response.headers["Location"]).get_data(as_text=True)
+    assert (
+        '<p class="notice done" role="status">acme/api removed. Its history stays: add it again from the list below '
+        "at any time.</p>" in page
+    )
+    assert 'id="project-acme--api"' not in page and 'id="project-acme--web"' in page
+    assert 'id="pick-acme--api"' in pick_form(page)  # back in the list of repositories to add
+    spanish = web.client.get(response.headers["Location"], headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert (
+        "acme/api quitado. Su historial se queda: vuelve a añadirlo cuando quieras desde la lista de abajo."
+        in spanish
+    )
+    for path in ("/", "/projects", "/accounts", "/settings", "/github"):  # nothing breaks with the project gone
+        assert web.client.get(path).status_code == 200, path
+    dashboard = web.client.get("/").get_data(as_text=True)
+    assert "acme/api#8" in dashboard  # its open pull request still waits for the owner
+    # adding it again picks up where it left off, and the judge still knows what the owner rejected
+    assert add_many(web, "selected", "acme/api").status_code == 302
+    assert added(web) == {"acme/api", "acme/web"} and web.store.earlier("acme/api") == earlier
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert "1 in review · 1 pending · 1 rejected" in card(page, "acme/api")
+
+
+def test_a_project_with_a_run_going_is_not_removed_and_the_page_says_why(github_web: Web) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    web.store.add_account("claude", "claude-code")
+    web.store.add_order("audit", "acme/api", None, NOW)
+    web.store.start_run("api-1", "acme/api", "claude", "manual")
+    csrf = web.csrf()
+    web.logs.clear()
+    response = web.client.post("/projects/acme/api/remove", data={"csrf": csrf}, headers=SITE)
+    page = response.get_data(as_text=True)
+    assert response.status_code == 409 and 'class="notice error" role="alert"' in page
+    assert "<p>A run is going on acme/api right now. Remove it when the run ends.</p>" in page
+    assert 'id="project-acme--api"' in page and 'role="status"' not in page  # the Projects page, with its card
+    assert web.store.project("acme/api") is not None and len(web.store.orders()) == 1 and web.logs == []
+    spanish = web.client.post(
+        "/projects/acme/api/remove", data={"csrf": csrf}, headers={**SITE, "Accept-Language": "es"}
+    ).get_data(as_text=True)
+    assert "Hay una ejecución en curso en acme/api. Quítalo cuando termine." in spanish
+    web.store.finish_run("api-1", "ok", None)  # the run ends, and the same button removes it
+    assert web.client.post("/projects/acme/api/remove", data={"csrf": csrf}, headers=SITE).status_code == 302
+    assert web.store.project("acme/api") is None and web.store.orders() == []
+
+
+@pytest.mark.parametrize(
+    "repo", ["", "x", "acme/api <b>", "../etc/passwd", "acme/api/extra", "a" * 300, "https://e.x/y"]
+)
+def test_a_removal_notice_names_only_what_looks_like_a_repository(github_web: Web, repo: str) -> None:
+    page = github_web.client.get("/projects", query_string={"done": "removed", "repo": repo}).get_data(as_text=True)
+    assert 'role="status"' not in page  # no notice, and no text that anyone wrote in the address
+
+
+def test_a_removed_project_keeps_its_container_and_source_choices_and_settings_never_erases_them(
+    tmp_path: Path,
+) -> None:
+    from lastcall import logs, loki
+
+    listed = [{"name": "shop-web-1", "image": "ghcr.io/acme/shop:1.2", "state": "running", "compose_project": "shop"}]
+    fake = FakeLoki([{"container": "shop-web-1", "compose_project": "shop", "host": "vps-1"}])
+    web = Web(tmp_path, containers=lambda: listed, loki_fetch=fake)
+    web.set_up()
+    loki.Loki("http://loki.example.com:3100").save(web.secrets)
+    web.store.add_project("acme/shop")
+    web.store.add_project("acme/blog")
+    logs.choose(web.store, {"shop-web-1": "acme/shop"})
+    web.store.set_setting(loki.LABEL, "container")
+    loki.choose(web.store, {"shop-web-1": "acme/shop"})
+    csrf = web.csrf()
+    assert web.client.post("/projects/acme/shop/remove", data={"csrf": csrf}, headers=SITE).status_code == 302
+    page = web.client.get("/settings").get_data(as_text=True)
+    note = "It was chosen for acme/shop, which is not a project now: add acme/shop again and it is read again."
+    assert page.count(note) == 2  # a container and a source
+    assert '<option value="acme/blog" selected>' not in page and 'value="acme/shop"' not in page
+    assert page.count('<input type="hidden" name="shown-1" value="">') == 2  # the page shows no project for them
+    spanish = web.client.get("/settings", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert spanish.count("Se eligió para acme/shop, que ya no es un proyecto: añade acme/shop de nuevo") == 2
+    # saving the form as the page sends it keeps the choices
+    form = {"csrf": csrf, "name-1": "shop-web-1", "project-1": "", "shown-1": ""}
+    assert web.client.post("/settings/logs", data=form, headers=SITE).status_code == 302
+    sources = web.client.post("/settings/loki/sources", data={**form, "label": "container"}, headers=SITE)
+    assert sources.status_code == 302
+    assert logs.chosen(web.store) == {"shop-web-1": "acme/shop"} == loki.chosen(web.store)
+    # adding the project again brings the choices back, with nothing to say about them
+    web.store.add_project("acme/shop")
+    page = web.client.get("/settings").get_data(as_text=True)
+    assert page.count('<option value="acme/shop" selected>acme/shop</option>') == 2
+    assert "is not a project now" not in page
+    assert page.count('<input type="hidden" name="shown-1" value="acme/shop">') == 2
+    assert logs.names_for("acme/shop", listed, logs.chosen(web.store)) == ["shop-web-1"]
+
+
+def test_without_popover_support_the_question_shows_inline_and_the_trash_button_hides() -> None:
+    css = (Path(__file__).parent.parent / "src/lastcall/web/static/style.css").read_text(encoding="utf-8")
+    fallbacks = re.findall(r"@supports not selector\(:popover-open\) \{(.*?)\n\}", css, re.S)
+    mine = next(block for block in fallbacks if ".bubble.confirm" in block)
+    assert (
+        ".trash, .bubble.confirm button[popovertargetaction] { display: none; }" in mine
+    )  # no button opens or closes
+    inline = re.search(r"\.bubble\.confirm \{(.*?)\}", mine, re.S)
+    assert inline is not None and "display" not in inline.group(1) and "max-height: none" in inline.group(1)
+    # an author's display on a popover overrides the browser's, and would show the closed question
+    assert not re.search(r"\.bubble\.confirm\s*\{[^}]*\bdisplay:", css.replace(mine, ""))

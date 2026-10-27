@@ -1009,6 +1009,69 @@ main > .notice.done { box-shadow: inset 0 3px 0 var(--edge), var(--shadow); }
 .project-name a:hover { text-decoration: underline; text-decoration-thickness: 2px; }
 .project-name a::after { content: "\2197"; margin-left: .25rem; color: var(--muted); font-family: var(--font-body); font-size: .8em; font-weight: 600; }
 
+/* The state is a button that turns bursts on or off: the chip keeps its look, and on hover and focus it says that it can
+   be pressed. It and its "?" stay together with the trash button, beside the name when there is room and under it when
+   not, and the trash button sits at the far end, away from the chip, so that the two are not mixed up. Both reach 44 px
+   with their hit area, as the "?" does. */
+.project-state { flex: 1 1 auto; display: flex; align-items: center; gap: var(--s2) var(--s3); }
+.state-form { margin: 0; }
+button.chip { position: relative; font-family: var(--font-body); cursor: pointer; box-shadow: none; }
+button.chip::after { content: ""; position: absolute; inset: -9px 0; }
+button.chip.state-active:hover, button.chip.state-active:focus-visible { background: color-mix(in srgb, var(--good) 8%, var(--good-soft)); border-color: var(--good); }
+button.chip.state-off:hover, button.chip.state-off:focus-visible { color: var(--text); background: var(--raised); border-color: var(--accent); }
+.trash {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  min-height: 0;
+  margin-left: auto;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: 1.5px solid transparent;
+  border-radius: 50%;
+  box-shadow: none;
+}
+.trash::after { content: ""; position: absolute; inset: -6px; }
+.trash:hover, .trash:focus-visible { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.trash svg { width: 1.15rem; height: 1.15rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media print { .state-form { display: block !important; } }  /* the state stays on paper, though it is a form */
+
+/* The question that the trash button opens: a help bubble in the colour of danger, with what removing does and its two
+   buttons; Cancel has the focus when it opens. Without popover support the question shows inline in the card, with its
+   Remove button, and the trash button, which would open nothing, is hidden. */
+.bubble.confirm { box-shadow: inset 0 3px 0 var(--bad), var(--shadow-lift); }
+.bubble.confirm::backdrop { background: rgb(26 20 15 / .28); }
+.bubble.confirm h3::before { content: "!"; color: var(--surface); background: var(--bad); }
+.bubble.confirm:popover-open { display: flex; flex-direction: column; overflow: hidden; }  /* only while it is open: a display of its own would show it closed */
+.bubble.confirm h3, .bubble.confirm .form-actions { flex: none; }
+.bubble.confirm ul {  /* when the room is short the list scrolls, with a shade at the edge that has more; the title and the buttons stay in view */
+  display: grid;
+  gap: var(--s2);
+  min-height: 0;
+  margin: 0 0 var(--s3);
+  padding-left: 1.2rem;
+  overflow: auto;
+  background:
+    linear-gradient(var(--surface) 30%, transparent) top / 100% 2.5rem no-repeat local,
+    linear-gradient(transparent, var(--surface) 70%) bottom / 100% 2.5rem no-repeat local,
+    radial-gradient(farthest-side at 50% 0, var(--shade), transparent) top / 100% .8rem no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, var(--shade), transparent) bottom / 100% .8rem no-repeat scroll;
+}
+.bubble.confirm .form-actions { justify-content: flex-end; }
+@media (max-width: 47.99rem) {  /* more to read than a help bubble: a little more room, and a little tighter */
+  .bubble.confirm { max-height: min(90dvh, 36rem); font-size: .93rem; }
+  .bubble.confirm ul { gap: var(--s1); line-height: 1.45; }
+}
+@supports not selector(:popover-open) {
+  .trash, .bubble.confirm button[popovertargetaction] { display: none; }
+  .bubble.confirm { max-height: none; margin: 0; padding: var(--s3); background: var(--bad-soft); border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent); border-radius: var(--r-md); box-shadow: none; }
+  .bubble.confirm ul { overflow: visible; background: none; }  /* nothing scrolls, so no shade */
+}
+
 /* Facts: a label and its value on each line. */
 .facts { margin: 0; padding: 0; }
 .facts > div { display: grid; grid-template-columns: 8.75rem minmax(0, 1fr); align-items: baseline; gap: 0 var(--s3); padding: .45rem 0; border-bottom: 1px solid var(--border); }
@@ -1378,7 +1441,7 @@ fieldset > .hint { margin: 0; }
 @media (forced-colors: active) {
   .card, .hero, .welcome, .notice, .bubble, .bubbles { border-top: 3px solid CanvasText; }
   .chip, .badge, .pill, .run, .plan, .readout a, .segmented a, .toc a { border: 1px solid CanvasText; }
-  .help { border: 1px solid ButtonText; }
+  .help, .trash { border: 1px solid ButtonText; }
   summary::after, .steps > li::after { forced-color-adjust: none; background: CanvasText; }
   .steps > li::before { border: 2px solid CanvasText; }
   meter, meter::-webkit-meter-bar { background: Canvas; border: 1px solid CanvasText; }

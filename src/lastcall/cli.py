@@ -5,6 +5,7 @@ lastcall account add <account> --engine <engine> [--language Spanish] [--reserve
 lastcall account add <account> --engine opencode --provider openrouter --model <model> --budget 20  # an API key
 lastcall account tier <account> deep --effort max   # a tier's model and effort; - for lastcall's default
 lastcall project add <owner/name> [--weight 1] [--language Spanish] [--inactive] [--signals <tracker project>]
+lastcall project remove <owner/name>              # stop working on it; its history stays
 lastcall signals connect --url https://sentry.io --org <slug>   # the error tracker, Sentry or GlitchTip
 lastcall signals show <owner/name>                # the errors in production that the audits read
 lastcall logs list                                # this host's containers, with their projects or suggestions
@@ -149,6 +150,10 @@ def main(argv: list[str] | None = None) -> int:
     proj_add.add_argument("--inactive", action="store_true", help="keep it, but do not audit it")
     proj_add.add_argument("--signals", help="its project in the error tracker (Sentry or GlitchTip), by slug")
     proj.add_parser("list", help="the projects")
+    proj_remove = proj.add_parser(
+        "remove", help="remove a project; its history stays, so adding it again picks up where it left off"
+    )
+    proj_remove.add_argument("repo", help="owner/name")
 
     sig = commands.add_parser("signals", help="errors in production, from Sentry or GlitchTip").add_subparsers(
         dest="action", required=True
@@ -324,6 +329,8 @@ def dispatch(args: argparse.Namespace) -> int:
                 state = "active" if p.active and p.weight > 0 else "inactive"
                 print(f"{p.repo:<40} {state:<8} weight {p.weight:g}  {p.language or ''}")
             return 0
+        case "project", "remove":
+            return remove_project(args.repo)
         case "quota", _:
             return quota(account(args.account))
         case "github", "setup":
@@ -410,6 +417,23 @@ def add_account(args: argparse.Namespace) -> int:
         print(f"Account {acc.id} ({acc.engine} on {acc.provider}), policy {policy}. It needs no login.")
     else:
         print(f"Account {acc.id} ({acc.engine}). Sign it in with: lastcall login {acc.id} --engine {acc.engine}")
+    return 0
+
+
+def remove_project(repo: str) -> int:
+    """The same as the card's trash button: refused while a run is going on the project; otherwise its orders that
+    have not started go with it, and its history stays."""
+    st = store()
+    project = st.project(repo)
+    if project is None:
+        raise ValueError(f"no project {repo!r}: `lastcall project list` shows them")
+    if not st.remove_project(project.repo):
+        print(f"A run is going on {project.repo}: remove it when the run ends.", file=sys.stderr)
+        return 1
+    print(
+        f"{project.repo} removed. Its history stays: `lastcall project add {project.repo}` picks up where it "
+        "left off, with the default settings."
+    )
     return 0
 
 

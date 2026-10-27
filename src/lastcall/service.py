@@ -278,7 +278,8 @@ class Service:
             account = max(free, key=self.leftover)
             recipe = order["kind"] if order["kind"] in ("improve", "issues", "tests", "deps") else "audit"
             crew = [a for a in free if a is not account] if order["account"] == "*" and recipe == "audit" else []
-            store.start_order(order["id"], now)
+            if not store.start_order(order["id"], now):  # the owner removed its project while it waited
+                continue
             self.log(f"{account.id}: {recipe} of {order['repo']} ordered by the owner")
             self.launch(account, order["repo"], "manual", crew, recipe)
 

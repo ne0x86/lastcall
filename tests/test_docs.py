@@ -82,3 +82,24 @@ def test_the_documents_say_how_the_first_steps_go() -> None:
     source = (ROOT / "src/lastcall/web/__init__.py").read_text(encoding="utf-8")
     assert '"/github/installed"' in source and '"/projects/add-many"' in source
     assert 'id="suggestions"' in (ROOT / "src/lastcall/web/templates/projects.html").read_text(encoding="utf-8")
+
+
+def test_the_documents_describe_the_state_chip_and_the_trash_button() -> None:
+    steps = " ".join(README.split("**3. Follow the dashboard.**")[1].split("That is all.")[0].split())
+    assert "A click on a project's state turns its bursts on or off, and its trash button removes it" in steps
+    assert "from lastcall but keeps its history" in steps
+    web_ui = " ".join(DESIGN.split("## 13. Web UI and CLI")[1].split("## 14. Extensibility")[0].split())
+    for words in (
+        "`POST /projects/<owner>/<name>/active`",
+        "`POST /projects/<owner>/<name>/remove`",
+        "also gives it weight 1",
+        "`#project-owner--name`",
+        "Nothing else goes: runs, findings, ideas, labelled issues and pull requests are keyed by the repository's",
+        "`lastcall project remove <owner/name>`",
+    ):
+        assert words in web_ui, words
+    # the routes and the command that they name exist
+    source = (ROOT / "src/lastcall/web/__init__.py").read_text(encoding="utf-8")
+    assert '"/projects/<owner>/<name>/active"' in source and '"/projects/<owner>/<name>/remove"' in source
+    cli = (ROOT / "src/lastcall/cli.py").read_text(encoding="utf-8")
+    assert "lastcall project remove <owner/name>" in cli and "cli project remove <owner/name>" in README

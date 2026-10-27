@@ -816,6 +816,32 @@ brings the owner back after the installation starts a reading of the suggestions
 Adding by an address, which asks GitHub whether the App is installed there, stays for a repository that is not in the
 list.
 
+The state at the top of a project's card, its chip ("active · priority ×2" or "inactive"), is a button in a small form:
+one click turns the project's bursts on or off (`POST /projects/<owner>/<name>/active`). The form says the state that it
+wants and does not flip the one that it finds, so that a page that is out of date never turns the project the wrong way.
+It changes only the project's active flag, but for one thing: a project with no priority (weight 0 or less, which only
+`lastcall project add --weight 0` makes) is off whatever its flag says, so turning it on also gives it weight 1. The
+owner comes back to the card (`#project-owner--name`) with no notice, since the chip is the answer; the Active box in
+the card's Settings stays and works as before. The chip's accessible name says what a press does and keeps the text that
+the chip shows ("Turn off bursts on owner/name (active · priority ×2)"), so it has no `aria-pressed`, which goes with a
+name that never changes.
+
+The trash button at the other end of the header removes a project from lastcall, and it only asks: it opens a popover
+(`popovertarget`, as the help bubbles do) that says what removing means, with a Cancel button that closes it and has the
+focus, and the Remove button of the form that posts `POST /projects/<owner>/<name>/remove`. Browsers without `popover`
+show that question inline in the card, with its Remove button, and hide the trash button. While a run is going on the
+project, the removal is refused and the Projects page says to remove it when the run ends. Otherwise one transaction
+deletes the owner's orders for the project that have not started (the service does not start one that it had already
+read) and the project's row, and the owner is told that its history stays. Nothing else goes: runs, findings, ideas,
+labelled issues and pull requests are keyed by the repository's name, not by the project, so adding the repository
+again, from the suggestions, where it is back at once, or by its address, picks up where it left off, and the judge does
+not propose again what the owner rejected. Only the project's own settings (priority, language, merge on approve and the
+rest) are forgotten. The choices of containers and Loki sources in the settings stay too, and come back with the
+project: the Settings page shows them apart, as chosen for a project that is not one now, and saving the page never
+erases them. While the project is out, sync goes on following its open pull requests, so that what the owner does with
+them is still recorded, but lastcall neither merges nor watches them. `lastcall project remove <owner/name>` follows the
+same rules from the command line.
+
 A project with merge on approve or the watch on shows a notice on its card while GitHub says that the App's installation
 cannot read checks and commit statuses (an App made before v0.7.2 cannot): the two steps, which are to set them to
 Read-only on the App's permissions page and then to accept them on the installation, and the link to that page. The

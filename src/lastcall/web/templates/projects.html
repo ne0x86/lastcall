@@ -130,8 +130,39 @@
     <article class="card project{% if not p.on %} is-off{% endif %}" id="project-{{ p.owner }}--{{ p.name }}" aria-labelledby="project-title-{{ n }}">
       <header class="project-head">
         <h2 class="project-name" id="project-title-{{ n }}"><a href="{{ p.url }}">{{ p.repo }}</a></h2>
-        <span class="chips"><span class="chip {{ 'state-active' if p.on else 'state-off' }}">{{ p.state }}</span>{{ help(hb, "projects-active", t("web.project.active"), ["projects.active"]) }}</span>
+        {#- The state, its "?" and the trash button stay together: beside the name when there is room, else under it. -#}
+        <div class="project-state">
+          {#- The state is a button: one click turns bursts on or off. Its form says the state it wants, so that an old page
+              cannot flip it the wrong way. Its name says what a press does and keeps the visible text; it has no
+              aria-pressed, because that goes with a name that never changes. -#}
+          <div class="chips">
+            <form method="post" action="{{ url_for('project_active', owner=p.owner, name=p.name) }}" class="state-form">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="active" value="{{ 0 if p.on else 1 }}">
+              <button class="chip {{ 'state-active' if p.on else 'state-off' }}" aria-label="{{ t('web.project.turn_off' if p.on else 'web.project.turn_on', repo=p.repo, state=p.state) }}">{{ p.state }}</button>
+            </form>
+            {{ help(hb, "projects-active", t("web.project.active"), ["projects.active"]) }}
+          </div>
+          {#- The trash button only opens the question below, as a popover: it never removes anything by itself. -#}
+          <button type="button" class="trash" popovertarget="remove-{{ n }}" aria-label="{{ t('web.project.remove', repo=p.repo) }}" title="{{ t('web.project.remove', repo=p.repo) }}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M10 11v6M14 11v6"/></svg></button>
+        </div>
       </header>
+      {#- The question. Without popover support it shows inline (style.css), with its Remove button, and the trash button is hidden. -#}
+      <div id="remove-{{ n }}" popover class="bubble confirm" role="dialog" aria-labelledby="remove-title-{{ n }}" aria-describedby="remove-what-{{ n }}">
+        <h3 id="remove-title-{{ n }}">{{ t("web.project.remove_title", repo=p.repo) }}</h3>
+        <ul id="remove-what-{{ n }}">
+          <li>{{ t("web.project.remove_stops") }}</li>
+          <li>{{ t("web.project.remove_history") }}</li>
+          <li>{{ t("web.project.remove_settings") }}</li>
+          <li>{{ t("web.project.remove_github") }}</li>
+          <li>{{ t("web.project.remove_back") }}</li>
+        </ul>
+        <form method="post" action="{{ url_for('remove_project', owner=p.owner, name=p.name) }}" class="form-actions">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="button" class="secondary" popovertarget="remove-{{ n }}" popovertargetaction="hide" autofocus>{{ t("web.project.remove_cancel") }}</button>
+          <button class="danger">{{ t("web.project.remove_confirm") }}</button>
+        </form>
+      </div>
       <dl class="facts">
         <div><dt>{{ t("web.projects.last") }}</dt><dd>{{ p.last }}{% if p.last_status %} <span class="run run-{{ p.last_key }}">{{ p.last_status }}</span>{% endif %}</dd></div>
         <div><dt>{{ t("web.projects.findings") }}</dt><dd><span class="with-help"><span>{{ p.findings }}</span>{{ help(hb, "common-findings", t("web.projects.findings"), ["common.findings"]) }}</span></dd></div>

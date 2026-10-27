@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -280,3 +281,138 @@ def test_sync_reads_the_owners_ticks(store: Store) -> None:
     fake.answers["/repos/ne0x86/demo/issues/7"] = {"state": "closed", "state_reason": "completed", "body": body}
     assert sync(store, cast(GitHub, fake), messages.append) == 1
     assert idea_states(store) == {"I1": "wanted", "I2": "dismissed", "I3": "discarded"}  # what was ticked stays
+
+
+# turning a project on or off, and removing it
+
+TICKET = "https://github.com/ne0x86/demo/issues/3"
+
+
+def test_a_project_turns_on_and_off_and_nothing_else_of_it_changes(store: Store) -> None:
+    store.add_project(REPO, weight=2, language="Spanish")
+    store.update_project(
+        REPO,
+        active=True,
+        weight=2,
+        language="Spanish",
+        max_prs=1,
+        merge_on_approve=True,
+        watch=True,
+        health_url="https://example.com/health",
+        tests=True,
+        deps=True,
+        signals="demo",
+    )
+    on = store.project(REPO)
+    assert on is not None and on.active
+    store.set_active(REPO, False)
+    assert store.project(REPO) == replace(on, active=False)  # only the flag
+    store.set_active(REPO, True)
+    assert store.project(REPO) == on
+    store.set_active(REPO, False, weight=0.5)  # a weight, when one is given
+    assert store.project(REPO) == replace(on, active=False, weight=0.5)
+
+
+def history(store: Store) -> None:
+    """What a project leaves behind: a run, findings, a pull request, an improvement plan with an idea ticked, and a
+    labelled issue that waits."""
+    store.start_run("run1", REPO, "claude", "burst")
+    store.finish_run("run1", "ok", "abc1234")
+    report = judged()
+    store.record_findings("run1", report)
+    report.deliveries = [
+        {"title": "Fix B1", "ids": ["B1"], "status": "opened", "url": "https://github.com/ne0x86/demo/pull/5"}
+    ]
+    store.record_deliveries("run1", report)
+    store.close_pr("https://github.com/ne0x86/demo/pull/5", merged=False)  # the owner rejected it
+    store.record_ideas("run1", improved())
+    store.tick_ideas(PLAN, {"I1": True})
+    store.sync_tickets(REPO, [{"number": 3, "url": TICKET, "title": "Make it faster"}])
+
+
+def kept(store: Store) -> dict[str, Any]:
+    """What the judge, the ranking and the pull requests of the project read from the store."""
+    return {
+        "runs": [r["id"] for r in store.runs()],
+        "statuses": store.statuses(REPO),
+        "earlier": store.earlier(REPO),
+        "earlier_ideas": store.earlier_ideas(REPO),
+        "wanted": store.wanted_count(REPO),
+        "waiting": store.waiting_count(REPO),
+        "prs": store.q("SELECT url, state FROM prs WHERE repo = ?", (REPO,)),
+    }
+
+
+def test_removing_a_project_keeps_all_its_history_and_adding_it_again_picks_it_up(store: Store) -> None:
+    store.add_account("claude", "claude-code")
+    store.add_project(REPO)
+    store.add_project("ne0x86/other")
+    history(store)
+    before = kept(store)
+    assert before["statuses"]["rejected"] == 1 and before["wanted"] == 1 and before["waiting"] == 1
+    store.add_order("audit", REPO, None, 1.0)  # waits
+    store.add_order("tests", REPO.upper(), "claude", 2.0)  # waits too, written in another case
+    store.add_order("audit", "ne0x86/other", None, 3.0)  # another project's
+    store.add_order("improve", REPO, None, 4.0)
+    store.start_order(store.orders()[-1]["id"], 5.0)  # one that has started already
+    assert store.remove_project(REPO) is True
+    assert [p.repo for p in store.projects()] == ["ne0x86/other"] and store.project(REPO) is None
+    assert [o["repo"] for o in store.orders()] == ["ne0x86/other"]  # what waited for it is cancelled
+    assert [o["kind"] for o in store.q("SELECT kind FROM orders WHERE started IS NOT NULL")] == ["improve"]
+    assert kept(store) == before  # and nothing else goes
+    store.add_project(REPO)
+    assert kept(store) == before  # the judge still knows what the owner rejected
+    assert store.remove_project(REPO) is True  # a project that is not there: nothing to do
+    assert store.remove_project("ne0x86/never-added") is True
+
+
+def test_a_project_with_a_run_going_is_not_removed_and_nothing_changes(store: Store) -> None:
+    store.add_project(REPO)
+    store.add_order("audit", REPO, None, 1.0)
+    store.start_run("run1", REPO.upper(), "claude", "manual")  # whatever the case
+    assert store.remove_project(REPO) is False
+    assert store.project(REPO) is not None and len(store.orders()) == 1
+    store.finish_run("run1", "failed", None)
+    assert store.remove_project(REPO) is True
+    assert store.project(REPO) is None and store.orders() == []
+    assert [r["id"] for r in store.runs()] == ["run1"]
+
+
+def test_an_order_that_was_cancelled_cannot_start(store: Store) -> None:
+    store.add_project(REPO)
+    store.add_order("audit", REPO, None, 1.0)
+    [order] = store.orders()
+    assert store.remove_project(REPO)
+    assert store.start_order(order["id"], 2.0) is False  # a service that still holds it does not run it
+    store.add_order("audit", "ne0x86/other", None, 3.0)
+    [waiting] = store.orders()
+    assert store.start_order(waiting["id"], 4.0) is True
+    assert store.start_order(waiting["id"], 5.0) is False  # started once
+    assert store.orders() == []
+
+
+def test_the_command_line_removes_a_project_by_the_same_rules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from lastcall import cli
+
+    monkeypatch.setenv("LASTCALL_STATE", str(tmp_path / "state"))
+    assert cli.main(["project", "add", REPO]) == 0 and cli.main(["project", "add", "ne0x86/other"]) == 0
+    st = Store(tmp_path / "state" / "lastcall.db")
+    st.add_order("audit", REPO, None, 1.0)
+    st.start_run("run1", REPO, "claude", "manual")
+    capsys.readouterr()
+    assert cli.main(["project", "remove", REPO]) == 1  # a run is going on it: nothing changes
+    assert "A run is going on ne0x86/demo: remove it when the run ends." in capsys.readouterr().err
+    assert st.project(REPO) is not None and len(st.orders()) == 1
+    st.finish_run("run1", "ok", "abc1234")
+    assert cli.main(["project", "remove", "NE0X86/DEMO"]) == 0  # whatever the case
+    assert "ne0x86/demo removed. Its history stays" in capsys.readouterr().out
+    assert st.project(REPO) is None and st.orders() == [] and [r["id"] for r in st.runs()] == ["run1"]
+    with pytest.raises(SystemExit):  # it is not a project any more
+        cli.main(["project", "remove", REPO])
+    assert "no project 'ne0x86/demo'" in capsys.readouterr().err
+    assert cli.main(["project", "list"]) == 0
+    listed = capsys.readouterr().out
+    assert "ne0x86/other" in listed and REPO not in listed
+    assert cli.main(["project", "add", REPO]) == 0  # and it can be added again

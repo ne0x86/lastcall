@@ -382,6 +382,33 @@ class Store:
         """After a revert: no more bursts on the project until the owner activates it again."""
         self.x("UPDATE projects SET active = 0 WHERE repo = ?", (repo,))
 
+    def set_active(self, repo: str, active: bool, weight: float | None = None) -> None:
+        """Bursts on or off for a project: its flag, and its weight when one is given, but nothing else of it."""
+        self.x(
+            "UPDATE projects SET active = ?, weight = COALESCE(?, weight) WHERE repo = ?", (int(active), weight, repo)
+        )
+
+    def remove_project(self, repo: str) -> bool:
+        """Take a project out of lastcall, with the owner's orders for it that have not started. False, and nothing
+        changes, while a run is going on it. The rest stays: runs, findings, ideas, labelled issues and pull requests
+        are keyed by the repository's name and not by the project, and so are the choices of containers and Loki
+        sources in the settings, so adding the project again picks up where it left off. The check and the deletes are
+        one transaction."""
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                going = self.db.execute(
+                    "SELECT 1 FROM runs WHERE status = 'running' AND lower(repo) = lower(?) LIMIT 1", (repo,)
+                ).fetchone()
+                if going is None:
+                    self.db.execute("DELETE FROM orders WHERE started IS NULL AND lower(repo) = lower(?)", (repo,))
+                    self.db.execute("DELETE FROM projects WHERE lower(repo) = lower(?)", (repo,))
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+            self.db.execute("COMMIT")
+        return going is None
+
     # suggestions for the installed repositories, refreshed now and then from GitHub
 
     def save_suggestions(self, found: Iterable[Suggestion], now: float) -> None:
@@ -413,8 +440,9 @@ class Store:
         """Orders not started yet, oldest first."""
         return self.q("SELECT * FROM orders WHERE started IS NULL ORDER BY id")
 
-    def start_order(self, order_id: int, now: float) -> None:
-        self.x("UPDATE orders SET started = ? WHERE id = ?", (now, order_id))
+    def start_order(self, order_id: int, now: float) -> bool:
+        """Mark an order started. False when it is not there any more: its project was removed while it waited."""
+        return self.x("UPDATE orders SET started = ? WHERE id = ? AND started IS NULL", (now, order_id)).rowcount == 1
 
     # quota readings
 
