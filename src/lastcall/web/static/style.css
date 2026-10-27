@@ -1028,6 +1028,11 @@ main > .notice.done { box-shadow: inset 0 3px 0 var(--edge), var(--shadow); }
 .line.tickets p::before, .busy::before { content: "\25CF\00a0"; color: var(--ember); }
 .busy { margin: 0; color: var(--ember-text); }
 
+/* The App cannot read checks yet: a notice on the card, with the two steps that fix it. */
+.card.project > .notice.checks { margin: 0; }
+.notice.checks ol { margin: 0; padding-left: 1.4rem; }
+.notice.checks li + li { margin-top: var(--s1); }
+
 /* Run now: the account, four buttons (2 by 2 on a phone, in one row when the card is wide) and what each does. */
 .run-form { container-type: inline-size; }
 fieldset.has-help { gap: var(--s2) var(--s1); }

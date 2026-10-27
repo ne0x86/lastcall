@@ -375,10 +375,12 @@ Rules for engines:
 ### Onboarding
 
 1. **Connect GitHub.** The wizard creates the instance's GitHub App through the manifest flow. Permissions: contents,
-   pull requests and issues read and write, metadata read; no workflows, no administration and no webhooks (lastcall
-   asks GitHub when it needs to). The owner installs the App on all repositories or on selected ones. The installation
-   is the security boundary: lastcall cannot touch anything else. The web UI does it from its GitHub App page, which
-   asks whose repositories they are and finds out from GitHub's public API whether that is a person or an organization
+   pull requests and issues read and write; checks, commit statuses and metadata read; no workflows, no administration
+   and no webhooks (lastcall asks GitHub when it needs to). Checks and commit statuses are what merge on approve and the
+   watch need to read the checks of a commit (section 11); an App made before v0.7.2 lacks them, and its owner adds them
+   on GitHub. The owner installs the App on all repositories or on selected ones. The installation is the security
+   boundary: lastcall cannot touch anything else. The web UI does it from its GitHub App page, which asks whose
+   repositories they are and finds out from GitHub's public API whether that is a person or an organization
    (`lastcall.github_setup.owner_kind`, which waits 10 seconds for GitHub before it asks the owner); the page and
    `lastcall github setup` both accept a name as people paste it (`@name`, or the address of the profile) and check it
    before asking GitHub. The confirm page says who has to be signed in on github.com: the account itself for a person,
@@ -698,14 +700,23 @@ runs, and different network rights for setup and verify.
 
   If the pull request no longer merges cleanly, lastcall closes it with a comment, and its findings go back to
   pending (its ideas, to wanted): a later run makes the change on the current code.
+
+  Reading the check runs and the commit statuses takes the App's Checks and Commit statuses permissions (read; write
+  counts too), which an App made before v0.7.2 lacks and only its owner can add on GitHub. Before it asks for the checks
+  of an approved pull request, lastcall reads what the installation was granted (`GET /repos/{repo}/installation`, with
+  the App's own token). While either permission is missing it asks for no checks: the pull request waits, and the log
+  says once per project and sync what is missing and what to do (`lastcall.approval.ChecksUnreadable`). A 403 from those
+  requests, which GitHub may answer anyway, ends the same way, unless it is a rate limit. When GitHub does not say what
+  the installation was granted, lastcall goes on and asks. The Projects page says it too (section 13).
 - **Deployment** belongs to the owner's CI/CD. After the merge, lastcall can **watch** (`lastcall.watch`, a project
   setting that is off by default). For 24 hours it looks, at each sync, at the checks of the merged commit and, when the
   project gives one, at a health address. When the checks fail where they passed on the commit before the merge, or the
   address fails 3 times in a row, it opens a pull request that reverts the change (against the first parent for a merge
   commit), pauses the project and tells the owner. It never merges the revert. Once the revert is merged, the change's
-  findings are `reverted`, and the judge knows. Errors in production feed the audits since v0.5, and container logs and
-  their state since v0.6 (section 8). A deploy adapter for Docker Compose over SSH, taken from the prototype, can come
-  later as a plugin.
+  findings are `reverted`, and the judge knows. When the App cannot read the checks (see above), the watch says so in
+  the log, once per project and sync, and goes on with the health address alone. Errors in production feed the audits
+  since v0.5, and container logs and their state since v0.6 (section 8). A deploy adapter for Docker Compose over SSH,
+  taken from the prototype, can come later as a plugin.
 
 ## 12. Security model
 
@@ -714,7 +725,7 @@ runs, and different network rights for setup and verify.
 | Prompt injection in code, logs or issues makes an agent act | Agents have no forge credentials, no write access outside their clone and no network beyond the allowlist. Only the owner's label starts work on an issue, and only comments from people who may write reach the agent. Every change goes through verification and human approval. |
 | Exfiltration of code or secrets | Egress allowlist. Logs are redacted. Scanners report secrets without their values. |
 | An agent lies about the tests | lastcall runs them again in a clean container and reads the exit code itself. |
-| Someone approves a lastcall pull request to get it merged | Merge on approve counts only approvals from people who may write to the repository, on the latest commit; it merges only when nobody who may write asks for changes and no check fails or runs, and it names that commit. The setting lives in lastcall, never in the repository. |
+| Someone approves a lastcall pull request to get it merged | Merge on approve counts only approvals from people who may write to the repository, on the latest commit; it merges only when nobody who may write asks for changes and no check fails or runs, and it names that commit. When it cannot read the checks (the App lacks Checks or Commit statuses), it merges nothing. The setting lives in lastcall, never in the repository. |
 | A repository's links point lastcall at the host's files | lastcall reads a repository's files on its own side (`.lastcall.yml`, the devcontainer, go.mod, the README...) only when their real place is inside the repository, and the snapshot that steps get leaves out links that leave it. In the sandbox, links resolve inside the container. |
 | A bug in lastcall starts a dangerous container | Only the supervisor has the Docker socket, and it accepts a narrow spec. |
 | A project's environment image is hostile | The owner's repository chooses it, and it runs with the isolation of any step: user 1000, no capabilities, the sandbox network, the change's copy as its only writable mount, and never an account volume or the Docker socket. |
@@ -781,6 +792,15 @@ starts, and a notification that fails is logged and never stops lastcall. The we
 owner sets `LASTCALL_BIND`, such as to a VPN address. Behind a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall
 read the client's address, scheme and host from the proxy's `X-Forwarded-*` headers, which the server drops otherwise,
 and `LASTCALL_WEB_ORIGIN` only adds origins that forms may come from.
+
+A project with merge on approve or the watch on shows a notice on its card while GitHub says that the App's installation
+cannot read checks and commit statuses (an App made before v0.7.2 cannot): the two steps, which are to set them to
+Read-only on the App's permissions page and then to accept them on the installation, and the link to that page. The
+link is the App owner's own page for a person and the organization's for an organization: the account of the
+installation says which, since a private App can only be installed on the account that owns it. The page asks GitHub
+with the App's own token, waits 5 seconds at most, and keeps the answer for each owner for 10 minutes (100 owners at
+most), or for a minute while something is missing or GitHub did not answer, so that the notice goes soon after the owner
+fixes it. When it cannot tell, it shows nothing.
 
 A CLI mirrors the main actions. Unlike the web UI, which queues orders that the service starts once an account is
 free, a CLI command such as `lastcall audit` runs the recipe at once in its own process. `pause` and `resume` only

@@ -55,3 +55,16 @@ def test_the_web_address_and_the_port_are_explained() -> None:
     assert "Web UI on" in README and "LASTCALL_PORT" in README
     assert "macOS" in README and "not been tested" in README
     assert "macOS" in DESIGN and "nothing has run on it" in DESIGN
+
+
+def test_the_design_lists_every_permission_that_the_manifest_asks_for() -> None:
+    from lastcall.github import PERMISSIONS
+
+    onboarding = DESIGN.split("### Onboarding")[1].split("2. **Suggestions.**")[0]
+    missing = [name for name in PERMISSIONS if name.replace("_", " ") not in onboarding]
+    assert not missing, missing
+
+
+def test_the_readme_says_what_the_two_after_the_merge_settings_need() -> None:
+    after = README.split("**After the merge.**")[1].split("\n## ")[0]
+    assert "need the GitHub App to read checks and commit statuses" in after and "older App" in after

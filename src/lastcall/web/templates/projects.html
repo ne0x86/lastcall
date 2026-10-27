@@ -98,6 +98,15 @@
       {%- if p.tickets %}
       <div class="line tickets"><p>{{ p.tickets }}</p>{{ help(hb, "projects-tickets", t("web.help.projects.tickets.title"), ["projects.tickets"]) }}</div>
       {%- endif %}
+      {%- if p.permissions_url %}
+      <div class="notice checks" role="note">
+        <p>{{ t("web.project.checks.lead", merge=t("web.project.merge_on_approve"), watch=t("web.project.watch")) }}</p>
+        <ol>
+          <li><a href="{{ p.permissions_url }}">{{ t("web.project.checks.open") }}</a> {{ t("web.project.checks.set") }}</li>
+          <li>{{ t("web.project.checks.accept") }}</li>
+        </ol>
+      </div>
+      {%- endif %}
       {%- if p.busy %}
       <p class="working busy">{{ p.busy }}</p>
       {%- elif v.accounts|length > 1 %}

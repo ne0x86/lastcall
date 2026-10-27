@@ -385,6 +385,9 @@ in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from
   give one, at a health address every 10 minutes. When the checks fail where they passed before, or the address
   fails 3 times in a row, it opens a pull request that reverts the change, pauses the project and tells you.
 
+Both need the GitHub App to read checks and commit statuses, which Apps created by lastcall 0.7.2 or later have; the
+Projects page says what to do for an older App.
+
 ## ⚖️ Provider terms and responsible use
 
 Subscription plans are meant for each vendor's own tools. lastcall follows these rules:

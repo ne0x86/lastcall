@@ -25,7 +25,15 @@ from lastcall.secretstore import SecretStore
 
 API = "https://api.github.com"
 APP_SECRET = "github-app"
-PERMISSIONS = {"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
+PERMISSIONS = {
+    "contents": "write",
+    "pull_requests": "write",
+    "issues": "write",
+    "checks": "read",  # merge on approve and the watch read the check runs of a commit...
+    "statuses": "read",  # ...and its commit statuses (lastcall.approval)
+    "metadata": "read",
+}
+CHECKS_PERMISSIONS = ("checks", "statuses")  # what GitHub's page calls "Checks" and "Commit statuses"
 
 Response = tuple[int, Mapping[str, str], bytes]
 Fetch = Callable[[urllib.request.Request], Response]
@@ -50,6 +58,25 @@ class App:
     def install_url(self) -> str:
         return f"https://github.com/apps/{self.slug}/installations/new"
 
+    def permissions_url(self, org: bool) -> str:
+        """The page where the App's owner edits its permissions on GitHub: an organization has its own address."""
+        if org:
+            return f"https://github.com/organizations/{self.owner}/settings/apps/{self.slug}/permissions"
+        return f"https://github.com/settings/apps/{self.slug}/permissions"
+
+    def org_owns(self, installation: Mapping[str, Any]) -> bool | None:
+        """Whether an organization owns the App (False: a person), from one of its installations as GitHub returns
+        it: lastcall keeps only the owner's name, and a private App can only be installed on the account that owns
+        it. None when the installation is of another account, or does not say."""
+        account = installation.get("account")
+        if not isinstance(account, dict):
+            return None
+        login = account.get("login")
+        if not isinstance(login, str) or login.lower() != self.owner.lower():
+            return None
+        kind = account.get("type") or installation.get("target_type")
+        return kind == "Organization" if kind in ("Organization", "User") else None
+
     @classmethod
     def load(cls, store: SecretStore) -> App | None:
         data = store.get_json(APP_SECRET)
@@ -57,6 +84,18 @@ class App:
 
     def save(self, store: SecretStore) -> None:
         store.set_json(APP_SECRET, asdict(self))
+
+
+def permissions_of(installation: Mapping[str, Any]) -> dict[str, str] | None:
+    """What an installation, as GitHub returns it, was granted, such as {"contents": "write", "checks": "read"}. A
+    permission that its owner has not accepted yet is not in it. None when GitHub does not say."""
+    found = installation.get("permissions")
+    return {str(name): str(level) for name, level in found.items()} if isinstance(found, dict) else None
+
+
+def lacking(granted: Mapping[str, str]) -> list[str]:
+    """Of `CHECKS_PERMISSIONS`, what an installation was not granted. Reading takes "read"; "write" includes it."""
+    return [name for name in CHECKS_PERMISSIONS if granted.get(name) not in ("read", "write")]
 
 
 def _b64url(data: bytes) -> str:
@@ -106,15 +145,23 @@ class GitHub:
         jwt = app_jwt(self.app, self.clock())
         return str(self.request("POST", f"/app/installations/{installation_id}/access_tokens", jwt)["token"])
 
-    def repository_token(self, repo: str) -> str:
-        """An installation token for owner/name: the App must be installed on it."""
+    def installation(self, repo: str) -> dict[str, Any]:
+        """The App's installation on the owner of owner/name as GitHub returns it, with what it was granted: the App
+        must be installed there."""
         try:
-            inst = self.request("GET", f"/repos/{repo}/installation", app_jwt(self.app, self.clock()))
+            return dict(self.request("GET", f"/repos/{repo}/installation", app_jwt(self.app, self.clock())))
         except GitHubError as e:
             if e.status == 404:
                 raise GitHubError(404, f"{self.app.name} is not installed on {repo}: {self.app.install_url}") from e
             raise
-        return self.installation_token(int(inst["id"]))
+
+    def repository_token(self, repo: str) -> str:
+        """An installation token for owner/name: the App must be installed on it."""
+        return self.installation_token(int(self.installation(repo)["id"]))
+
+    def granted(self, repo: str) -> dict[str, str] | None:
+        """What the installation on the owner of owner/name was granted (see `permissions_of`)."""
+        return permissions_of(self.installation(repo))
 
     def repository(self, token: str, repo: str) -> dict[str, Any]:
         return dict(self.request("GET", f"/repos/{repo}", token))

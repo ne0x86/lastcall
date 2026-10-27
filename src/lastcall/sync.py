@@ -19,7 +19,7 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from lastcall.approval import land
+from lastcall.approval import ChecksUnreadable, land
 from lastcall.github import GitHub, GitHubError
 from lastcall.recipes.improve import ticked
 from lastcall.recipes.issues import LABEL
@@ -45,6 +45,7 @@ def sync(store: Store, client: GitHub, log: Callable[[str], None] = print, notif
     labelled `lastcall`; merge what the owner approved where the project asks for it, and watch what was merged.
     Returns how many changed."""
     tokens: dict[str, str] = {}
+    unreadable: set[str] = set()  # the repositories whose unreadable checks the log has said in this pass
     changed = 0
 
     def token(repo: str) -> str:
@@ -77,6 +78,11 @@ def sync(store: Store, client: GitHub, log: Callable[[str], None] = print, notif
         elif project and project.merge_on_approve and pr["kind"] == "change":
             try:
                 outcome, detail = land(client, token(pr["repo"]), pr["repo"], data, project.language or "English")
+            except ChecksUnreadable as e:
+                if pr["repo"] not in unreadable:  # all its pull requests wait on the same permission
+                    unreadable.add(pr["repo"])
+                    log(f"merge on approve {pr['repo']}: {e}")
+                continue
             except GitHubError as e:
                 log(f"merge on approve {pr['url']}: {e}")
                 continue

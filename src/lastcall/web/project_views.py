@@ -4,6 +4,7 @@ suggestions for the installed repositories that are not projects yet."""
 from __future__ import annotations
 
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -64,6 +65,7 @@ class ProjectCard:
     deps: bool
     signals: str
     busy: str  # what it waits for or what runs on it, in words; "" when nothing does
+    permissions_url: str  # where the owner gives the App what its merge or watch needs; "" when it has it
 
 
 @dataclass(frozen=True)
@@ -95,13 +97,33 @@ class ProjectsPage:
         return any(o.value == "*" for o in self.accounts)
 
 
-def build(store: Store, lang: str, now: float, install_url: str, reading: bool) -> ProjectsPage:
+def build(
+    store: Store,
+    lang: str,
+    now: float,
+    install_url: str,
+    reading: bool,
+    permissions_url: Callable[[str], str],
+) -> ProjectsPage:
+    """`permissions_url` says, for a repository, where its owner gives the App what reading checks takes: "" when the
+    App has it already, or when that is not known. It is asked only for the projects that read checks."""
     projects = store.projects()
     busy = {o["repo"].lower(): text(lang, QUEUED.get(o["kind"], QUEUED["audit"])) for o in store.orders()}
     busy |= {r["repo"].lower(): text(lang, RUNNING.get(r["recipe"], RUNNING["audit"])) for r in store.running()}
     latest = store.latest_runs()
     page = ProjectsPage(bool(install_url), install_url, refreshed(store, lang, now, reading))
-    page.projects = [card(store, p, lang, now, latest.get(p.repo), busy.get(p.repo.lower(), "")) for p in projects]
+    page.projects = [
+        card(
+            store,
+            p,
+            lang,
+            now,
+            latest.get(p.repo),
+            busy.get(p.repo.lower(), ""),
+            permissions_url(p.repo) if p.merge_on_approve or p.watch else "",
+        )
+        for p in projects
+    ]
     enabled = store.accounts(enabled_only=True)
     page.accounts = [Option("", text(lang, "web.project.any"), True)]
     if len(enabled) > 1:
@@ -116,7 +138,9 @@ def build(store: Store, lang: str, now: float, install_url: str, reading: bool) 
     return page
 
 
-def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any] | None, busy: str) -> ProjectCard:
+def card(
+    store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any] | None, busy: str, permissions_url: str
+) -> ProjectCard:
     active = p.active and p.weight > 0
     view = project_view(store, p.repo, active, p.weight, lang, now, last)
     waiting = store.waiting_count(p.repo)
@@ -158,6 +182,7 @@ def card(store: Store, p: ProjectRow, lang: str, now: float, last: dict[str, Any
         p.deps,
         p.signals,
         busy,
+        permissions_url,
     )
 
 
