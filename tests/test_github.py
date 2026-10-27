@@ -606,3 +606,13 @@ def test_the_log_sends_a_docker_user_to_the_web_ui_before_the_command_line(
         "Waiting for the GitHub App: sign in to the web UI and open GitHub App, from Getting started"
     )
     assert "or from Settings" in line and line.index("web UI") < line.index("`lastcall github setup --owner <login>`")
+
+
+def test_an_app_that_a_later_version_saved_with_more_fields_still_loads(tmp_path: Path) -> None:
+    store = SecretStore(tmp_path / "secrets")
+    App(1, "lastcall-acme", "lastcall-acme", "acme", "https://github.com/apps/lastcall-acme", "pem", True).save(store)
+    saved = store.get_json(APP_SECRET)
+    assert saved is not None
+    store.set_json(APP_SECRET, {**saved, "something_new": "yes"})
+    found = App.load(store)
+    assert found is not None and found.slug == "lastcall-acme" and found.returns is True

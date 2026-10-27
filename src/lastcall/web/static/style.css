@@ -1058,10 +1058,14 @@ fieldset.has-help > legend { float: left; margin: 0; }
 
 /* Add many: the suggestions are one form, and a filter narrows the list first. Each row is a tile that a tap anywhere on
    it ticks: the name is its label, stretched over the tile (the link and the "?" stay above it), and a ticked tile
-   shows it. The buttons stay at the bottom of the screen while the list scrolls. */
+   shows it. The buttons that add many at once come first; Add selected stays at the bottom of the screen while the
+   list scrolls. */
 .filter { margin: var(--s3) 0 var(--s2); }
 .filter-note { margin: 0 0 var(--s3); color: var(--muted); }
 .picks { gap: var(--s2); margin-bottom: var(--s3); }
+.pick-all { display: flex; flex-wrap: wrap; gap: var(--s2); margin: 0 0 var(--s3); }
+.pick-all button { flex: 1 1 auto; }
+.pick-all + .pick-note { margin: calc(var(--s1) - var(--s3)) 0 var(--s3); }
 .picks > legend { margin: 0; font-family: var(--font-round); font-size: 1.02rem; }
 .picks details { margin: 0; }
 ul.suggestions { display: grid; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
@@ -1104,9 +1108,9 @@ ul.suggestions li:has(input:checked) .help { background: var(--surface); }
 .pick-bar button { flex: 1 1 auto; padding-inline: var(--s3); }
 @media (min-width: 48rem) {
   ul.suggestions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .pick-bar button { flex: 0 0 auto; padding-inline: 1.2rem; }
+  .pick-all button, .pick-bar button { flex: 0 0 auto; padding-inline: 1.2rem; }
 }
-html:has(.pick-bar) { scroll-padding-bottom: 12rem; }  /* a field that takes focus is never behind the bar */
+html:has(.pick-bar) { scroll-padding-bottom: 6rem; }  /* a field that takes focus is never behind the bar */
 
 /* ---------- Sign-in pages ---------- */
 .signed-out main { display: grid; align-content: start; }

@@ -82,6 +82,19 @@
   <form method="post" action="{{ url_for('add_projects') }}" class="pick">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="q" value="{{ v.query }}">
+    {%- if v.suggested or v.addable > v.suggested|length %}
+    <div class="pick-all">
+      {%- if v.suggested %}
+      <button class="secondary" name="pick" value="suggested">{{ tn("web.suggest.add_suggested", v.suggested|length) }}</button>
+      {%- endif %}
+      {%- if v.addable > v.suggested|length %}
+      <button class="secondary" name="pick" value="all">{{ tn("web.suggest.add_all", v.addable) }}</button>
+      {%- endif %}
+    </div>
+    {%- endif %}
+    {%- if v.addable < v.shown and v.addable > v.suggested|length %}
+    <p class="hint pick-note">{{ t("web.suggest.all_hint") }}</p>
+    {%- endif %}
     <fieldset class="picks">
       <legend>{{ t("web.suggest.choose") }}</legend>
       {%- if v.suggested %}
@@ -96,12 +109,6 @@
     </fieldset>
     <div class="pick-bar">
       <button name="pick" value="selected">{{ t("web.suggest.add_selected") }}</button>
-      {%- if v.suggested %}
-      <button class="secondary" name="pick" value="suggested">{{ tn("web.suggest.add_suggested", v.suggested|length) }}</button>
-      {%- endif %}
-      {%- if v.others %}
-      <button class="secondary" name="pick" value="all">{{ tn("web.suggest.add_all", v.shown) }}</button>
-      {%- endif %}
     </div>
   </form>
   {%- endif %}

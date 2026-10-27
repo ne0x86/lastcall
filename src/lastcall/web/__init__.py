@@ -364,15 +364,16 @@ def create_app(
     @signed_in
     def add_projects() -> ResponseReturnValue:
         """Add repositories from the suggestions in one go: the ones that were ticked, the suggested ones, or all of
-        them, the last two as the filter shows them (`q`). It asks GitHub nothing: only a repository that the last
-        reading found, and that is not a project yet, is added, with the name that the reading gave it."""
+        them but the archived ones, the forks and the empty ones, the last two as the filter shows them (`q`). It
+        asks GitHub nothing: only a repository that the last reading found, and that is not a project yet, is added,
+        with the name that the reading gave it."""
         form, query = request.form, project_views.clean_query(request.form.get("q", ""))
         left = project_views.left_to_add(store.projects(), store.suggestions())
         pick = form.get("pick", "")
         if pick == "suggested":
             chosen = [s for s in project_views.matching(left, query) if s.suggested]
-        elif pick == "all":
-            chosen = project_views.matching(left, query)
+        elif pick == "all":  # never an archived repository, a fork or an empty one: those only when ticked
+            chosen = project_views.addable(project_views.matching(left, query))
         else:  # "selected": whatever else a form says
             pick, ticked = "selected", {repo.lower() for repo in form.getlist("repo")}
             chosen = [s for s in left if s.repo.lower() in ticked]
@@ -897,7 +898,7 @@ def create_app(
         if client is None:
             return redirect(url_for("github_page"))
         read_repositories(client)
-        log("Web UI: back from GitHub after installing the App: reading its repositories")
+        log("Web UI: reading the repositories of the GitHub App, after its installation page")
         return redirect(url_for("projects_page", done="installed"))
 
     @app.get("/accounts")

@@ -78,6 +78,7 @@ class SuggestionView:
     language: str
     size: str  # "about 11k tokens of code", or "" when its size is unknown
     reasons: list[str]
+    left_out: bool = False  # archived, a fork or empty: "Add all" skips it
 
 
 @dataclass
@@ -103,6 +104,11 @@ class ProjectsPage:
     def shown(self) -> int:
         """How many repositories the filter leaves, suggested or not."""
         return len(self.suggested) + len(self.others)
+
+    @property
+    def addable(self) -> int:
+        """How many of them "Add all" adds: not the archived ones, the forks or the empty ones."""
+        return sum(not s.left_out for s in (*self.suggested, *self.others))
 
 
 def build(
@@ -159,6 +165,11 @@ def left_to_add(projects: Iterable[ProjectRow], found: Iterable[Suggestion]) -> 
 def clean_query(typed: str) -> str:
     """What the filter of the suggestions looks for: the text without the spaces around it, cut at 100 characters."""
     return typed.strip()[:MAX_QUERY]
+
+
+def addable(found: Iterable[Suggestion]) -> list[Suggestion]:
+    """What "Add all" adds of these suggestions: not the archived ones, the forks or the empty ones."""
+    return [s for s in found if not s.left_out]
 
 
 def matching(found: Iterable[Suggestion], query: str) -> list[Suggestion]:
@@ -235,6 +246,7 @@ def suggestion_view(lang: str, s: Suggestion) -> SuggestionView:
         s.language or "",
         size,
         [explain(lang, r) for r in s.why],
+        s.left_out,
     )
 
 

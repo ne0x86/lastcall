@@ -802,17 +802,19 @@ read the client's address, scheme and host from the proxy's `X-Forwarded-*` head
 and `LASTCALL_WEB_ORIGIN` only adds origins that forms may come from.
 
 The suggestions on the projects page are one form that adds many projects at once. Each row has a checkbox, which its
-name ticks (a tap anywhere on the row does), and a small link to the repository on GitHub. Three buttons stay at the
-bottom of the screen while the list scrolls: Add selected, Add the suggested ones and Add all, the last two with the
-count that the list shows. A filter by name, which ignores case, narrows the list: it shows from the seventh suggestion
-on, or while one is set, says how many repositories match, sends the owner back to its own form (`#suggestions`) and
-opens the fold of the repositories that are not suggested, so that no match is hidden. The form carries the filter in a
-hidden field (`q`), so that the suggested ones and all of them are those that the owner sees. Adding many asks GitHub
-nothing: `POST /projects/add-many` takes only repositories of the stored suggestions that are not projects yet, whatever
-the case they come in, and adds them with the name that the suggestion has; it does nothing with any other value, and
-when nothing is left it adds nothing and answers with an error. The address where GitHub brings the owner back after the
-installation starts a reading of the suggestions, so that the list is there on arrival. Adding by an address, which asks
-GitHub whether the App is installed there, stays for a repository that is not in the list.
+name ticks (a tap anywhere on the row does), and a small link to the repository on GitHub. Add the suggested ones and
+Add all come before the list, with the count that the list shows; Add all leaves out the archived repositories, the
+forks and the empty ones, which only a tick adds, and a line under the buttons says so. Add selected stays at the bottom
+of the screen while the list scrolls. A filter by name, which ignores case, narrows the list: it shows from the seventh
+suggestion on, or while one is set, says how many repositories match, sends the owner back to its own form
+(`#suggestions`) and opens the fold of the repositories that are not suggested, so that no match is hidden. The form
+carries the filter in a hidden field (`q`), so that the suggested ones and all of them are those that the owner sees.
+Adding many asks GitHub nothing: `POST /projects/add-many` takes only repositories of the stored suggestions that are
+not projects yet, whatever the case they come in, and adds them with the name that the suggestion has; it does nothing
+with any other value, and when nothing is left it adds nothing and answers with an error. The address where GitHub
+brings the owner back after the installation starts a reading of the suggestions, so that the list is there on arrival.
+Adding by an address, which asks GitHub whether the App is installed there, stays for a repository that is not in the
+list.
 
 A project with merge on approve or the watch on shows a notice on its card while GitHub says that the App's installation
 cannot read checks and commit statuses (an App made before v0.7.2 cannot): the two steps, which are to set them to

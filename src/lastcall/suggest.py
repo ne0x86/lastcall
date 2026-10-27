@@ -35,6 +35,7 @@ CI = re.compile(r"^\.github/workflows/[^/]+\.ya?ml$|^\.gitlab-ci\.yml$|^\.circle
 MAX_FILE = 120_000  # larger files do not go into the context pack
 BIG = 400_000  # tokens of code
 Reason = tuple[str, dict[str, Any]]  # a key under "suggest." in the catalogs, and its values
+LEFT_OUT = ("archived", "fork", "empty")  # repositories that are never suggested, and that "Add all" skips
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,11 @@ class Suggestion:
     language: str | None
     code_tokens: int  # about 4 bytes per token, for the files a context pack would include
     why: tuple[Reason, ...]
+
+    @property
+    def left_out(self) -> bool:
+        """Whether lastcall leaves it out: archived, a fork or empty. The owner can still tick it."""
+        return any(key in LEFT_OUT for key, _ in self.why)
 
     @property
     def reasons(self) -> tuple[str, ...]:
