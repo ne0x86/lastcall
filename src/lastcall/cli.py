@@ -48,7 +48,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lastcall import engines, logs, loki, projects, signals, web
+from lastcall import cron, engines, logs, loki, projects, signals, web
 from lastcall.accounts import (
     MODEL,
     Account,
@@ -61,7 +61,7 @@ from lastcall.accounts import (
 )
 from lastcall.engines.base import Keyed
 from lastcall.github import App, GitHub, GitHubError
-from lastcall.github_setup import SetupServer, run_setup
+from lastcall.github_setup import LOGIN, SetupServer, clean_owner, owner_kind, run_setup
 from lastcall.notify import Notifier
 from lastcall.quota import KINDS, QuotaError, Reading, SpendPolicy, account_rate, plan
 from lastcall.recipes.audit import AuditReport
@@ -193,7 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     gh = commands.add_parser("github", help="the instance's GitHub App").add_subparsers(dest="action", required=True)
     setup = gh.add_parser("setup", help="create the GitHub App with GitHub's manifest flow")
     setup.add_argument("--owner", required=True, help="GitHub account or organization that will own the App")
-    setup.add_argument("--org", action="store_true", help="the owner is an organization")
+    setup.add_argument(
+        "--org",
+        action="store_true",
+        help="the owner is an organization (by default lastcall asks GitHub; pass it when GitHub does not answer)",
+    )
     setup.add_argument("--port", type=int, default=8765, help="port of the setup page (default 8765)")
     gh.add_parser("repos", help="installed repositories, with lastcall's suggestions")
 
@@ -381,7 +385,7 @@ def add_account(args: argparse.Namespace) -> int:
     models = tier_models(args.model or "", args.review_model or "")
     acc = Account(args.account, args.engine, args.provider or "", args.base_url or "", models, args.budget)
     policy = args.policy or policies(acc)[0]
-    schedule = args.schedule or ""
+    schedule = cron.normalize(args.schedule or "")
     check_spending(acc, policy, schedule)
     secrets = secret_store()
     if acc.needs_key():
@@ -417,6 +421,8 @@ def connect_signals(url: str, org: str, token_file: str | None) -> int:
     token = read_key(token_file, ask=True) or (current.token if current else "")
     if not token:
         raise ValueError("give the token with --token-file: a file that holds it, or - for standard input")
+    if loki.CONTROL.search(token):
+        raise ValueError("the token cannot hold line breaks or other control characters")
     tracker = signals.Tracker(url, org.strip(), token)
     try:
         signals.check(tracker)
@@ -493,6 +499,8 @@ def connect_loki(url: str, user: str, tenant: str, token_file: str | None) -> in
         raise ValueError("the user cannot hold a colon, and the tenant only letters, digits and !._*'()|-")
     current = loki.Loki.load(secret_store())
     token = read_key(token_file, ask=bool(user)) or ""
+    if loki.CONTROL.search(user + token):
+        raise ValueError("the user and the token cannot hold line breaks or other control characters")
     if not token and current is not None and (current.url, current.user) == (url, user):
         token = current.token
     connection = loki.Loki(url, user, token, tenant)
@@ -741,15 +749,33 @@ def serve(host: str, port: int, scheduler: bool) -> int:
     )
     if scheduler:
         threading.Thread(target=schedule, args=(st, secrets), name="service", daemon=True).start()
-    web.serve(app, host, port, log, trust_proxy=trust)
+    web.serve(
+        app, host, port, log, trust_proxy=trust, shown=published_address(os.environ.get("LASTCALL_PUBLISHED", ""))
+    )
     return 0
+
+
+def published_address(published: str) -> str | None:
+    """Where the web UI answers for people, from LASTCALL_PUBLISHED (`host:port`, how Docker publishes it): its
+    address, or a sentence for a host that listens on every address of the server. None when it says nothing usable,
+    so that the log keeps the address that the web UI listens on."""
+    host, _, port = published.strip().rpartition(":")
+    host = host.strip("[]")
+    if not host or not (port.isascii() and port.isdigit() and 1 <= int(port) <= 65535):  # isdigit(): full-width too
+        return None
+    if host in ("0.0.0.0", "::"):
+        return f"port {port} of this server's addresses, such as http://<this server's address>:{port}/"
+    return f"http://[{host}]:{port}/" if ":" in host else f"http://{host}:{port}/"
 
 
 def schedule(st: Store, secrets: SecretStore) -> None:
     """The service, as soon as the GitHub App exists. Until then only the web UI works, and the heartbeat says the
     service is alive."""
     if App.load(secrets) is None:
-        log("Waiting for the GitHub App: create it with `lastcall github setup --owner <login>`")
+        log(
+            "Waiting for the GitHub App: sign in to the web UI and open GitHub App, from Getting started on the "
+            "dashboard or from Settings. Outside Docker, `lastcall github setup --owner <login>` does the same."
+        )
     while (app := App.load(secrets)) is None:
         st.set_setting("heartbeat", f"{time.time():.0f}")
         time.sleep(60)
@@ -800,7 +826,24 @@ def status(st: Store) -> str:
     return "\n".join(lines)
 
 
-def github_setup(owner: str, org: bool, port: int) -> int:
+def github_setup(typed_owner: str, org: bool, port: int) -> int:
+    owner = clean_owner(typed_owner)  # the web page accepts "@acme" and a profile address: so does this command
+    if not LOGIN.fullmatch(owner):
+        print(f"{typed_owner!r} is not the name of a GitHub account or organization.", file=sys.stderr)
+        return 2
+    if not org:
+        match owner_kind(owner):
+            case "missing":
+                print(f"GitHub has no account or organization called {owner}: check the spelling.", file=sys.stderr)
+                return 2
+            case "org":
+                org = True
+            case None:
+                print(
+                    f"GitHub did not say whether {owner} is a person or an organization: using a personal account. "
+                    "Pass --org if it is an organization.",
+                    flush=True,
+                )
     try:
         server = SetupServer(("0.0.0.0", port), secret_store(), owner, org)
     except ValueError as e:

@@ -65,6 +65,7 @@ def service(
     audits: list[tuple[str, str]],
     clock: Clock,
     started: list[Callable[[], None]],
+    log: Callable[[str], None] = lambda m: None,
 ) -> Service:
     def read(account: Account, now: float) -> Reading:
         value = readings[account.id]
@@ -77,7 +78,7 @@ def service(
         audits.append((who, repo) if trigger == "burst" else (who, f"{repo} ({trigger})"))
 
     inst = Instance(cast(Sandbox, None), cast(GitHub, NoGitHub()), store)
-    return Service(inst, read=read, audit=audit, start=started.append, clock=clock, log=lambda m: None)
+    return Service(inst, read=read, audit=audit, start=started.append, clock=clock, log=log)
 
 
 def test_bursting_accounts_audit_different_projects(store: Store) -> None:
@@ -119,6 +120,37 @@ def test_pause_stops_new_runs(store: Store) -> None:
     store.set_setting("paused", "no")
     svc.tick()
     assert len(started) == 1
+
+
+def test_no_new_burst_after_the_reset_its_plan_was_made_for(store: Store) -> None:
+    # the plan is made at a reading 10 min before the reset; the next reading is 15 min later
+    clock, started = Clock(), list[Callable[[], None]]()
+    readings: dict[str, Reading | Exception] = {"claude": reading("claude", 68, 10 / 60), "chatgpt": QuotaError("x")}
+    svc = service(store, readings, [], clock, started)
+    svc.tick()
+    assert len(started) == 1 and svc.plans["claude"].burst
+    started.pop()()  # the burst run ends 5 min before the reset
+    clock.now += 11 * 60  # a minute after the reset: the leftover it was for is gone
+    svc.tick()
+    assert started == [] and svc.running == {}
+    clock.now += READ_EVERY  # the next reading plans again, from the new window
+    readings["claude"] = reading("claude", 0, 168)
+    svc.tick()
+    assert started == [] and svc.plans["claude"].code == "later"
+
+
+def test_accounts_whose_reset_passed_do_not_fan_out(store: Store) -> None:
+    clock, started = Clock(), list[Callable[[], None]]()
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 68, 10 / 60),
+        "chatgpt": reading("chatgpt", 68, 10 / 60),
+    }
+    svc = service(store, readings, [], clock, started)
+    svc.read_quotas(clock.now)
+    store.set_setting("fanout", "yes")
+    clock.now += 11 * 60
+    svc.tick()
+    assert started == [] and svc.running == {}
 
 
 def test_quota_and_sync_have_their_own_rhythm(store: Store) -> None:
@@ -392,3 +424,41 @@ def test_the_recipes_take_turns_on_a_project(store: Store) -> None:
     assert turns(4) == ["audit", "tests", "deps", "audit"]
     store.update_project("ne0x86/a", active=True, weight=1, language=None, max_prs=3, deps=True)
     assert turns(3) == ["deps", "audit", "deps"]  # after an audit; the tests are off now
+
+
+def test_a_reading_taken_now_with_a_passed_reset_is_logged_once_for_each_reset(store: Store) -> None:
+    clock, said = Clock(), list[str]()
+    readings: dict[str, Reading | Exception] = {"claude": reading("claude", 20, -1), "chatgpt": QuotaError("x")}
+    svc = service(store, readings, [], clock, [], said.append)
+    svc.tick()
+    asked = [m for m in said if m.startswith("claude: a reading taken now")]
+    assert svc.plans["claude"].code == "passed" and len(asked) == 1
+    assert "reset at 2027-01-15 07:00 UTC" in asked[0]  # an hour before NOW
+    clock.now += READ_EVERY
+    svc.tick()
+    assert len([m for m in said if m.startswith("claude: a reading taken now")]) == 1  # the same reset: not again
+    readings["claude"] = reading("claude", 20, 100)
+    clock.now += READ_EVERY
+    svc.tick()
+    assert svc.plans["claude"].code != "passed" and svc.passed == {}
+    readings["claude"] = reading("claude", 20, -0.5)
+    clock.now += READ_EVERY
+    svc.tick()
+    assert len([m for m in said if m.startswith("claude: a reading taken now")]) == 2  # another reset: told again
+
+
+def test_an_order_for_any_free_account_ignores_the_leftover_of_a_passed_plan(store: Store) -> None:
+    # claude's reading is from before its reset: 80% would be left, but that leftover was lost at the reset
+    audits: list[tuple[str, str]] = []
+    started: list[Callable[[], None]] = []
+    readings: dict[str, Reading | Exception] = {
+        "claude": reading("claude", 10, -1),
+        "chatgpt": reading("chatgpt", 70, 150),
+    }
+    store.add_order("audit", "ne0x86/a", "*", NOW)
+    svc = service(store, readings, audits, Clock(), started)
+    svc.read_quotas(NOW)
+    assert svc.plans["claude"].code == "passed" and svc.plans["claude"].leftover_pct == 0.0
+    svc.take_orders(NOW)
+    started.pop()()
+    assert audits == [("chatgpt+claude", "ne0x86/a (manual)")]  # chatgpt, with 20% left, leads: claude has none

@@ -1,6 +1,6 @@
 import string
 
-from lastcall.i18n import MESSAGES, code, number, plural, text
+from lastcall.i18n import MESSAGES, code, number, plural, span, text
 from lastcall.recipes.audit import AuditReport, issue_body, issue_title, pr_footer
 from lastcall.verify import describe
 
@@ -39,6 +39,18 @@ def test_published_texts_follow_the_run_language() -> None:
     assert "*Arreglo propuesto:* f" in body and "*Por qué necesita tu decisión:* r" in body
 
 
+def test_a_span_keeps_its_number_and_unit_together() -> None:
+    assert span("en", 46 * 3600) == "46\u00a0h" and span("es", 46 * 3600) == "46\u00a0h"
+    assert span("en", 25 * 60) == "25\u00a0min" and span("en", 1) == "1\u00a0min"
+    assert (span("en", 3 * 86_400), span("es", 3 * 86_400), span("es", 2 * 86_400)) == (
+        "3\u00a0days",
+        "3\u00a0días",
+        "2\u00a0días",
+    )
+    assert text("es", "web.time.ago", span=span("es", 46 * 3600)) == "hace 46\u00a0h"
+    assert " " not in span("en", 5 * 86_400)
+
+
 def test_numbers_and_counts() -> None:
     assert (number("en", 1.5), number("es", 1.5), number("es", 62.04)) == ("1.5", "1,5", "62")
     assert plural("Spanish", "web.time.days", 1) == "1 día"
@@ -47,3 +59,30 @@ def test_numbers_and_counts() -> None:
     for key in keys:  # a key with a count has both forms
         if key.endswith(".one"):
             assert key.removesuffix(".one") + ".other" in keys, key
+
+
+def test_a_count_and_its_unit_never_part_in_the_texts_that_show_them() -> None:
+    for lang in ("English", "Spanish"):
+        assert "\u00a0" in plural(lang, "suggest.push", 1) and "\u00a0" in plural(lang, "suggest.push", 5)
+    assert plural("Spanish", "suggest.push", 5) == "último push hace 5\u00a0días"
+    for key in ("suggest.issues", "suggest.reviewers"):  # the same line of reasons, joined with " · "
+        for lang in ("English", "Spanish"):
+            for count in (1, 5):
+                assert "\u00a0" in plural(lang, key, count), (key, lang, count)
+    for lang in ("en", "es"):  # the chip "active · priority 2x" is one piece
+        assert "\u00a0\u00d72" in text(lang, "web.projects.active", weight="2")
+
+
+def test_the_loki_label_hint_lists_what_the_code_tries() -> None:
+    from lastcall import loki
+
+    for lang in ("en", "es"):
+        hint = text(lang, "web.loki.label_hint")
+        assert ", ".join(loki.NAMES) in hint.replace(" or ", ", ").replace(" o ", ", ")
+
+
+def test_the_fan_out_hint_quotes_the_labels_where_the_option_really_is() -> None:
+    for lang in ("en", "es"):  # the option of the Account select, in the "Run now" group, used with "Audit now"
+        hint = text(lang, "web.runs.fanout_hint")
+        for key in ("web.project.all", "web.project.account", "web.project.run_now", "web.project.audit"):
+            assert text(lang, key) in hint, (lang, key)

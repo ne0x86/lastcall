@@ -75,8 +75,9 @@ def app_jwt(app: App, now: float) -> str:
 
 
 def urlopen(req: urllib.request.Request) -> Response:
+    """GitHub answers within 30 seconds, or within `req.timeout` when the caller set a shorter wait on the request."""
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=getattr(req, "timeout", None) or 30) as r:
             return r.status, dict(r.headers), r.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers), e.read()

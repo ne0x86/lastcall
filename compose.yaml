@@ -25,6 +25,8 @@ x-lastcall: &lastcall
     # LASTCALL_WEB_ORIGIN only adds origins that forms may come from, such as https://lastcall.example.com
     LASTCALL_TRUST_PROXY: ${LASTCALL_TRUST_PROXY:-}
     LASTCALL_WEB_ORIGIN: ${LASTCALL_WEB_ORIGIN:-}
+    # where the host publishes the web UI, for the log
+    LASTCALL_PUBLISHED: ${LASTCALL_BIND:-127.0.0.1}:${LASTCALL_PORT:-8080}
   volumes:
     - data:/data
     - run:/run/lastcall

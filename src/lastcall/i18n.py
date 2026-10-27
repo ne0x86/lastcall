@@ -43,13 +43,17 @@ def money(language: str, usd: float) -> str:
 
 
 def span(language: str, seconds: float) -> str:
-    """A length of time, rounded: 25 min, 19 h, 3 days."""
+    """A length of time, rounded: 25 min, 19 h, 3 days.
+
+    A no-break space joins the number to its unit, so "in 46 h" never wraps between them."""
     s = abs(seconds)
     if s < 3600:
-        return text(language, "web.time.min", n=max(1, round(s / 60)))
-    if s < 48 * 3600:
-        return text(language, "web.time.hours", n=round(s / 3600))
-    return plural(language, "web.time.days", round(s / 86_400))
+        out = text(language, "web.time.min", n=max(1, round(s / 60)))
+    elif s < 48 * 3600:
+        out = text(language, "web.time.hours", n=round(s / 3600))
+    else:
+        out = plural(language, "web.time.days", round(s / 86_400))
+    return out.replace(" ", "\u00a0")
 
 
 def number(language: str, value: float) -> str:

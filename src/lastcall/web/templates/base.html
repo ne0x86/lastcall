@@ -4,39 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#0f766e">
+<meta name="theme-color" content="#faf6ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1815" media="(prefers-color-scheme: dark)">
 <title>{% block title %}{% endblock %} · lastcall</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version) }}">
 <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" type="image/svg+xml">
 <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
 </head>
-<body>
+<body{% if not csrf %} class="signed-out"{% endif %}>
 <a class="skip" href="#main">{{ t("web.skip") }}</a>
 <header class="top">
-  <a class="brand" href="{{ url_for('home') }}"><img src="{{ url_for('static', filename='icon.svg') }}" alt="" width="28" height="28">lastcall</a>
-  {%- if csrf %}
-  <nav class="pages" aria-label="lastcall">
-    <a href="{{ url_for('home') }}"{% if nav == 'home' %} aria-current="page"{% endif %}>{{ t("web.nav.dashboard") }}</a>
-    <a href="{{ url_for('projects_page') }}"{% if nav == 'projects_page' %} aria-current="page"{% endif %}>{{ t("web.nav.projects") }}</a>
-    <a href="{{ url_for('accounts_page') }}"{% if nav == 'accounts_page' %} aria-current="page"{% endif %}>{{ t("web.nav.accounts") }}</a>
-    <a href="{{ url_for('settings_page') }}"{% if nav in ('settings_page', 'github_page', 'github_new') %} aria-current="page"{% endif %}>{{ t("web.nav.settings") }}</a>
-  </nav>
-  {%- endif %}
-  <nav class="languages" aria-label="{{ t('web.nav.language') }}">
-    {%- for code, name in languages %}
-    <a href="{{ url_for('set_language', code=code, next=request.full_path.rstrip('?')) }}" lang="{{ code }}" hreflang="{{ code }}"{% if code == lang %} aria-current="true"{% endif %}>{{ name }}</a>
-    {%- endfor %}
-  </nav>
-  {%- if csrf %}
-  <form method="post" action="{{ url_for('logout') }}">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="link">{{ t("web.nav.signout") }}</button>
-  </form>
-  {%- endif %}
+  <div class="top-inner">
+    <a class="brand" href="{{ url_for('home') }}"><img src="{{ url_for('static', filename='icon.svg') }}" alt="" width="32" height="32"><span class="wordmark">lastcall</span></a>
+    {%- if csrf %}
+    <nav class="pages" aria-label="{{ t('web.nav.pages') }}">
+      <a href="{{ url_for('home') }}"{% if nav == 'home' %} aria-current="page"{% endif %}>{{ t("web.nav.dashboard") }}</a>
+      <a href="{{ url_for('projects_page') }}"{% if nav == 'projects_page' %} aria-current="page"{% endif %}>{{ t("web.nav.projects") }}</a>
+      <a href="{{ url_for('accounts_page') }}"{% if nav == 'accounts_page' %} aria-current="page"{% endif %}>{{ t("web.nav.accounts") }}</a>
+      <a href="{{ url_for('settings_page') }}"{% if nav in ('settings_page', 'github_page', 'github_new') %} aria-current="page"{% endif %}>{{ t("web.nav.settings") }}</a>
+    </nav>
+    <form method="post" action="{{ url_for('logout') }}" class="signout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="link">{{ t("web.nav.signout") }}</button>
+    </form>
+    {%- else %}
+    <nav class="languages" aria-label="{{ t('web.nav.language') }}">
+      {%- for code, name in languages %}
+      <a href="{{ url_for('set_language', code=code, next=request.full_path.rstrip('?')) }}" lang="{{ code }}" hreflang="{{ code }}"{% if code == lang %} aria-current="true"{% endif %}>{{ name }}</a>
+      {%- endfor %}
+    </nav>
+    {%- endif %}
+  </div>
 </header>
 <main id="main">
 {% block main %}{% endblock %}
 </main>
-<footer class="bottom">lastcall {{ version }} · <a href="{{ docs }}">{{ t("web.footer.docs") }}</a></footer>
+<footer class="bottom"><span>lastcall {{ version }}</span> · <a href="{{ docs }}">{{ t("web.footer.docs") }}</a></footer>
 </body>
 </html>

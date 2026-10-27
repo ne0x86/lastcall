@@ -2,6 +2,7 @@
 Loki, and how it puts the pieces of a stream back together. The answers have the shape that Loki 3.7 gives."""
 
 import base64
+import http.client
 import io
 import json
 import re
@@ -243,3 +244,43 @@ def test_the_command_line_connects_loki_and_chooses_its_sources(
     assert cli.main(["loki", "show", "acme/shop"]) == 0
     assert "ERROR boom (once, last 2027-01-15 07:59 UTC)" in capsys.readouterr().out
     assert waits == {"labels": 10, "series": 10, "query_range": 30}  # the settings page waits for the lists
+
+
+def test_a_header_that_cannot_be_sent_is_a_loki_error_that_does_not_show_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    def urlopen(request: Any, timeout: float) -> io.BytesIO:  # as http.client does for a token with a line break
+        raise ValueError('Invalid header value b"Bearer secret-token"')
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    with pytest.raises(loki.LokiError, match=re.escape("could not be sent")) as raised:
+        loki.labels(loki.Loki("http://loki.example.com:3100", token="secret-token"), NOW)
+    assert "secret-token" not in str(raised.value) and "Bearer" not in str(raised.value)
+
+
+def test_a_request_that_http_client_refuses_is_a_loki_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def urlopen(request: Any, timeout: float) -> io.BytesIO:
+        raise http.client.InvalidURL("URL can't contain control characters")
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    with pytest.raises(loki.LokiError, match="could not be sent"):
+        loki.labels(loki.Loki("http://loki.example.com:3100/a b"), NOW)
+
+
+def test_a_control_character_in_a_login_is_found_before_it_is_sent() -> None:
+    for value in ("a" + chr(10) + "b", "a" + chr(13), chr(0), chr(127)):
+        assert loki.CONTROL.search(value)
+    assert not loki.CONTROL.search("glc_T0ken+/= ñ")
+
+
+def test_the_command_line_refuses_a_token_with_a_line_break_inside(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LASTCALL_STATE", str(tmp_path / "state"))
+    monkeypatch.setenv("LASTCALL_SECRETS", str(tmp_path / "secrets"))
+    token = tmp_path / "token"
+    token.write_text("glc_part" + chr(10) + "glc_part", encoding="utf-8")
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: pytest.fail("nothing is sent"))
+    with pytest.raises(SystemExit):
+        cli.main(["loki", "connect", "--url", "http://loki.example.com:3100", "--token-file", str(token)])
+    captured = capsys.readouterr()
+    assert "control characters" in captured.err and "glc_part" not in captured.err + captured.out
+    assert loki.Loki.load(SecretStore(tmp_path / "secrets")) is None

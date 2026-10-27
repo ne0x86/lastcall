@@ -1,9 +1,14 @@
 {% extends "base.html" %}
-{% block title %}{{ t("web.error.title") }}{% endblock %}
+{% set known = {"web.error.origin": "origin", "web.error.csrf": "csrf"}.get(key) if key else none %}
+{% set heading = t("web.error.title_" ~ known) if known else t("web.error.title") %}
+{% block title %}{{ heading }}{% endblock %}
 {% block main %}
-<section class="card narrow">
-  <h1>{{ t("web.error.title") }}</h1>
-  <p role="alert">{{ message }}</p>
-  <p><a href="{{ url_for('home') }}">{{ t("web.error.back") }}</a></p>
+{%- from "_help.html" import help, bubbles with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+<section class="card narrow sign-card edge-bad">
+  <h1>{{ heading }}</h1>
+  <div class="alert-row"><p class="notice error" role="alert">{{ message }}</p>{% if known %}{{ help(hb, "error-" ~ known, t("web.help.error." ~ known ~ ".title"), ["error." ~ known]) }}{% endif %}</div>
+  <p class="next-step"><a href="{{ url_for('home') if csrf else url_for('login') }}">{{ t("web.error.back") if csrf else t("web.error.signin") }}</a></p>
 </section>
+{{ bubbles(hb) }}
 {% endblock %}

@@ -54,8 +54,18 @@ class Cron:
         return day or weekday
 
 
+DASHES = dict.fromkeys([*range(0x2010, 0x2016), 0x2212], "-")  # hyphens, dashes and the minus sign
+
+
+def normalize(text: str) -> str:
+    """A schedule as typed or pasted, in plain ASCII: the no-break hyphen and no-break space that the plan sentences
+    write (so a schedule stays on one line) become a hyphen and a space, and any run of spaces becomes one."""
+    return " ".join(text.translate(DASHES).split())
+
+
 def parse(text: str) -> Cron:
-    """A cron expression, or ValueError that says what is wrong with it."""
+    """A cron expression, or ValueError that says what is wrong with it. `text` may be copied from a page."""
+    text = normalize(text)
     parts = text.split()
     if len(parts) != 5:
         raise ValueError(

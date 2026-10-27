@@ -1,100 +1,52 @@
 {% extends "base.html" %}
 {% block title %}{{ t("web.projects.title") }}{% endblock %}
 {% block main %}
-<h1>{{ t("web.projects.title") }}</h1>
+{%- from "_help.html" import help, bubbles with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+{#- The "?" of what every card shows (its state, its facts, its Run now) shows once per page, on the first card. Every
+    "?" inside a fold (the settings) or the second list of suggestions repeats (`true`): a closed fold adds no clutter,
+    and each field must reach its help. The Run now bubble lists "all free accounts" only when that option exists. -#}
+{%- set account_keys = ["projects.account", "projects.account_all"] if v.has_all else ["projects.account"] %}
 
-{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
+<header class="page-head">
+  <h1>{{ t("web.projects.title") }}</h1>
+  <p class="lede">{{ t("web.projects.intro") }}</p>
+  {%- if v.projects %}<p class="jump"><a href="#add-title">{{ t("web.add.title") }}</a></p>{% endif %}
+</header>
+
+{% if done %}<p class="notice done" role="status">{{ done }}</p>{% endif %}
 {% if error %}
-<div class="card notice" role="alert">
-  <p class="error">{{ error }}</p>
-  {%- if install %}<p><a href="{{ install }}">{{ t("web.add.install") }}</a></p>{% endif %}
+<div class="notice error" role="alert">
+  <p>{{ error }}</p>
+  {%- if install %}<div class="line notice-link"><p><a href="{{ install }}">{{ t("web.add.install") }}</a></p>{{ help(hb, "projects-install", t("web.suggest.install"), ["projects.install"]) }}</div>{% endif %}
 </div>
 {% endif %}
 
-{% if v.projects %}
-<section aria-label="{{ t('web.projects.title') }}">
-  <div class="grid">
-    {%- for p in v.projects %}
-    {%- set n = loop.index %}
-    <article class="card project">
-      <h3><a href="{{ p.url }}">{{ p.repo }}</a> <span class="badge">{{ p.state }}</span></h3>
-      <ul class="facts">
-        {%- for line in p.summary %}<li>{{ line }}</li>{% endfor %}
-      </ul>
-      <form method="post" action="{{ url_for('project_settings', owner=p.owner, name=p.name) }}" class="settings" aria-label="{{ t('web.project.settings', repo=p.repo) }}">
+{%- macro suggestion(s, again=false) %}
+  <li class="suggestion">
+    <div class="row spread">
+      <p class="suggestion-name"><a href="{{ s.url }}">{{ s.repo }}</a>{% if s.suggested %} <span class="badge">{{ t("web.suggest.suggested") }}</span>{% endif %}</p>
+      <form method="post" action="{{ url_for('add_project') }}">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label class="check"><input type="checkbox" name="active" value="1"{% if p.active %} checked{% endif %}> {{ t("web.project.active") }}</label>
-        <div class="fields">
-          <div>
-            <label for="weight-{{ n }}">{{ t("web.project.weight") }}</label>
-            <select id="weight-{{ n }}" name="weight">
-              {%- for o in p.weights %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
-            </select>
-          </div>
-          <div>
-            <label for="language-{{ n }}">{{ t("web.project.language") }}</label>
-            <select id="language-{{ n }}" name="language">
-              {%- for o in p.languages %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
-            </select>
-          </div>
-          <div>
-            <label for="max-prs-{{ n }}">{{ t("web.project.max_prs") }}</label>
-            <select id="max-prs-{{ n }}" name="max_prs">
-              {%- for o in p.max_prs %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
-            </select>
-          </div>
-        </div>
-        <label class="check plain"><input type="checkbox" name="merge_on_approve" value="1"{% if p.merge_on_approve %} checked{% endif %}> {{ t("web.project.merge_on_approve") }}</label>
-        <label class="check plain"><input type="checkbox" name="watch" value="1"{% if p.watch %} checked{% endif %}> {{ t("web.project.watch") }}</label>
-        <label class="check plain"><input type="checkbox" name="tests" value="1"{% if p.tests %} checked{% endif %}> {{ t("web.project.tests") }}</label>
-        <label class="check plain"><input type="checkbox" name="deps" value="1"{% if p.deps %} checked{% endif %}> {{ t("web.project.deps") }}</label>
-        {%- if v.tracker %}
-        <div>
-          <label for="signals-{{ n }}">{{ t("web.project.signals") }}</label>
-          <input id="signals-{{ n }}" name="signals" type="text" value="{{ p.signals }}" pattern="[A-Za-z0-9._\-]{0,100}" autocomplete="off" spellcheck="false" aria-describedby="signals-hint-{{ n }}">
-          <p class="muted" id="signals-hint-{{ n }}">{{ t("web.project.signals_hint") }}</p>
-        </div>
-        {%- endif %}
-        <div>
-          <label for="health-{{ n }}">{{ t("web.project.health_url") }}</label>
-          <input id="health-{{ n }}" name="health_url" type="url" value="{{ p.health_url }}" placeholder="https://example.com/health" autocomplete="off" spellcheck="false" aria-describedby="health-hint-{{ n }}">
-          <p class="muted" id="health-hint-{{ n }}">{{ t("web.project.health_hint") }}</p>
-        </div>
-        <button class="secondary">{{ t("web.project.save") }}</button>
+        <input type="hidden" name="repo" value="{{ s.repo }}">
+        <button class="secondary" aria-label="{{ t('web.suggest.add') }} {{ s.repo }}">{{ t("web.suggest.add") }}</button>
       </form>
-      {%- if p.busy %}
-      <p class="working">{{ p.busy }}</p>
-      {%- elif v.accounts|length > 1 %}
-      <form method="post" action="{{ url_for('audit_now', owner=p.owner, name=p.name) }}" class="audit">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label for="account-{{ n }}">{{ t("web.project.account") }}</label>
-        <div class="row">
-          <select id="account-{{ n }}" name="account">
-            {%- for o in v.accounts %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
-          </select>
-          <button>{{ t("web.project.audit") }}</button>
-          <button class="secondary" formaction="{{ url_for('improve_now', owner=p.owner, name=p.name) }}">{{ t("web.project.improve") }}</button>
-          <button class="secondary" formaction="{{ url_for('tests_now', owner=p.owner, name=p.name) }}">{{ t("web.project.tests_now") }}</button>
-          <button class="secondary" formaction="{{ url_for('deps_now', owner=p.owner, name=p.name) }}">{{ t("web.project.deps_now") }}</button>
-        </div>
-        <p class="muted">{{ t("web.project.improve_hint") }} {{ t("web.project.tests_hint") }} {{ t("web.project.deps_hint") }}</p>
-      </form>
-      {%- else %}
-      <p class="muted">{{ t("web.project.no_accounts") }}</p>
-      {%- endif %}
-    </article>
-    {%- endfor %}
-  </div>
-</section>
-{% endif %}
+    </div>
+    <div class="suggestion-meta"><span class="chip score">{{ s.score }}</span>{{ help(hb, "projects-score", t("web.help.projects.score.title"), ["projects.score"], again) }}
+      {%- if s.language %} <span class="muted small">{{ s.language }}</span>{% endif %}
+      {%- if s.size %} <span class="with-help"><span class="muted small">{{ s.size }}</span>{{ help(hb, "projects-size", t("web.help.projects.size.title"), ["projects.size"], again) }}</span>{% endif %}</div>
+    <p class="small">{{ s.reasons|join(" · ") }}</p>
+  </li>
+{%- endmacro %}
 
-<section class="card" aria-labelledby="add-title">
+{%- macro add_section() %}
+<section class="card add-card" aria-labelledby="add-title">
   <h2 id="add-title">{{ t("web.add.title") }}</h2>
   <form method="post" action="{{ url_for('add_project') }}" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label for="repo">{{ t("web.add.label") }}</label>
     <div class="row">
-      <input id="repo" name="repo" type="text" placeholder="owner/name" autocomplete="off" spellcheck="false" required>
+      <input id="repo" name="repo" type="text" placeholder="{{ t('web.add.placeholder') }}" autocomplete="off" spellcheck="false" required>
       <button>{{ t("web.add.submit") }}</button>
     </div>
   </form>
@@ -104,37 +56,140 @@
   {%- else %}
   <p class="muted">{{ t("web.suggest.intro") }}</p>
   <div class="status">
-    <p class="muted small">{{ v.refreshed }}</p>
+    <div class="line"><p class="muted small">{{ v.refreshed }}</p>{{ help(hb, "projects-refresh", t("web.help.projects.refresh.title"), ["projects.refresh"]) }}</div>
     <form method="post" action="{{ url_for('refresh_projects') }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button class="secondary">{{ t("web.suggest.refresh") }}</button>
     </form>
   </div>
   {%- if v.all_added %}<p>{{ t("web.suggest.all_added") }}</p>{% endif %}
-  {%- macro suggestion(s) %}
-  <li>
-    <div class="row spread">
-      <p><a href="{{ s.url }}">{{ s.repo }}</a>{% if s.suggested %} <span class="badge">{{ t("web.suggest.suggested") }}</span>{% endif %}<br>
-        <span class="muted small">{{ s.score }}{% if s.details %} · {{ s.details }}{% endif %}</span></p>
-      <form method="post" action="{{ url_for('add_project') }}">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="repo" value="{{ s.repo }}">
-        <button class="secondary" aria-label="{{ t('web.suggest.add') }} {{ s.repo }}">{{ t("web.suggest.add") }}</button>
-      </form>
-    </div>
-    <p class="small">{{ s.reasons|join(" · ") }}</p>
-  </li>
-  {%- endmacro %}
   {%- if v.suggested %}
-  <ul class="plain">{% for s in v.suggested %}{{ suggestion(s) }}{% endfor %}</ul>
+  <ul class="plain suggestions">{% for s in v.suggested %}{{ suggestion(s) }}{% endfor %}</ul>
   {%- endif %}
   {%- if v.others %}
   <details>
     <summary>{{ tn("web.suggest.others", v.others|length) }}</summary>
-    <ul class="plain">{% for s in v.others %}{{ suggestion(s) }}{% endfor %}</ul>
+    <ul class="plain suggestions">{% for s in v.others %}{{ suggestion(s, loop.first) }}{% endfor %}</ul>
   </details>
   {%- endif %}
-  <p><a href="{{ v.install_url }}">{{ t("web.suggest.install") }}</a></p>
+  <div class="line install-link"><p><a href="{{ v.install_url }}">{{ t("web.suggest.install") }}</a></p>{{ help(hb, "projects-install", t("web.suggest.install"), ["projects.install"], true) }}</div>
   {%- endif %}
 </section>
+{%- endmacro %}
+
+{% if not v.projects %}
+<p class="empty">{{ t("web.projects.empty") if v.github_ready else t("web.projects.none") }}</p>
+{{ add_section() }}
+{% else %}
+<section aria-label="{{ t('web.projects.title') }}">
+  <div class="grid projects">
+    {%- for p in v.projects %}
+    {%- set n = loop.index %}
+    <article class="card project{% if not p.on %} is-off{% endif %}" id="project-{{ p.owner }}--{{ p.name }}" aria-labelledby="project-title-{{ n }}">
+      <header class="project-head">
+        <h2 class="project-name" id="project-title-{{ n }}"><a href="{{ p.url }}">{{ p.repo }}</a></h2>
+        <span class="chips"><span class="chip {{ 'state-active' if p.on else 'state-off' }}">{{ p.state }}</span>{{ help(hb, "projects-active", t("web.project.active"), ["projects.active"]) }}</span>
+      </header>
+      <dl class="facts">
+        <div><dt>{{ t("web.projects.last") }}</dt><dd>{{ p.last }}{% if p.last_status %} <span class="run run-{{ p.last_key }}">{{ p.last_status }}</span>{% endif %}</dd></div>
+        <div><dt>{{ t("web.projects.findings") }}</dt><dd><span class="with-help"><span>{{ p.findings }}</span>{{ help(hb, "common-findings", t("web.projects.findings"), ["common.findings"]) }}</span></dd></div>
+        <div><dt>{{ t("web.projects.prs") }}</dt><dd>{{ p.prs }}</dd></div>
+      </dl>
+      {%- if p.tickets %}
+      <div class="line tickets"><p>{{ p.tickets }}</p>{{ help(hb, "projects-tickets", t("web.help.projects.tickets.title"), ["projects.tickets"]) }}</div>
+      {%- endif %}
+      {%- if p.busy %}
+      <p class="working busy">{{ p.busy }}</p>
+      {%- elif v.accounts|length > 1 %}
+      <form method="post" action="{{ url_for('audit_now', owner=p.owner, name=p.name) }}" class="run-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <fieldset class="run-now has-help">
+          <legend>{{ t("web.project.run_now") }}</legend>{{ help(hb, "projects-run_now", t("web.project.run_now"), ["projects.run_now"]) }}
+          <div class="field">
+            <div class="label-row"><label for="account-{{ n }}">{{ t("web.project.account") }}</label>{{ help(hb, "projects-account", t("web.project.account"), account_keys) }}</div>
+            <select id="account-{{ n }}" name="account">
+              {%- for o in v.accounts %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="run-buttons">
+            <button>{{ t("web.project.audit") }}</button>
+            <button class="secondary" formaction="{{ url_for('improve_now', owner=p.owner, name=p.name) }}">{{ t("web.project.improve") }}</button>
+            <button class="secondary" formaction="{{ url_for('tests_now', owner=p.owner, name=p.name) }}">{{ t("web.project.tests_now") }}</button>
+            <button class="secondary" formaction="{{ url_for('deps_now', owner=p.owner, name=p.name) }}">{{ t("web.project.deps_now") }}</button>
+          </div>
+          <ul class="run-hints" aria-label="{{ t('web.project.run_hints') }}">
+            <li><p>{{ t("web.project.improve_hint") }}</p>{{ help(hb, "projects-improve", t("web.project.improve"), ["projects.improve"]) }}</li>
+            <li><p>{{ t("web.project.tests_hint") }}</p></li>
+            <li><p>{{ t("web.project.deps_hint") }}</p></li>
+          </ul>
+        </fieldset>
+      </form>
+      {%- else %}
+      <p class="muted">{{ t("web.project.no_accounts") }}</p>
+      {%- endif %}
+      <details class="fold">
+        <summary>{{ t("web.project.settings_summary") }}</summary>
+        <form method="post" action="{{ url_for('project_settings', owner=p.owner, name=p.name) }}" class="fold-body stack project-settings" aria-label="{{ t('web.project.settings', repo=p.repo) }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <fieldset>
+            <legend>{{ t("web.project.legend.when") }}</legend>
+            <div class="check-row"><label class="check"><input type="checkbox" aria-describedby="active-hint-{{ n }}" name="active" value="1"{% if p.active %} checked{% endif %}> {{ t("web.project.active") }}</label>{{ help(hb, "projects-active", t("web.project.active"), ["projects.active"], true) }}
+              <p class="hint" id="active-hint-{{ n }}">{{ t("web.project.active_hint") }}</p></div>
+            <div class="field">
+              <div class="label-row"><label for="weight-{{ n }}">{{ t("web.project.weight") }}</label>{{ help(hb, "projects-weight", t("web.project.weight"), ["projects.weight"], true) }}</div>
+              <select id="weight-{{ n }}" name="weight">
+                {%- for o in p.weights %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="check-row"><label class="check"><input type="checkbox" aria-describedby="tests-hint-{{ n }}" name="tests" value="1"{% if p.tests %} checked{% endif %}> {{ t("web.project.tests") }}</label>{{ help(hb, "projects-turns", t("web.help.projects.turns.title"), ["projects.turns"], true) }}
+              <p class="hint" id="tests-hint-{{ n }}">{{ t("web.project.tests_turn") }}</p></div>
+            <div class="check-row"><label class="check"><input type="checkbox" aria-describedby="deps-hint-{{ n }}" name="deps" value="1"{% if p.deps %} checked{% endif %}> {{ t("web.project.deps") }}</label>{{ help(hb, "projects-turns", t("web.help.projects.turns.title"), ["projects.turns"], true) }}
+              <p class="hint" id="deps-hint-{{ n }}">{{ t("web.project.deps_turn") }}</p></div>
+          </fieldset>
+          <fieldset>
+            <legend>{{ t("web.project.legend.writes") }}</legend>
+            <div class="fields">
+              <div class="field">
+                <div class="label-row"><label for="language-{{ n }}">{{ t("web.project.language") }}</label>{{ help(hb, "projects-language", t("web.project.language"), ["projects.language"], true) }}</div>
+                <select id="language-{{ n }}" name="language">
+                  {%- for o in p.languages %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+                </select>
+              </div>
+              <div class="field">
+                <div class="label-row"><label for="max-prs-{{ n }}">{{ t("web.project.max_prs") }}</label>{{ help(hb, "projects-max_prs", t("web.project.max_prs"), ["projects.max_prs"], true) }}</div>
+                <select id="max-prs-{{ n }}" name="max_prs">
+                  {%- for o in p.max_prs %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+                </select>
+              </div>
+            </div>
+            <div class="check-row"><label class="check"><input type="checkbox" aria-describedby="merge-hint-{{ n }}" name="merge_on_approve" value="1"{% if p.merge_on_approve %} checked{% endif %}> {{ t("web.project.merge_on_approve") }}</label>{{ help(hb, "projects-merge_on_approve", t("web.project.merge_on_approve"), ["projects.merge_on_approve"], true) }}
+              <p class="hint" id="merge-hint-{{ n }}">{{ t("web.project.merge_hint") }}</p></div>
+            <div class="check-row"><label class="check"><input type="checkbox" aria-describedby="watch-hint-{{ n }}" name="watch" value="1"{% if p.watch %} checked{% endif %}> {{ t("web.project.watch") }}</label>{{ help(hb, "projects-watch", t("web.project.watch"), ["projects.watch"], true) }}
+              <p class="hint" id="watch-hint-{{ n }}">{{ t("web.project.watch_hint") }}</p></div>
+            <div class="field">
+              <div class="label-row"><label for="health-{{ n }}">{{ t("web.project.health_url") }}</label>{{ help(hb, "projects-health_url", t("web.project.health_url"), ["projects.health_url"], true) }}</div>
+              <input id="health-{{ n }}" name="health_url" type="url" value="{{ p.health_url }}" placeholder="https://example.com/health" autocomplete="off" spellcheck="false" aria-describedby="health-hint-{{ n }}">
+              <p class="hint" id="health-hint-{{ n }}">{{ t("web.project.health_hint") }}</p>
+            </div>
+          </fieldset>
+          {%- if v.tracker %}
+          <fieldset>
+            <legend>{{ t("web.signals.title") }}</legend>
+            <div class="field">
+              <div class="label-row"><label for="signals-{{ n }}">{{ t("web.project.signals") }}</label>{{ help(hb, "projects-signals", t("web.project.signals"), ["projects.signals"], true) }}</div>
+              <input id="signals-{{ n }}" name="signals" type="text" value="{{ p.signals }}" pattern="[A-Za-z0-9._\-]{0,100}" autocomplete="off" spellcheck="false" aria-describedby="signals-hint-{{ n }}">
+              <p class="hint" id="signals-hint-{{ n }}">{{ t("web.project.signals_hint") }}</p>
+            </div>
+          </fieldset>
+          {%- endif %}
+          <button class="secondary">{{ t("web.project.save") }}</button>
+        </form>
+      </details>
+    </article>
+    {%- endfor %}
+  </div>
+</section>
+{{ add_section() }}
+{% endif %}
+{{ bubbles(hb) }}
 {% endblock %}

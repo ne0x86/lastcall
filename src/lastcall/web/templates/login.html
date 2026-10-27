@@ -1,17 +1,28 @@
 {% extends "base.html" %}
 {% block title %}{{ t("web.login.title") }}{% endblock %}
 {% block main %}
-<section class="card narrow">
+{%- from "_help.html" import help, bubbles with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+<section class="card narrow sign-card">
   <h1>{{ t("web.login.title") }}</h1>
-  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <p class="lede">{{ t("web.login.welcome") }}</p>
+  {%- if error %}
+  <div class="alert-row"><p class="notice error" role="alert">{{ error }}</p>{{ help(hb, "login-locked", t("web.help.login.locked.title"), ["login.locked"]) }}</div>
+  {%- endif %}
   <form method="post" class="stack">
-    <div>
-      <label for="password">{{ t("web.login.password") }}</label>
+    <div class="field">
+      <div class="label-row"><label for="password">{{ t("web.login.password") }}</label>{{ help(hb, "login-session", t("web.help.login.session.title"), ["login.session"]) }}</div>
       <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
     </div>
-    <button>{{ t("web.login.submit") }}</button>
+    <button class="wide">{{ t("web.login.submit") }}</button>
   </form>
-  <p class="muted">{{ t("web.login.forgot") }}</p>
-  <pre><code>docker compose run --rm cli password reset</code></pre>
+  <details class="fold">
+    <summary>{{ t("web.help.login.reset.title") }}</summary>
+    <div class="fold-body">
+      <div class="line"><p class="small">{{ t("web.login.forgot") }}</p>{{ help(hb, "login-reset", t("web.help.login.reset.title"), ["login.reset", "common.terminal"]) }}</div>
+      <div class="command"><pre tabindex="0"><code>docker compose run --rm cli password reset</code></pre></div>
+    </div>
+  </details>
 </section>
+{{ bubbles(hb) }}
 {% endblock %}

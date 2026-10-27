@@ -13,6 +13,7 @@ project names its project in the tracker.
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import urllib.error
@@ -92,12 +93,20 @@ def fetch_json(url: str, headers: Mapping[str, str]) -> Any:
     request = urllib.request.Request(url, headers=dict(headers))
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            return json.load(response)
+            body = response.read()
     except urllib.error.HTTPError as e:
         why = {401: "the token is not valid", 403: "the token may not read this", 404: "not found"}
         raise SignalsError(f"{why.get(e.code, f'HTTP {e.code}')}: {url.split('?')[0]}") from None
-    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise SignalsError(f"no answer from {url.split('/api/')[0]}: {e}") from None
+    except (ValueError, http.client.HTTPException):  # what http.client cannot send: its message may hold the token
+        raise SignalsError(
+            f"the request to {url.split('/api/')[0]} could not be sent: check the address and the token"
+        ) from None
+    try:
+        return json.loads(body)
+    except ValueError:  # such as the HTML page of a proxy: it was sent, and the answer is not the tracker's
+        raise SignalsError(f"{url.split('/api/')[0]} did not answer as Sentry or GlitchTip does") from None
 
 
 def address(text: str) -> bool:
@@ -109,6 +118,7 @@ def address(text: str) -> bool:
         and not parts.username
         and not parts.query
         and len(text) <= 200
+        and not re.search(r"[\x00-\x20\x7f]", text)  # http.client sends no space or line break in a path
     )
 
 

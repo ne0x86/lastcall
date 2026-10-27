@@ -35,7 +35,7 @@ from lastcall import __version__, cron, destinations, engines, i18n, logs, loki,
 from lastcall.accounts import ACCOUNT_ID, MODEL, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
-from lastcall.github_setup import LOGIN, Exchange, exchange_code, form_action, manifest
+from lastcall.github_setup import LOGIN, Exchange, clean_owner, exchange_code, form_action, manifest, owner_kind
 from lastcall.notify import EVENTS, Notifier, describe
 from lastcall.quota import QuotaError, Reading
 from lastcall.sandbox import SandboxError
@@ -57,6 +57,10 @@ TRACKER_PROJECT = re.compile(r"[A-Za-z0-9._-]{0,100}")
 CONTAINER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 SERVICES = "https://github.com/caronc/apprise#supported-notifications"  # every service Apprise reaches, with its URL
 STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
+MAX_STATES = 50  # manifest forms that wait for GitHub's answer: the oldest give way
+OWNER_SECONDS = 600.0  # GitHub's answer on what an owner is, kept 10 minutes: anonymous requests are 60 an hour
+MAX_OWNERS = 100
+CREDENTIAL = re.compile(r"(?i)\b(bearer|basic)\s+[^\"']*|\b(authorization|header value)\W+.*")
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
 CSP = (
     "default-src 'none'; style-src 'self'; img-src 'self'; manifest-src 'self'; form-action 'self'; "
@@ -98,7 +102,8 @@ def create_app(
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
     reads an account's quota in the sandbox; without it, the web UI cannot check a new account's login.
-    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats."""
+    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats, and
+    GitHub whether an owner is a person or an organization."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -111,7 +116,9 @@ def create_app(
     reading = threading.Event()  # the installed repositories are being read from GitHub
     notifications = notifier or Notifier(secrets, store, log=log)
     app_states: dict[str, float] = {}  # manifest forms shown, by state, with when they were shown
-    quota_errors: dict[str, str] = {}  # the last failed quota reading of each account
+    owner_answers: dict[str, tuple[str, float]] = {}  # what GitHub said an owner is ("user", "org", "missing"), when
+    cache_lock = threading.Lock()  # for app_states and owner_answers: waitress answers on 8 threads
+    quota_errors: dict[str, tuple[float, str]] = {}  # the last failed quota reading of each account, and when
 
     def connect() -> GitHub | None:
         if github is not None:
@@ -132,7 +139,7 @@ def create_app(
         return render_template(template, **values), status
 
     def problem(status: int, key: str) -> ResponseReturnValue:
-        return page("error.html", status, message=t(key))
+        return page("error.html", status, message=t(key), key=key)
 
     def signed_in(view: View) -> View:
         @wraps(view)
@@ -203,7 +210,8 @@ def create_app(
     @app.get("/")
     @signed_in
     def home() -> ResponseReturnValue:
-        view = dashboard.build(store, g.lang, clock(), App.load(secrets) is not None)
+        chips = {row.id: chip for row in store.accounts() if (chip := chip_kind(row))}
+        view = dashboard.build(store, g.lang, clock(), App.load(secrets) is not None, chips)
         done = request.args.get("done", "")
         return page("dashboard.html", v=view, done=t(f"web.done.{done}") if done in ("paused", "resumed") else "")
 
@@ -215,10 +223,10 @@ def create_app(
         if request.method == "GET":
             return page("setup.html", minimum=auth.MIN_LENGTH)
         if message := locked():
-            return page("setup.html", 429, minimum=auth.MIN_LENGTH, error=message)
+            return page("setup.html", 429, minimum=auth.MIN_LENGTH, error=message, counted=True)
         if not setup_code.check(request.form.get("code", "")):
             throttle.fail(address())
-            return page("setup.html", 400, minimum=auth.MIN_LENGTH, error=t("web.setup.bad_code"))
+            return page("setup.html", 400, minimum=auth.MIN_LENGTH, error=t("web.setup.bad_code"), counted=True)
         password = request.form.get("password", "")
         wrong = auth.password_problem(password, request.form.get("repeat", ""))
         if wrong:
@@ -317,6 +325,10 @@ def create_app(
             later(work)
         return redirect(url_for("projects_page", done="refreshing"))
 
+    def project_anchor(repo: str) -> str:
+        """The card of a project on the Projects page: GitHub logins cannot hold two dashes in a row."""
+        return "#project-" + repo.replace("/", "--", 1)
+
     @app.post("/projects/<owner>/<name>")
     @signed_in
     def project_settings(owner: str, name: str) -> ResponseReturnValue:
@@ -351,7 +363,7 @@ def create_app(
             deps=form.get("deps") == "1",
             signals=tracked,
         )
-        return redirect(url_for("projects_page", done="saved"))
+        return redirect(url_for("projects_page", done="saved") + project_anchor(project.repo))
 
     @app.post("/projects/<owner>/<name>/audit")
     @signed_in
@@ -365,7 +377,7 @@ def create_app(
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
             store.add_order("audit", project.repo, account or None, clock())
             log(f"Web UI: audit of {project.repo} ordered")
-        return redirect(url_for("projects_page", done="queued"))
+        return redirect(url_for("projects_page", done="queued") + project_anchor(project.repo))
 
     @app.post("/projects/<owner>/<name>/improve")
     @signed_in
@@ -379,7 +391,7 @@ def create_app(
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
             store.add_order("improve", project.repo, None if account in ("", "*") else account, clock())
             log(f"Web UI: improvement of {project.repo} ordered")
-        return redirect(url_for("projects_page", done="improve"))
+        return redirect(url_for("projects_page", done="improve") + project_anchor(project.repo))
 
     @app.post("/projects/<owner>/<name>/tests")
     @signed_in
@@ -402,7 +414,7 @@ def create_app(
         if not any(o["repo"].lower() == project.repo.lower() for o in store.orders()):
             store.add_order(kind, project.repo, None if account in ("", "*") else account, clock())
             log(f"Web UI: {kind} of {project.repo} ordered")
-        return redirect(url_for("projects_page", done=kind))
+        return redirect(url_for("projects_page", done=kind) + project_anchor(project.repo))
 
     @app.get("/settings")
     @signed_in
@@ -421,7 +433,10 @@ def create_app(
         loki_error: str = "",
         loki_tried: Mapping[str, str] | None = None,
     ) -> ResponseReturnValue:
-        chosen, language, filled = notifications.events(), notifications.language(), dict(values or {})
+        chosen, filled = notifications.events(), dict(values or {})
+        language = (
+            notifications.language() if store.setting("notify_language") else g.lang
+        )  # until saved: this page's
         tracker = signals.Tracker.load(secrets)
         view = {
             "destinations": [(n, describe(url) or "?") for n, url in enumerate(notifications.urls())],
@@ -477,6 +492,8 @@ def create_app(
         tried = {"url": url, "org": org}
         if not signals.address(url) or not ORG_SLUG.fullmatch(org) or not token:
             return show_settings(400, signals_error=t("web.signals.bad"), tried=tried)
+        if loki.CONTROL.search(token):  # a pasted line break: no header can carry it
+            return show_settings(400, signals_error=t("web.signals.control"), tried=tried)
         tracker = signals.Tracker(url, org, token)
         try:
             signals.check(tracker, signals_fetch)
@@ -511,8 +528,11 @@ def create_app(
             return {"error": t("web.logs.unavailable"), "rows": [], "repos": []}
         try:
             listed = containers()
-        except (SandboxError, OSError) as e:
-            return {"error": t("web.logs.failed", error=str(e)[:200]), "rows": [], "repos": []}
+        except Exception as e:  # an optional integration never takes the page down
+            known = isinstance(e, (SandboxError, OSError))
+            if not known:
+                log(f"Web UI: the containers could not be listed: {brief(e)}")
+            return {"error": t("web.logs.failed", error=str(e)[:200] if known else brief(e)), "rows": [], "repos": []}
         repos, choices = [p.repo for p in store.projects()], logs.chosen(store)
         rows = []
         for c in listed:
@@ -535,6 +555,8 @@ def create_app(
         tried = {"url": url, "user": user, "tenant": tenant}
         if not signals.address(url) or ":" in user or len(user) > 100 or not loki.TENANT.fullmatch(tenant):
             return show_settings(400, loki_error=t("web.loki.bad"), loki_tried=tried)
+        if loki.CONTROL.search(user + token):  # a pasted line break: no header can carry it
+            return show_settings(400, loki_error=t("web.loki.control"), loki_tried=tried)
         connection = loki.Loki(url, user, token, tenant)
         try:
             loki.labels(connection, clock(), loki_fetch)
@@ -604,8 +626,11 @@ def create_app(
             names = loki.labels(connection, now, loki_fetch)
             label = loki.label_for(store, names)
             listed = loki.sources(connection, label, now, loki_fetch) if label else []
-        except loki.LokiError as e:
-            return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200])}
+        except Exception as e:  # an optional integration never takes the page down
+            known = isinstance(e, loki.LokiError)
+            if not known:
+                log(f"Web UI: Loki's sources could not be listed: {brief(e)}")
+            return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200] if known else brief(e))}
         rows = []
         for s in listed:
             name = s["name"]
@@ -635,7 +660,7 @@ def create_app(
             return show_settings(400, t("web.dest.failed"), said, service=service, values=form)
         notifications.add_url(url)
         log(f"Web UI: notification destination added ({service})")
-        return redirect(url_for("settings_page", done="notify_added"))
+        return redirect(url_for("settings_page", done="notify_added") + "#notify")
 
     @app.post("/settings/notify/telegram")
     @signed_in
@@ -658,7 +683,7 @@ def create_app(
         sent, said = notifications.test(urls[index])
         if not sent:
             return show_settings(502, t("web.dest.test_failed"), said)
-        return redirect(url_for("settings_page", done="notify_sent"))
+        return redirect(url_for("settings_page", done="notify_sent") + "#notify")
 
     @app.post("/settings/notify/remove")
     @signed_in
@@ -667,13 +692,13 @@ def create_app(
             notifications.remove_url(int(request.form.get("index", "")))
         except ValueError:
             return problem(400, "web.error.form")
-        return redirect(url_for("settings_page", done="notify_removed"))
+        return redirect(url_for("settings_page", done="notify_removed") + "#notify")
 
     @app.post("/settings/runs")
     @signed_in
     def run_settings() -> ResponseReturnValue:
         store.set_setting("fanout", "yes" if request.form.get("fanout") == "1" else "no")
-        return redirect(url_for("settings_page", done="saved"))
+        return redirect(url_for("settings_page", done="saved") + "#runs")
 
     @app.post("/settings/notify")
     @signed_in
@@ -682,7 +707,7 @@ def create_app(
         if language not in i18n.CATALOGS:
             return problem(400, "web.error.form")
         notifications.choose(request.form.getlist("events"), language)
-        return redirect(url_for("settings_page", done="saved"))
+        return redirect(url_for("settings_page", done="saved") + "#notify")
 
     @app.get("/github")
     @signed_in
@@ -691,18 +716,48 @@ def create_app(
         done = t("web.done.app_created") if request.args.get("done") == "app_created" else ""
         return page("github.html", app=found, done=done)
 
+    def owner_answer(owner: str) -> str | None:
+        """What GitHub says `owner` is, from the last 10 minutes when it was asked: a link from another site can make
+        this page ask for any name, and anonymous requests are few. Only an answer is kept, never "did not say"."""
+        key, now = owner.lower(), clock()
+        with cache_lock:
+            known = owner_answers.get(key)
+        if known is not None and now - known[1] < OWNER_SECONDS:
+            return known[0]
+        found = owner_kind(owner, fetch)
+        if found is not None:
+            with cache_lock:
+                owner_answers.pop(key, None)  # asked again: it goes to the end, as the newest
+                owner_answers[key] = (found, now)
+                while len(owner_answers) > MAX_OWNERS:
+                    del owner_answers[next(iter(owner_answers))]
+        return found
+
     @app.get("/github/new")
     @signed_in
     def github_new() -> ResponseReturnValue:
-        owner, org = request.args.get("owner", "").strip(), request.args.get("org") == "1"
+        owner = clean_owner(request.args.get("owner", ""))
         if not LOGIN.fullmatch(owner):
             return page("github.html", 400, app=None, error=t("web.github.bad_owner"), owner=owner)
+        chosen = request.args.get("org")
+        if chosen in ("0", "1"):  # the owner's own answer, when GitHub could not say
+            org = chosen == "1"
+        else:
+            found = owner_answer(owner)
+            if found == "missing":
+                return page("github.html", 400, app=None, error=t("web.github.missing", owner=owner), owner=owner)
+            if found is None:
+                return page("github.html", app=None, owner=owner, unknown=True)
+            org = found == "org"
         now = clock()
-        for state, shown in list(app_states.items()):
-            if now - shown > STATE_SECONDS:
-                del app_states[state]
         state = tokens.token_urlsafe(16)
-        app_states[state] = now
+        with cache_lock:
+            for old, shown in list(app_states.items()):
+                if now - shown > STATE_SECONDS:
+                    del app_states[old]
+            app_states[state] = now
+            while len(app_states) > MAX_STATES:  # every GET adds one: the oldest give way
+                del app_states[next(iter(app_states))]
         values = manifest(owner, url_for("github_callback", _external=True))
         permissions = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in PERMISSIONS.items())
         g.github_form = True
@@ -711,7 +766,11 @@ def create_app(
             app=None,
             owner=owner,
             org=org,
+            kind=t(
+                f"web.github.{'chosen' if chosen in ('0', '1') else 'found'}.{'org' if org else 'user'}", owner=owner
+            ),
             confirm=t("web.github.confirm", name=values["name"], owner=owner, permissions=permissions),
+            signin=t(f"web.github.signin.{'org' if org else 'user'}", owner=owner),
             action=form_action(owner, org, state),
             manifest=json.dumps(values),
         )
@@ -720,7 +779,8 @@ def create_app(
     @signed_in
     def github_callback() -> ResponseReturnValue:
         code, state = request.args.get("code", ""), request.args.get("state", "")
-        shown = app_states.pop(state, None)
+        with cache_lock:
+            shown = app_states.pop(state, None)
         if not code or shown is None or clock() - shown > STATE_SECONDS:
             return page("github.html", 400, app=App.load(secrets), error=t("web.github.bad_state"))
         try:
@@ -751,6 +811,7 @@ def create_app(
         what the owner wrote in `filled` (never the API key)."""
         now = clock()
         working = dashboard.working_on(store.running())
+        paused, down = dashboard.service_state(store, now)
         done = request.args.get("done", "")
         known = ("saved", "account_added", "key_added", "reading", "tiers")
         message = t(f"web.done.{done}") if done in known and not error else ""
@@ -760,6 +821,7 @@ def create_app(
             "accounts.html",
             status,
             cards=[account_card(row, now, working) for row in store.accounts()],
+            held="down" if down else ("paused" if paused else ""),
             engines=[(e.name, f"{e.provider} ({e.title})") for e in all_engines if e.login],
             keys=[(f"{e.name}/{p.name}", p) for e, p in sources if p.keys],
             local=next(((f"{e.name}/{p.name}", p) for e, p in sources if not p.keys), None),
@@ -774,15 +836,39 @@ def create_app(
             filled={k: v for k, v in (filled or {}).items() if k not in ("key", "csrf")},
         )
 
+    def chip_kind(row: AccountRow) -> str:
+        """The error that an account's state chip names, on the dashboard and on Accounts: "nokey" when it runs on an
+        API key that it no longer has, "unreadable" when the last reading of its quota from this page failed."""
+        try:
+            account = row.account()
+        except ValueError:  # an account that this version cannot run
+            account = None
+        if account is not None and account.needs_key() and secrets.get(account.key_name) is None:
+            return "nokey"
+        return "unreadable" if quota_error(row.id) else ""
+
+    def quota_error(account_id: str) -> str:
+        """Why the last reading of the account's quota from this page failed, until a reading of it is newer: the
+        service reads it every 15 minutes, and once that works the account is not "cannot read" any more."""
+        failed = quota_errors.get(account_id)
+        if failed is None:
+            return ""
+        latest = store.last_reading(account_id)
+        if latest is not None and latest.taken_at > failed[0]:
+            quota_errors.pop(account_id, None)
+            return ""
+        return failed[1]
+
     def account_card(row: AccountRow, now: float, working: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
         try:
             base = defaults(row.engine)
         except ValueError:  # an engine with no defaults, such as opencode: the account names its models
             base = {}
+        chip = chip_kind(row)
         card: dict[str, Any] = {
             "row": row,
-            "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id)),
-            "error": quota_errors.get(row.id, ""),
+            "view": dashboard.account_view(store, row, g.lang, now, working.get(row.id), chip),
+            "error": t("web.accounts.no_key") if chip == "nokey" else quota_error(row.id),
             "login": f"ACCOUNT={row.id} ENGINE={row.engine} docker compose run --rm login",
             "login_ps": f'$env:ACCOUNT="{row.id}"; $env:ENGINE="{row.engine}"; docker compose run --rm login',
             "policies": [],
@@ -805,8 +891,6 @@ def create_app(
             return card
         card["policies"] = [(kind, t(f"web.spend.{kind}")) for kind in policies(account)]
         card["needs_key"] = account.needs_key()
-        if account.needs_key() and secrets.get(account.key_name) is None:
-            card["error"] = t("web.accounts.no_key")
         return card
 
     @app.post("/accounts/add")
@@ -893,7 +977,7 @@ def create_app(
                 return t("web.accounts.need_budget")
             if not form.get("key", "").strip() and (row is None or secrets.get(account.key_name) is None):
                 return t("web.accounts.need_key")
-        policy, schedule = form.get("policy", ""), form.get("schedule", "").strip()
+        policy, schedule = form.get("policy", ""), cron.normalize(form.get("schedule", ""))
         if policy not in policies(account):
             return ""
         if policy == "schedule":
@@ -934,7 +1018,7 @@ def create_app(
                 schedule=schedule,
                 models=account.models,
             )
-            return redirect(url_for("accounts_page", done="saved"))
+            return redirect(url_for("accounts_page", done="saved") + f"#account-{row.id}")
         try:
             reserve = float(form.get("reserve", ""))
         except ValueError:
@@ -943,7 +1027,7 @@ def create_app(
         if not 0 <= reserve <= 90 or policy not in ("before-reset", "manual"):
             return problem(400, "web.error.form")
         store.update_account(row.id, enabled=enabled, language=language, reserve_pct=reserve, policy=policy)
-        return redirect(url_for("accounts_page", done="saved"))
+        return redirect(url_for("accounts_page", done="saved") + f"#account-{row.id}")
 
     @app.post("/accounts/<account_id>/tiers")
     @signed_in
@@ -992,11 +1076,11 @@ def create_app(
                 store.record_reading(reader(account))
                 quota_errors.pop(account.id, None)
             except (QuotaError, SandboxError, OSError) as e:
-                quota_errors[account.id] = str(e)[:300]
+                quota_errors[account.id] = (clock(), str(e)[:300])
                 log(f"{account.id}: no quota reading: {e}")
 
         later(work)
-        return redirect(url_for("accounts_page", done="reading"))
+        return redirect(url_for("accounts_page", done="reading") + f"#account-{row.id}")
 
     @app.get("/language/<code>")
     def set_language(code: str) -> ResponseReturnValue:
@@ -1016,6 +1100,13 @@ def create_app(
         return problem(404, "web.error.not_found")
 
     return app
+
+
+def brief(error: BaseException) -> str:
+    """An exception for the log: its type and a short line of its message. Never its repr, which can hold request
+    data, and a header's value or an authorization is masked wherever it shows in the message."""
+    message = CREDENTIAL.sub(lambda m: f"{(m.group(1) or m.group(2)).lower()} ***", " ".join(str(error).split()))
+    return f"{type(error).__name__}: {message[:120]}" if message else type(error).__name__
 
 
 def language() -> str:
@@ -1051,11 +1142,15 @@ def local(target: str) -> str:
     return target
 
 
-def serve(app: Flask, host: str, port: int, log: Log = print, trust_proxy: bool = False) -> None:
+def serve(
+    app: Flask, host: str, port: int, log: Log = print, trust_proxy: bool = False, shown: str | None = None
+) -> None:
     """Waitress drops the X-Forwarded-* headers that a client sends, unless lastcall trusts the proxy in front of it:
-    then they reach ProxyFix (create_app), which reads the client's address, scheme and host from them."""
-    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    log(f"Web UI on http://{shown}:{port}/ (in English and Spanish)")
+    then they reach ProxyFix (create_app), which reads the client's address, scheme and host from them. `shown` is
+    where the log says the web UI answers, when that is not the address that it listens on (Docker publishes it)."""
+    where = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    shown = shown or f"http://{f'[{where}]' if ':' in where else where}:{port}/"
+    log(f"Web UI on {shown} (in English and Spanish)")
     waitress.serve(
         app, host=host, port=port, threads=8, ident="lastcall", clear_untrusted_proxy_headers=not trust_proxy
     )

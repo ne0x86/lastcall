@@ -1,26 +1,42 @@
 {% extends "base.html" %}
 {% block title %}{{ t("web.setup.title") }}{% endblock %}
 {% block main %}
-<section class="card narrow">
+{%- from "_help.html" import help, bubbles with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+<section class="card narrow sign-card">
   <h1>{{ t("web.setup.title") }}</h1>
-  <p>{{ t("web.setup.intro") }}</p>
-  <pre><code>docker compose logs lastcall</code></pre>
-  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  <div class="line"><p class="lede">{{ t("web.setup.intro") }}</p>{{ help(hb, "setup-why", t("web.help.setup.why.title"), ["setup.why"]) }}</div>
+  {%- if error %}
+  <div class="alert-row"><p class="notice error" role="alert">{{ error }}</p>{% if counted %}{{ help(hb, "login-locked", t("web.help.login.locked.title"), ["login.locked"]) }}{% endif %}</div>
+  {%- endif %}
   <form method="post" class="stack">
-    <div>
-      <label for="code">{{ t("web.setup.code") }}</label>
-      <input id="code" name="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
-    </div>
-    <div>
-      <label for="password">{{ t("web.setup.password") }}</label>
-      <input id="password" name="password" type="password" autocomplete="new-password" minlength="{{ minimum }}" required aria-describedby="password-hint">
-      <p id="password-hint" class="muted hint">{{ t("web.setup.hint", min=minimum) }}</p>
-    </div>
-    <div>
-      <label for="repeat">{{ t("web.setup.repeat") }}</label>
-      <input id="repeat" name="repeat" type="password" autocomplete="new-password" minlength="{{ minimum }}" required>
-    </div>
-    <button>{{ t("web.setup.submit") }}</button>
+    <ol class="steps sign-steps">
+      <li>
+        <h2>{{ t("web.setup.step1") }}</h2>
+        <p>{{ t("web.setup.step1_text") }}</p>
+        <div class="command"><pre tabindex="0"><code>docker compose logs lastcall</code></pre></div>
+        <div class="field">
+          <div class="label-row"><label for="code">{{ t("web.setup.code") }}</label>{{ help(hb, "setup-code", t("web.setup.code"), ["setup.code", "common.terminal"]) }}</div>
+          <input id="code" name="code" type="text" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+        </div>
+      </li>
+      <li>
+        <h2>{{ t("web.setup.step2") }}</h2>
+        <div class="stack">
+          <div class="field">
+            <div class="label-row"><label for="password">{{ t("web.setup.password") }}</label>{{ help(hb, "setup-password", t("web.setup.password"), ["setup.password"]) }}</div>
+            <input id="password" name="password" type="password" autocomplete="new-password" minlength="{{ minimum }}" required aria-describedby="password-hint">
+            <p id="password-hint" class="muted hint">{{ t("web.setup.hint", min=minimum) }}</p>
+          </div>
+          <div class="field">
+            <label for="repeat">{{ t("web.setup.repeat") }}</label>
+            <input id="repeat" name="repeat" type="password" autocomplete="new-password" minlength="{{ minimum }}" required>
+          </div>
+          <button class="wide">{{ t("web.setup.submit") }}</button>
+        </div>
+      </li>
+    </ol>
   </form>
 </section>
+{{ bubbles(hb) }}
 {% endblock %}

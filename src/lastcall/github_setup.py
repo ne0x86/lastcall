@@ -8,6 +8,7 @@ credentials. The page needs no JavaScript.
 from __future__ import annotations
 
 import html
+import http.client
 import json
 import re
 import secrets
@@ -17,12 +18,15 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from lastcall.github import PERMISSIONS, App, GitHubError, urlopen
+from lastcall.github import API, PERMISSIONS, App, Fetch, GitHubError, urlopen
+from lastcall.i18n import text
 from lastcall.secretstore import SecretStore
 
 HOMEPAGE = "https://github.com/ne0x86/lastcall"
 LOGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}")
+PROFILE = re.compile(r"^(https?://)?(www\.)?github\.com/(orgs/(?=[^/\s]))?", re.IGNORECASE)
 LOCAL_HOST = re.compile(r"(localhost|127\.0\.0\.1)(:\d{1,5})?")
+LOOKUP_SECONDS = 10  # the owner lookup sits in a page load: a slow GitHub gets 10 s, then the owner is asked
 Exchange = Callable[[str], dict[str, Any]]
 
 
@@ -46,6 +50,35 @@ def form_action(owner: str, org: bool, state: str) -> str:
         else "https://github.com/settings/apps/new"
     )
     return f"{base}?state={urllib.parse.quote(state)}"
+
+
+def clean_owner(typed: str) -> str:
+    """What someone typed for the owner, without the decoration that people paste along with the name: spaces, a
+    leading @, and the address of the profile (https://github.com/name/, github.com/name or an organization's
+    https://github.com/orgs/name), whatever its case, with no query or fragment after it."""
+    owner = re.split(r"[?#]", typed.strip(), maxsplit=1)[0].strip()
+    owner = PROFILE.sub("", owner, count=1).strip().removeprefix("@")
+    return owner.rstrip("/").strip()
+
+
+def owner_kind(owner: str, fetch: Fetch = urlopen) -> str | None:
+    """Ask GitHub's public API, with no token, what `owner` is: "user", "org" or "missing" (no such account). None
+    when GitHub cannot say: the hourly limit of anonymous requests, no network, a connection that drops mid-answer
+    or an answer that is not JSON."""
+    req = urllib.request.Request(f"{API}/users/{urllib.parse.quote(owner, safe='')}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    req.timeout = LOOKUP_SECONDS  # read by github.urlopen; a fake fetch ignores it
+    try:
+        status, _, raw = fetch(req)
+        if status == 404:
+            return "missing"
+        if status != 200:
+            return None
+        kind = json.loads(raw).get("type")
+    except (OSError, ValueError, AttributeError, RecursionError, http.client.HTTPException):
+        return None  # RecursionError: a body of nested brackets, which json.loads cannot read
+    return {"User": "user", "Organization": "org"}.get(kind) if isinstance(kind, str) else None
 
 
 def exchange_code(code: str) -> dict[str, Any]:
@@ -103,12 +136,14 @@ class _Handler(BaseHTTPRequestHandler):
         if not LOCAL_HOST.fullmatch(host):
             host = f"127.0.0.1:{srv.server_address[1]}"
         app_manifest = json.dumps(manifest(srv.owner, f"http://{host}/callback"))
+        signin = text("en", f"web.github.signin.{'org' if srv.org else 'user'}", owner=srv.owner)
         permissions = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in PERMISSIONS.items())
         return (
             f"<h1>Create lastcall's GitHub App</h1>"
             f"<p>GitHub will create a private App named <b>{html.escape(manifest(srv.owner, '')['name'])}</b> "
             f"for <b>{html.escape(srv.owner)}</b>, with these permissions: {html.escape(permissions)}. "
             f"No webhooks: lastcall asks GitHub when it needs to.</p>"
+            f"<p>{html.escape(signin)}</p>"
             f'<form method="post" action="{html.escape(form_action(srv.owner, srv.org, srv.state))}">'
             f'<input type="hidden" name="manifest" value="{html.escape(app_manifest)}">'
             f'<button style="font-size:1.1rem;padding:.6rem 1.2rem">Create the App on GitHub</button></form>'
@@ -126,11 +161,11 @@ class _Handler(BaseHTTPRequestHandler):
                 int(data["id"]),
                 str(data["slug"]),
                 str(data["name"]),
-                srv.owner,
+                str(data["owner"]["login"]),  # for a person, whoever was signed in on GitHub
                 str(data["html_url"]),
                 str(data["pem"]),
             )
-        except (GitHubError, KeyError, ValueError) as e:
+        except (GitHubError, KeyError, TypeError, ValueError) as e:
             self._page(502, f"<p>GitHub did not hand over the App: {html.escape(str(e))}</p>")
             return
         app.save(srv.store)

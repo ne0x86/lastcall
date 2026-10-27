@@ -1,234 +1,78 @@
 {% extends "base.html" %}
 {% block title %}{{ t("web.settings.title") }}{% endblock %}
 {% block main %}
-<h1>{{ t("web.settings.title") }}</h1>
+{%- from "_help.html" import help, bubbles with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+{%- set event_help = ("decisions", "merged", "reverted", "paid", "quota", "burst") %}
+<header class="page-head">
+  <h1>{{ t("web.settings.title") }}</h1>
+  <p class="lede">{{ t("web.settings.intro") }}</p>
+</header>
 
-{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
+{% if done %}<p class="notice done" role="status">{{ done }}</p>{% endif %}
 
-<section class="card" aria-labelledby="github-title">
-  <h2 id="github-title">{{ t("web.github.title") }}</h2>
-  <p>{% if github %}{{ t("web.github.ready", name=github.name, owner=github.owner) }} <a href="{{ github.install_url }}">{{ t("web.github.install") }}</a>{% else %}{{ t("web.start.github") }} <a href="{{ url_for('github_page') }}">{{ t("web.github.title") }}</a>{% endif %}</p>
+<div class="settings-layout">
+<nav class="toc" aria-labelledby="toc-title">
+  <h2 id="toc-title" class="toc-title">{{ t("web.settings.index") }}</h2>
+  <ul>
+    <li><a href="#language">{{ t("web.nav.language") }}</a></li>
+    <li><a href="#notify">{{ t("web.notify.title") }}</a></li>
+    <li><a href="#github">{{ t("web.github.title") }}</a></li>
+    <li><a href="#runs">{{ t("web.runs.settings") }}</a></li>
+    <li class="toc-group"><a href="#optional">{{ t("web.settings.optional") }}</a>
+      <ul>
+        <li><a href="#signals">{{ t("web.signals.title") }}</a></li>
+        <li><a href="#logs">{{ t("web.logs.title") }}</a></li>
+        <li><a href="#loki">{{ t("web.loki.title") }}</a></li>
+      </ul>
+    </li>
+  </ul>
+</nav>
+
+<div class="settings-sections">
+<section class="card" id="language" aria-labelledby="language-title">
+  <div class="section-head"><h2 id="language-title">{{ t("web.nav.language") }} <span class="other-lang" lang="{{ 'es' if lang == 'en' else 'en' }}">· {{ t("web.settings.language_other") }}</span></h2>{{ help(hb, "settings-language", t("web.nav.language"), ["settings.language"]) }}</div>
+  <p class="lede">{{ t("web.settings.language_intro") }}</p>
+  <nav class="segmented" aria-labelledby="language-title">
+    {%- for code, name in languages %}
+    <a href="{{ url_for('set_language', code=code, next='/settings#language') }}" lang="{{ code }}" hreflang="{{ code }}"{% if code == lang %} aria-current="true"{% endif %}>{{ name }}</a>
+    {%- endfor %}
+  </nav>
 </section>
 
-<section class="card" aria-labelledby="runs-title">
-  <h2 id="runs-title">{{ t("web.runs.settings") }}</h2>
-  <form method="post" action="{{ url_for('run_settings') }}" class="stack">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div>
-      <label class="check plain"><input type="checkbox" name="fanout" value="1"{% if v.fanout %} checked{% endif %} aria-describedby="fanout-hint"> {{ t("web.runs.fanout") }}</label>
-      <p id="fanout-hint" class="hint muted">{{ t("web.runs.fanout_hint") }}</p>
-    </div>
-    <button class="secondary">{{ t("web.project.save") }}</button>
-  </form>
-</section>
-
-<section class="card" aria-labelledby="signals-title" id="signals">
-  <h2 id="signals-title">{{ t("web.signals.title") }}</h2>
-  <p>{{ t("web.signals.intro") }}</p>
-  {%- if v.tracker %}
-  <p class="done">{{ t("web.signals.connected", url=v.tracker.url, org=v.tracker.org) }}</p>
-  {%- endif %}
-  {%- if signals_error %}
-  <p class="card notice error" role="alert">{{ signals_error }}</p>
-  {%- endif %}
-  <ol class="steps">
-    <li>{{ t("web.signals.step1") }} <a href="{{ sentry_tokens }}">{{ t("web.signals.sentry_tokens") }}</a></li>
-    <li>{{ t("web.signals.step2") }}</li>
-    <li>{{ t("web.signals.step3") }}</li>
-  </ol>
-  <form method="post" action="{{ url_for('connect_signals') }}#signals" class="stack">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div>
-      <label for="signals-url">{{ t("web.signals.url") }}</label>
-      <input id="signals-url" name="url" type="url" value="{{ v.signals_url }}" placeholder="https://sentry.io" autocomplete="off" spellcheck="false" required aria-describedby="signals-url-hint">
-      <p id="signals-url-hint" class="hint muted">{{ t("web.signals.url_hint") }}</p>
-    </div>
-    <div>
-      <label for="signals-org">{{ t("web.signals.org") }}</label>
-      <input id="signals-org" name="org" type="text" value="{{ v.signals_org }}" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}" autocomplete="off" spellcheck="false" required aria-describedby="signals-org-hint">
-      <p id="signals-org-hint" class="hint muted">{{ t("web.signals.org_hint") }}</p>
-    </div>
-    <div>
-      <label for="signals-token">{{ t("web.signals.token") }}</label>
-      <input id="signals-token" name="token" type="password" autocomplete="off" spellcheck="false"{% if not v.tracker %} required{% endif %} aria-describedby="signals-token-hint">
-      <p id="signals-token-hint" class="hint muted">{{ t("web.signals.token_keep") if v.tracker else t("web.signals.token_hint") }}</p>
-    </div>
-    <button>{{ t("web.signals.save") }}</button>
-  </form>
-  {%- if v.tracker %}
-  <form method="post" action="{{ url_for('disconnect_signals') }}#signals">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="secondary">{{ t("web.signals.remove") }}</button>
-  </form>
-  {%- endif %}
-</section>
-
-<section class="card" aria-labelledby="logs-title" id="logs">
-  <h2 id="logs-title">{{ t("web.logs.title") }}</h2>
-  <p>{{ t("web.logs.intro") }}</p>
-  <ol class="steps">
-    <li>{{ t("web.logs.step1") }}</li>
-    <li>{{ t("web.logs.step2") }}</li>
-  </ol>
-  {%- if v.logs.error %}
-  <p class="card notice error" role="alert">{{ v.logs.error }}</p>
-  {%- elif not v.logs.rows %}
-  <p class="muted">{{ t("web.logs.none") }}</p>
-  {%- else %}
-  <form method="post" action="{{ url_for('logs_settings') }}#logs" class="stack">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <ul class="plain">
-      {%- for c in v.logs.rows %}
-      <li>
-        <p><strong>{{ c.name }}</strong> <span class="badge">{{ c.state }}</span></p>
-        <p class="muted small">{{ c.image }}</p>
-        {%- if c.label %}
-        <p class="small">{{ t("web.logs.from_label", project=c.label) }}</p>
-        {%- else %}
-        <input type="hidden" name="name-{{ loop.index }}" value="{{ c.name }}">
-        <input type="hidden" name="shown-{{ loop.index }}" value="{{ c.selected }}">
-        <label for="logs-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>
-        <select id="logs-{{ loop.index }}" name="project-{{ loop.index }}">
-          <option value="">{{ t("web.logs.not_read") }}</option>
-          {%- for repo in v.logs.repos %}<option value="{{ repo }}"{% if repo == c.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
-        </select>
-        {%- if c.suggested %}<p class="hint muted">{{ t("web.logs.suggested", project=c.suggested) }}</p>{% endif %}
-        {%- endif %}
-      </li>
-      {%- endfor %}
-    </ul>
-    <button>{{ t("web.logs.save") }}</button>
-  </form>
-  {%- endif %}
-  <details>
-    <summary>{{ t("web.logs.label_title") }}</summary>
-    <p class="small">{{ t("web.logs.label_how") }}</p>
-    <pre><code>services:
-  your-app:
-    labels:
-      lastcall.project: owner/name</code></pre>
-  </details>
-</section>
-
-<section class="card" aria-labelledby="loki-title" id="loki">
-  <h2 id="loki-title">{{ t("web.loki.title") }}</h2>
-  <p>{{ t("web.loki.intro") }}</p>
-  {%- if v.loki.connection %}
-  <p class="done">{{ t("web.loki.connected", url=v.loki.connection.url) }}</p>
-  {%- endif %}
-  {%- if loki_error %}
-  <p class="card notice error" role="alert">{{ loki_error }}</p>
-  {%- endif %}
-  <ol class="steps">
-    <li>{{ t("web.loki.step1") }}</li>
-    <li>{{ t("web.loki.step2") }}</li>
-    <li>{{ t("web.loki.step3") }}</li>
-  </ol>
-  <form method="post" action="{{ url_for('connect_loki') }}#loki" class="stack">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div>
-      <label for="loki-url">{{ t("web.loki.url") }}</label>
-      <input id="loki-url" name="url" type="url" value="{{ v.loki.url }}" placeholder="http://192.168.1.20:3100" autocomplete="off" spellcheck="false" required>
-    </div>
-    <div>
-      <label for="loki-user">{{ t("web.loki.user") }}</label>
-      <input id="loki-user" name="user" type="text" value="{{ v.loki.user }}" maxlength="100" autocomplete="off" spellcheck="false" aria-describedby="loki-user-hint">
-      <p id="loki-user-hint" class="hint muted">{{ t("web.loki.user_hint") }}</p>
-    </div>
-    <div>
-      <label for="loki-token">{{ t("web.loki.token") }}</label>
-      <input id="loki-token" name="token" type="password" autocomplete="off" spellcheck="false" aria-describedby="loki-token-hint">
-      <p id="loki-token-hint" class="hint muted">{{ t("web.loki.token_keep") if v.loki.connection and v.loki.connection.token else t("web.loki.token_hint") }}</p>
-    </div>
-    <div>
-      <label for="loki-tenant">{{ t("web.loki.tenant") }}</label>
-      <input id="loki-tenant" name="tenant" type="text" value="{{ v.loki.tenant }}" maxlength="150" autocomplete="off" spellcheck="false" aria-describedby="loki-tenant-hint">
-      <p id="loki-tenant-hint" class="hint muted">{{ t("web.loki.tenant_hint") }}</p>
-    </div>
-    <button>{{ t("web.loki.save") }}</button>
-  </form>
-  {%- if v.loki.connection %}
-  {%- if v.loki.error %}
-  <p class="card notice error" role="alert">{{ v.loki.error }}</p>
-  {%- else %}
-  <form method="post" action="{{ url_for('loki_label') }}#loki" class="stack">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div>
-      <label for="loki-label">{{ t("web.loki.label") }}</label>
-      <select id="loki-label" name="label" aria-describedby="loki-label-hint">
-        {%- if not v.loki.label %}<option value="">{{ t("web.loki.choose_label") }}</option>{% endif %}
-        {%- for name in v.loki.labels %}<option value="{{ name }}"{% if name == v.loki.label %} selected{% endif %}>{{ name }}</option>{% endfor %}
-      </select>
-      <p id="loki-label-hint" class="hint muted">{{ t("web.loki.label_hint") if v.loki.label else t("web.loki.no_label") }}</p>
-    </div>
-    <button class="secondary">{{ t("web.loki.use_label") }}</button>
-  </form>
-  {%- if v.loki.label and not v.loki.rows %}
-  <p class="muted">{{ t("web.loki.none") }}</p>
-  {%- elif v.loki.rows %}
-  <form method="post" action="{{ url_for('loki_sources') }}#loki" class="stack">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <input type="hidden" name="label" value="{{ v.loki.label }}">
-    <ul class="plain">
-      {%- for s in v.loki.rows %}
-      <li>
-        <p><strong>{{ s.name }}</strong>{% for host in s.hosts %} <span class="badge">{{ host }}</span>{% endfor %}</p>
-        {%- if s.compose_project %}<p class="muted small">{{ t("web.loki.compose", project=s.compose_project) }}</p>{% endif %}
-        <input type="hidden" name="name-{{ loop.index }}" value="{{ s.name }}">
-        <input type="hidden" name="shown-{{ loop.index }}" value="{{ s.selected }}">
-        <label for="loki-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>
-        <select id="loki-{{ loop.index }}" name="project-{{ loop.index }}">
-          <option value="">{{ t("web.logs.not_read") }}</option>
-          {%- for repo in v.loki.repos %}<option value="{{ repo }}"{% if repo == s.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
-        </select>
-        {%- if s.suggested %}<p class="hint muted">{{ t("web.logs.suggested", project=s.suggested) }}</p>{% endif %}
-      </li>
-      {%- endfor %}
-    </ul>
-    <button>{{ t("web.logs.save") }}</button>
-  </form>
-  {%- endif %}
-  {%- endif %}
-  <form method="post" action="{{ url_for('disconnect_loki') }}#loki">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="secondary">{{ t("web.loki.remove") }}</button>
-  </form>
-  {%- endif %}
-</section>
-
-<section class="card" aria-labelledby="notify-title">
+<section class="card" id="notify" aria-labelledby="notify-title">
   <h2 id="notify-title">{{ t("web.notify.title") }}</h2>
-  <p>{{ t("web.notify.intro") }}</p>
+  <p class="lede">{{ t("web.notify.intro") }}</p>
 
-  <h3>{{ t("web.notify.destinations") }}</h3>
+  <div class="section-head"><h3>{{ t("web.notify.destinations") }}</h3>{% if v.destinations %}{{ help(hb, "settings-destination", t("web.notify.destinations"), ["settings.destination"]) }}{% endif %}</div>
   {%- if v.destinations %}
-  <ul class="plain">
+  <ul class="rows destinations">
     {%- for index, text in v.destinations %}
-    <li class="row spread">
+    <li>
       <code>{{ text }}</code>
-      <span class="row">
+      <span class="row-actions">
         <form method="post" action="{{ url_for('test_destination', index=index) }}">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button class="secondary">{{ t("web.dest.test") }}</button>
+          <button class="secondary small-button">{{ t("web.dest.test") }}</button>
         </form>
         <form method="post" action="{{ url_for('remove_destination') }}">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <input type="hidden" name="index" value="{{ index }}">
-          <button class="secondary">{{ t("web.notify.remove") }}</button>
+          <button class="danger small-button">{{ t("web.notify.remove") }}</button>
         </form>
       </span>
     </li>
     {%- endfor %}
   </ul>
   {%- else %}
-  <p class="muted">{{ t("web.notify.none") }}</p>
+  <p class="empty">{{ t("web.notify.none") }}</p>
   {%- endif %}
 
   <h3 id="add">{{ t("web.dest.title") }}</h3>
   {%- if error %}
-  <div class="card notice" role="alert">
-    <p class="error">{{ error }}</p>
-    {%- if details %}<pre><code>{{ details }}</code></pre>{% endif %}
+  <div class="notice error" role="alert">
+    <p>{{ error }}</p>
+    {%- if details %}<pre tabindex="0"><code>{{ details }}</code></pre>{% endif %}
   </div>
   {%- endif %}
   {%- set val = v.filled %}
@@ -251,11 +95,11 @@
       <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="service" value="telegram">
-        <div>
+        <div class="field">
           <label for="telegram-token">{{ t("web.dest.telegram.token") }}</label>
           <input id="telegram-token" name="token" type="password" value="{{ val.token if v.service == 'telegram' else '' }}" autocomplete="off" spellcheck="false" required>
         </div>
-        <button class="secondary" formaction="{{ url_for('find_telegram_chats') }}#add" formnovalidate>{{ t("web.dest.telegram.find") }}</button>
+        <div class="form-actions"><button class="secondary" formaction="{{ url_for('find_telegram_chats') }}#add" formnovalidate>{{ t("web.dest.telegram.find") }}</button>{{ help(hb, "settings-find_chat", t("web.dest.telegram.find"), ["settings.find_chat"]) }}</div>
         {%- if v.chats %}
         <fieldset>
           <legend>{{ tn("web.dest.telegram.found", v.chats|length) }}</legend>
@@ -264,13 +108,13 @@
           {%- endfor %}
         </fieldset>
         {%- else %}
-        <div>
+        <div class="field">
           <label for="telegram-chat">{{ t("web.dest.telegram.chat") }}</label>
           <input id="telegram-chat" name="chat" type="text" value="{{ val.chat if v.service == 'telegram' else '' }}" autocomplete="off" spellcheck="false" aria-describedby="telegram-chat-hint">
-          <p id="telegram-chat-hint" class="hint muted">{{ t("web.dest.telegram.chat_hint") }}</p>
+          <p id="telegram-chat-hint" class="hint">{{ t("web.dest.telegram.chat_hint") }}</p>
         </div>
         {%- endif %}
-        <button>{{ t("web.dest.save") }}</button>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -283,16 +127,16 @@
       <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="service" value="ntfy">
-        <div>
+        <div class="field">
           <label for="ntfy-topic">{{ t("web.dest.ntfy.topic") }}</label>
           <input id="ntfy-topic" name="topic" type="text" value="{{ v.topic }}" autocomplete="off" spellcheck="false" required>
         </div>
-        <div>
+        <div class="field">
           <label for="ntfy-server">{{ t("web.dest.ntfy.server") }}</label>
           <input id="ntfy-server" name="server" type="url" value="{{ val.server if v.service == 'ntfy' and val.server else 'https://ntfy.sh' }}" autocomplete="off" spellcheck="false" aria-describedby="ntfy-server-hint">
-          <p id="ntfy-server-hint" class="hint muted">{{ t("web.dest.ntfy.server_hint") }}</p>
+          <p id="ntfy-server-hint" class="hint">{{ t("web.dest.ntfy.server_hint") }}</p>
         </div>
-        <button>{{ t("web.dest.save") }}</button>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -305,11 +149,11 @@
       <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="service" value="discord">
-        <div>
+        <div class="field">
           <label for="discord-webhook">{{ t("web.dest.webhook") }}</label>
           <input id="discord-webhook" name="webhook" type="url" value="{{ val.webhook if v.service == 'discord' else '' }}" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" spellcheck="false" required>
         </div>
-        <button>{{ t("web.dest.save") }}</button>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -322,11 +166,11 @@
       <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="service" value="slack">
-        <div>
+        <div class="field">
           <label for="slack-webhook">{{ t("web.dest.webhook") }}</label>
           <input id="slack-webhook" name="webhook" type="url" value="{{ val.webhook if v.service == 'slack' else '' }}" placeholder="https://hooks.slack.com/services/…" autocomplete="off" spellcheck="false" required>
         </div>
-        <button>{{ t("web.dest.save") }}</button>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -338,23 +182,23 @@
       <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="service" value="email">
-        <div>
+        <div class="field">
           <label for="email-address">{{ t("web.dest.email.address") }}</label>
           <input id="email-address" name="address" type="email" value="{{ val.address if v.service == 'email' else '' }}" autocomplete="off" required>
         </div>
-        <div>
+        <div class="field">
           <label for="email-password">{{ t("web.dest.email.password") }}</label>
           <input id="email-password" name="password" type="password" value="{{ val.password if v.service == 'email' else '' }}" autocomplete="off" required>
         </div>
-        <div>
+        <div class="field">
           <label for="email-to">{{ t("web.dest.email.to") }}</label>
           <input id="email-to" name="to" type="email" value="{{ val.to if v.service == 'email' else '' }}" autocomplete="off">
         </div>
-        <div>
+        <div class="field">
           <label for="email-smtp">{{ t("web.dest.email.smtp") }}</label>
           <input id="email-smtp" name="smtp" type="text" value="{{ val.smtp if v.service == 'email' else '' }}" placeholder="smtp.example.com" autocomplete="off" spellcheck="false">
         </div>
-        <button>{{ t("web.dest.save") }}</button>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
 
@@ -364,25 +208,28 @@
       <form method="post" action="{{ url_for('add_destination') }}#add" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="service" value="apprise">
-        <div>
+        <div class="field">
           <label for="apprise-url">{{ t("web.dest.apprise.url") }}</label>
           <input id="apprise-url" name="url" type="text" value="{{ val.url if v.service == 'apprise' else '' }}" autocomplete="off" spellcheck="false" required>
         </div>
-        <button>{{ t("web.dest.save") }}</button>
+        <div class="form-actions"><button>{{ t("web.dest.save") }}</button>{{ help(hb, "settings-save_test", t("web.dest.save"), ["settings.save_test"], true) }}</div>
       </form>
     </div>
   </div>
 
-  <form method="post" action="{{ url_for('notify_settings') }}" class="settings">
+  <form method="post" action="{{ url_for('notify_settings') }}" class="stack events-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <fieldset>
+    <fieldset{% if not v.destinations %} aria-describedby="events-hint"{% endif %}>
       <legend>{{ t("web.notify.events") }}</legend>
+      {%- if not v.destinations %}
+      <p id="events-hint" class="hint">{{ t("web.settings.events_hint") }}</p>
+      {%- endif %}
       {%- for value, label, checked in v.events %}
-      <label class="check plain"><input type="checkbox" name="events" value="{{ value }}"{% if checked %} checked{% endif %}> {{ label }}</label>
+      <div class="check-row"><label class="check plain"><input type="checkbox" name="events" value="{{ value }}"{% if checked %} checked{% endif %}> {{ label }}</label>{% if value in event_help %}{{ help(hb, "settings-event-" ~ value, label[:1]|upper ~ label[1:], ["settings.event." ~ value]) }}{% endif %}</div>
       {%- endfor %}
     </fieldset>
-    <div>
-      <label for="notify-language">{{ t("web.notify.language") }}</label>
+    <div class="field">
+      <div class="label-row"><label for="notify-language">{{ t("web.notify.language") }}</label>{{ help(hb, "settings-notify_language", t("web.notify.language"), ["settings.notify_language"]) }}</div>
       <select id="notify-language" name="language">
         {%- for code, name, selected in v.languages %}<option value="{{ code }}"{% if selected %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </select>
@@ -390,4 +237,219 @@
     <button class="secondary">{{ t("web.notify.save") }}</button>
   </form>
 </section>
+
+<section class="card" id="github" aria-labelledby="github-title">
+  <div class="section-head"><h2 id="github-title">{{ t("web.github.title") }}</h2><span class="pill {{ 'pill-on' if github else 'pill-off' }}">{{ t("web.settings.on") if github else t("web.settings.off") }}</span></div>
+  {%- if github %}
+  <p class="status-line">{{ t("web.github.ready", name=github.name, owner=github.owner) }}</p>
+  <div class="line"><a href="{{ github.install_url }}">{{ t("web.github.install") }}</a>{{ help(hb, "github-install", t("web.github.install"), ["github.install"]) }}</div>
+  {%- else %}
+  <p class="lede">{{ t("web.github.intro") }}</p>
+  <p>{{ t("web.start.github") }} <a href="{{ url_for('github_page') }}">{{ t("web.github.title") }}</a></p>
+  {%- endif %}
+</section>
+
+<section class="card" id="runs" aria-labelledby="runs-title">
+  <h2 id="runs-title">{{ t("web.runs.settings") }}</h2>
+  <form method="post" action="{{ url_for('run_settings') }}" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div>
+      <div class="check-row"><label class="check plain"><input type="checkbox" name="fanout" value="1"{% if v.fanout %} checked{% endif %} aria-describedby="fanout-hint"> {{ t("web.runs.fanout") }}</label>{{ help(hb, "common-judge", t("web.help.common.judge.title"), ["common.judge"]) }}</div>
+      <p id="fanout-hint" class="hint indent">{{ t("web.runs.fanout_hint") }}</p>
+    </div>
+    <button class="secondary">{{ t("web.project.save") }}</button>
+  </form>
+</section>
+
+<div class="group" id="optional" role="group" aria-labelledby="optional-title">
+  <h2 id="optional-title" class="group-title">{{ t("web.settings.optional") }}</h2>
+  <p class="lede">{{ t("web.settings.optional_intro") }}</p>
+
+  <section class="card" aria-labelledby="signals-title" id="signals">
+    <div class="section-head"><h3 id="signals-title">{{ t("web.signals.title") }}</h3><span class="pill {{ 'pill-on' if v.tracker else 'pill-off' }}">{{ t("web.settings.on") if v.tracker else t("web.settings.off") }}</span></div>
+    {%- if v.tracker %}
+    <p class="status-line">{{ t("web.signals.connected", url=v.tracker.url, org=v.tracker.org) }}</p>
+    {%- else %}
+    <p>{{ t("web.signals.intro") }}</p>
+    {%- endif %}
+    {%- if signals_error %}
+    <p class="notice error" role="alert">{{ signals_error }}</p>
+    {%- endif %}
+    {%- if v.tracker %}<details class="fold"{% if signals_error %} open{% endif %}><summary>{{ t("web.settings.change") }}</summary><div class="fold-body">{% endif %}
+    <ol class="steps">
+      <li>{{ t("web.signals.step1") }} <a href="{{ sentry_tokens }}">{{ t("web.signals.sentry_tokens") }}</a></li>
+      <li>{{ t("web.signals.step2") }}</li>
+      <li>{{ t("web.signals.step3") }}</li>
+    </ol>
+    <div class="line"><p class="small muted">{{ t("web.project.signals") }}</p>{{ help(hb, "settings-signals_project", t("web.project.signals"), ["settings.signals_project"]) }}</div>
+    <form method="post" action="{{ url_for('connect_signals') }}#signals" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="field">
+        <label for="signals-url">{{ t("web.signals.url") }}</label>
+        <input id="signals-url" name="url" type="url" value="{{ v.signals_url }}" placeholder="https://sentry.io" autocomplete="off" spellcheck="false" required aria-describedby="signals-url-hint">
+        <p id="signals-url-hint" class="hint">{{ t("web.signals.url_hint") }}</p>
+      </div>
+      <div class="field">
+        <label for="signals-org">{{ t("web.signals.org") }}</label>
+        <input id="signals-org" name="org" type="text" value="{{ v.signals_org }}" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,63}" autocomplete="off" spellcheck="false" required aria-describedby="signals-org-hint">
+        <p id="signals-org-hint" class="hint">{{ t("web.signals.org_hint") }}</p>
+      </div>
+      <div class="field">
+        <label for="signals-token">{{ t("web.signals.token") }}</label>
+        <input id="signals-token" name="token" type="password" autocomplete="off" spellcheck="false"{% if not v.tracker %} required{% endif %} aria-describedby="signals-token-hint">
+        <p id="signals-token-hint" class="hint">{{ t("web.signals.token_keep") if v.tracker else t("web.signals.token_hint") }}</p>
+      </div>
+      <button>{{ t("web.signals.save") }}</button>
+    </form>
+    {%- if v.tracker %}</div></details>{% endif %}
+    {%- if v.tracker %}
+    <form method="post" action="{{ url_for('disconnect_signals') }}#signals">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="danger">{{ t("web.signals.remove") }}</button>
+    </form>
+    {%- endif %}
+  </section>
+
+  <section class="card" aria-labelledby="logs-title" id="logs">
+    <h3 id="logs-title">{{ t("web.logs.title") }}</h3>
+    <p>{{ t("web.logs.intro") }}</p>
+    <ol class="steps">
+      <li>{{ t("web.logs.step1") }}</li>
+      <li>{{ t("web.logs.step2") }}</li>
+    </ol>
+    {%- if v.logs.error %}
+    <p class="notice error" role="alert">{{ v.logs.error }}</p>
+    {%- elif not v.logs.rows %}
+    <p class="empty">{{ t("web.logs.none") }}</p>
+    {%- else %}
+    <form method="post" action="{{ url_for('logs_settings') }}#logs" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <ul class="rows sources">
+        {%- for c in v.logs.rows %}
+        <li>
+          <p class="source-name"><strong id="logs-name-{{ loop.index }}">{{ c.name }}</strong> <span class="chip">{{ c.state }}</span></p>
+          <p class="hint">{{ c.image }}</p>
+          {%- if c.label %}
+          <p class="small">{{ t("web.logs.from_label", project=c.label) }}</p>
+          {%- else %}
+          <input type="hidden" name="name-{{ loop.index }}" value="{{ c.name }}">
+          <input type="hidden" name="shown-{{ loop.index }}" value="{{ c.selected }}">
+          <div class="label-row"><label for="logs-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>{{ help(hb, "settings-logs_project", t("web.logs.project"), ["settings.logs_project"]) }}</div>
+          <select id="logs-{{ loop.index }}" aria-describedby="logs-name-{{ loop.index }}" name="project-{{ loop.index }}">
+            <option value="">{{ t("web.logs.not_read") }}</option>
+            {%- for repo in v.logs.repos %}<option value="{{ repo }}"{% if repo == c.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
+          </select>
+          {%- if c.suggested %}<p class="hint">{{ t("web.logs.suggested", project=c.suggested) }}</p>{% endif %}
+          {%- endif %}
+        </li>
+        {%- endfor %}
+      </ul>
+      <button>{{ t("web.logs.save") }}</button>
+    </form>
+    {%- endif %}
+    <details class="fold">
+      <summary>{{ t("web.logs.label_title") }}</summary>
+      <div class="fold-body">
+        <p class="small">{{ t("web.logs.label_how") }}</p>
+        <pre tabindex="0"><code>services:
+  your-app:
+    labels:
+      lastcall.project: owner/name</code></pre>
+      </div>
+    </details>
+  </section>
+
+  <section class="card" aria-labelledby="loki-title" id="loki">
+    <div class="section-head"><h3 id="loki-title">{{ t("web.loki.title") }}</h3><span class="pill {{ 'pill-on' if v.loki.connection else 'pill-off' }}">{{ t("web.settings.on") if v.loki.connection else t("web.settings.off") }}</span></div>
+    {%- if v.loki.connection %}
+    <p class="status-line">{{ t("web.loki.connected", url=v.loki.connection.url) }}</p>
+    {%- else %}
+    <p>{{ t("web.loki.intro") }}</p>
+    {%- endif %}
+    {%- if loki_error %}
+    <p class="notice error" role="alert">{{ loki_error }}</p>
+    {%- endif %}
+    {%- if v.loki.connection %}<details class="fold"{% if loki_error %} open{% endif %}><summary>{{ t("web.settings.change") }}</summary><div class="fold-body">{% endif %}
+    <ol class="steps">
+      <li>{{ t("web.loki.step1") }}</li>
+      <li>{{ t("web.loki.step2") }}</li>
+      <li>{{ t("web.loki.step3") }}</li>
+    </ol>
+    <form method="post" action="{{ url_for('connect_loki') }}#loki" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="field">
+        <label for="loki-url">{{ t("web.loki.url") }}</label>
+        <input id="loki-url" name="url" type="url" value="{{ v.loki.url }}" placeholder="http://192.168.1.20:3100" autocomplete="off" spellcheck="false" required>
+      </div>
+      <div class="field">
+        <label for="loki-user">{{ t("web.loki.user") }}</label>
+        <input id="loki-user" name="user" type="text" value="{{ v.loki.user }}" maxlength="100" autocomplete="off" spellcheck="false" aria-describedby="loki-user-hint">
+        <p id="loki-user-hint" class="hint">{{ t("web.loki.user_hint") }}</p>
+      </div>
+      <div class="field">
+        <div class="label-row"><label for="loki-token">{{ t("web.loki.token") }}</label>{{ help(hb, "settings-loki_token", t("web.loki.token"), ["settings.loki_token"]) }}</div>
+        <input id="loki-token" name="token" type="password" autocomplete="off" spellcheck="false" aria-describedby="loki-token-hint">
+        <p id="loki-token-hint" class="hint">{{ t("web.loki.token_keep") if v.loki.connection and v.loki.connection.token else t("web.loki.token_hint") }}</p>
+      </div>
+      <div class="field">
+        <div class="label-row"><label for="loki-tenant">{{ t("web.loki.tenant") }}</label>{{ help(hb, "settings-loki_tenant", t("web.loki.tenant"), ["settings.loki_tenant"]) }}</div>
+        <input id="loki-tenant" name="tenant" type="text" value="{{ v.loki.tenant }}" maxlength="150" autocomplete="off" spellcheck="false" aria-describedby="loki-tenant-hint">
+        <p id="loki-tenant-hint" class="hint">{{ t("web.loki.tenant_hint") }}</p>
+      </div>
+      <button>{{ t("web.loki.save") }}</button>
+    </form>
+    {%- if v.loki.connection %}</div></details>{% endif %}
+    {%- if v.loki.connection %}
+    {%- if v.loki.error %}
+    <p class="notice error" role="alert">{{ v.loki.error }}</p>
+    {%- else %}
+    <form method="post" action="{{ url_for('loki_label') }}#loki" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="field">
+        <div class="label-row"><label for="loki-label">{{ t("web.loki.label") }}</label>{{ help(hb, "settings-loki_label", t("web.loki.label"), ["settings.loki_label"]) }}</div>
+        <select id="loki-label" name="label" aria-describedby="loki-label-hint">
+          {%- if not v.loki.label %}<option value="">{{ t("web.loki.choose_label") }}</option>{% endif %}
+          {%- for name in v.loki.labels %}<option value="{{ name }}"{% if name == v.loki.label %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select>
+        <p id="loki-label-hint" class="hint">{{ t("web.loki.label_hint") if v.loki.label else t("web.loki.no_label") }}</p>
+      </div>
+      <button class="secondary">{{ t("web.loki.use_label") }}</button>
+    </form>
+    {%- if v.loki.label and not v.loki.rows %}
+    <p class="empty">{{ t("web.loki.none") }}</p>
+    {%- elif v.loki.rows %}
+    <form method="post" action="{{ url_for('loki_sources') }}#loki" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="label" value="{{ v.loki.label }}">
+      <div class="section-head"><h4>{{ t("web.help.settings.loki_sources.title") }}</h4>{{ help(hb, "settings-loki_sources", t("web.help.settings.loki_sources.title"), ["settings.loki_sources"]) }}</div>
+      <ul class="rows sources">
+        {%- for s in v.loki.rows %}
+        <li>
+          <p class="source-name"><strong id="loki-name-{{ loop.index }}">{{ s.name }}</strong>{% for host in s.hosts %} <span class="chip">{{ host }}</span>{% endfor %}</p>
+          {%- if s.compose_project %}<p class="hint">{{ t("web.loki.compose", project=s.compose_project) }}</p>{% endif %}
+          <input type="hidden" name="name-{{ loop.index }}" value="{{ s.name }}">
+          <input type="hidden" name="shown-{{ loop.index }}" value="{{ s.selected }}">
+          <label for="loki-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>
+          <select id="loki-{{ loop.index }}" aria-describedby="loki-name-{{ loop.index }}" name="project-{{ loop.index }}">
+            <option value="">{{ t("web.logs.not_read") }}</option>
+            {%- for repo in v.loki.repos %}<option value="{{ repo }}"{% if repo == s.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
+          </select>
+          {%- if s.suggested %}<p class="hint">{{ t("web.logs.suggested", project=s.suggested) }}</p>{% endif %}
+        </li>
+        {%- endfor %}
+      </ul>
+      <button>{{ t("web.logs.save") }}</button>
+    </form>
+    {%- endif %}
+    {%- endif %}
+    <form method="post" action="{{ url_for('disconnect_loki') }}#loki">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="danger">{{ t("web.loki.remove") }}</button>
+    </form>
+    {%- endif %}
+  </section>
+</div>
+</div>
+</div>
+{{ bubbles(hb) }}
 {% endblock %}

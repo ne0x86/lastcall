@@ -1,32 +1,65 @@
 {% extends "base.html" %}
 {% block title %}{{ t("web.github.title") }}{% endblock %}
 {% block main %}
-<h1>{{ t("web.github.title") }}</h1>
+{%- from "_help.html" import help, bubbles with context %}
+{%- set hb = namespace(items=[], seen=[]) %}
+{%- set fresh = not app and not unknown %}
+<nav class="crumbs" aria-label="{{ t('web.nav.breadcrumb') }}"><a href="{{ url_for('settings_page') }}#github">{{ t("web.nav.settings") }}</a></nav>
 
-{% if done %}<p class="card done" role="status">{{ done }}</p>{% endif %}
-{% if error %}<p class="card notice error" role="alert">{{ error }}</p>{% endif %}
+<header class="page-head">
+  <div class="section-head"><h1>{{ t("web.github.title") }}</h1>{% if fresh and not action %}{{ help(hb, "github-app", t("web.github.title"), ["github.app"]) }}{% endif %}</div>
+  {%- if fresh and not action %}
+  <p class="lede">{{ t("web.github.intro") }}</p>
+  {%- endif %}
+</header>
 
-<section class="card readable">
-  <p>{{ t("web.github.intro") }}</p>
+<ol class="progress" aria-label="{{ t('web.github.steps') }}">
+  <li{% if app %} class="is-done"{% else %} aria-current="step"{% endif %}>{{ t("web.github.step.create") }}{% if app %} <span class="visually-hidden">{{ t("web.start.done") }}</span>{% endif %}</li>
+  <li{% if app %} aria-current="step"{% endif %}>{{ t("web.github.step.install") }}</li>
+  <li>{{ t("web.github.step.projects") }}</li>
+</ol>
+
+{% if done %}<p class="notice done readable" role="status">{{ done }}</p>{% endif %}
+{% if error %}<p class="notice error readable" role="alert">{{ error }}</p>{% endif %}
+
+<section class="card readable github-card">
   {%- if app %}
-  <p><strong>{{ t("web.github.ready", name=app.name, owner=app.owner) }}</strong></p>
-  <p><a class="button" href="{{ app.install_url }}">{{ t("web.github.install") }}</a></p>
-  <p class="muted">{{ t("web.github.install_hint") }}</p>
+  <p class="status-line">{{ t("web.github.ready", name=app.name, owner=app.owner) }}</p>
+  <div class="form-actions"><a class="button" href="{{ app.install_url }}">{{ t("web.github.install") }}</a>{{ help(hb, "github-install", t("web.github.install"), ["github.install"]) }}</div>
+  <p class="hint">{{ t("web.github.install_hint") }}</p>
+  {%- elif unknown %}
+  <p class="found">{{ t("web.github.unknown", owner=owner) }}</p>
+  <p>{{ t("web.github.unknown_hint") }}</p>
+  <ul class="choices">
+    <li><a class="button" href="{{ url_for('github_new', owner=owner, org=0) }}">{{ t("web.github.choose.user") }}</a><p class="hint">{{ t("web.github.choose.user_hint", owner=owner) }}</p></li>
+    <li><a class="button" href="{{ url_for('github_new', owner=owner, org=1) }}">{{ t("web.github.choose.org") }}</a><p class="hint">{{ t("web.github.choose.org_hint", owner=owner) }}</p></li>
+  </ul>
+  <p class="change"><a href="{{ url_for('github_page') }}">{{ t("web.github.change") }}</a></p>
   {%- elif action %}
-  <p>{{ confirm }}</p>
-  <form method="post" action="{{ action }}">
-    <input type="hidden" name="manifest" value="{{ manifest }}">
-    <button>{{ t("web.github.create") }}</button>
-  </form>
+  <p class="found">{{ kind }}</p>
+  <div class="line"><p>{{ confirm }}</p>{{ help(hb, "github-permissions", t("web.help.github.permissions.title"), ["github.permissions"]) }}</div>
+  <p class="hint">{{ signin }}</p>
+  <div class="form-actions">
+    <form method="post" action="{{ action }}">
+      <input type="hidden" name="manifest" value="{{ manifest }}">
+      <button>{{ t("web.github.create") }}</button>
+    </form>
+    {{ help(hb, "github-create", t("web.github.create"), ["github.create"]) }}
+  </div>
+  <p class="change"><a href="{{ url_for('github_page') }}">{{ t("web.github.change") }}</a></p>
   {%- else %}
   <form method="get" action="{{ url_for('github_new') }}" class="stack">
-    <div>
-      <label for="owner">{{ t("web.github.owner") }}</label>
-      <input id="owner" name="owner" type="text" value="{{ owner or '' }}" autocomplete="username" spellcheck="false" required>
+    <div class="field">
+      <div class="label-row"><label for="owner">{{ t("web.github.owner") }}</label>{{ help(hb, "github-owner", t("web.github.owner"), ["github.owner"]) }}</div>
+      <input id="owner" name="owner" type="text" value="{{ owner or '' }}" placeholder="octocat" autocomplete="off" autocapitalize="none" spellcheck="false" required aria-describedby="owner-hint">
+      <p id="owner-hint" class="hint">{{ t("web.github.owner_hint") }}</p>
     </div>
-    <label class="check plain"><input type="checkbox" name="org" value="1"> {{ t("web.github.org") }}</label>
     <button>{{ t("web.github.next") }}</button>
   </form>
   {%- endif %}
 </section>
+{%- if app %}
+<p class="next-step"><a href="{{ url_for('projects_page') }}">{{ t("web.github.to_projects") }}</a></p>
+{%- endif %}
+{{ bubbles(hb) }}
 {% endblock %}

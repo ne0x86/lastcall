@@ -94,5 +94,5 @@ def test_a_project_with_its_own_environment_is_not_held_back(path: str) -> None:
 def test_a_repository_with_its_own_reviewers() -> None:
     own = [(".lastcall/reviewers/accessibility.md", 300), (".lastcall/reviewers/api.md", 400)]
     s = suggest(repo(), CODE + TESTS + own, NOW)
-    assert "2 reviewers of its own" in s.reasons
+    assert "2\u00a0reviewers of its own" in s.reasons
     assert s.score == suggest(repo(), CODE + TESTS + [], NOW).score  # it says so; it does not rank higher

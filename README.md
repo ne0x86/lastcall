@@ -48,11 +48,15 @@ also spend an API key with a monthly budget, or a local model at the hours you c
   before any paid usage. An API key spends its monthly budget at the pace of the month, and a local model works at
   the hours of its schedule.
 - 🖥️ **Shows you everything.** A dashboard in English and Spanish: what is left of every quota, the next burst, the
-  pull requests to review and the decisions waiting for you.
+  pull requests to review and the decisions waiting for you. A "?" next to anything unclear explains it.
 - 🔔 **Tells you.** A notification when a pull request opens, a decision waits, an audit fails or an account needs
   you: Telegram, ntfy, Discord, Slack, email and many more, through Apprise.
 
-<p align="center"><img src="docs/dashboard.png" width="760" alt="The lastcall dashboard: the quota left on two accounts, the next burst, and the pull requests and decisions waiting for review"></p>
+<p align="center"><img src="docs/dashboard.png" width="760"
+  alt="The lastcall dashboard in English: its counts of 4 accounts, 6 things waiting for you and 3 projects; a service
+  card saying bursts are on, with a Pause button; a Waiting for you card with two pull requests to review, two
+  decisions and two ideas to choose; and the first two account cards, chatgpt on Codex and claude-max on Claude Code,
+  each with its next burst and its 5-hour and weekly quota meters, claude-max working on a project"></p>
 
 ## 🔁 How it works
 
@@ -118,7 +122,9 @@ The rest of lastcall only knows the engine contract. Adding another tool is one 
 
 ## 🚀 Quickstart
 
-You need Docker 26 or later and a GitHub account. It runs on Linux, macOS, and Windows with Docker Desktop.
+You need Docker 26 or later, a GitHub account, and something for lastcall to spend: a Claude or ChatGPT subscription, an
+API key or a local model. It runs on Linux and on Windows with Docker Desktop. On macOS with Docker Desktop it should
+work, but it has not been tested yet.
 
 **1. Start lastcall:**
 
@@ -128,16 +134,20 @@ docker compose up -d
 ```
 
 **2. Open the web UI** 🖥️ at http://127.0.0.1:8080, or at your server's address if you set `LASTCALL_BIND`
-([On a server](#-on-a-server)), and choose your password. To show that the instance is yours, copy the setup code
-from the log:
+([On a server](#-on-a-server)), and choose your password. The `Web UI on …` line of the log says which address Docker
+publishes. To show that the instance is yours, copy the setup code from the log:
 
 ```sh
 docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
 ```
 
-**3. Follow the dashboard.** It walks you through the rest:
+**3. Follow the dashboard.** Its Getting started card walks you through three steps, GitHub App, Accounts and
+Projects, and Settings holds a fourth that is optional:
 
-- 🐙 **GitHub App.** One click creates it, private to you. Then install it on the repositories lastcall may work on.
+- 🐙 **GitHub App.** Say whose repositories they are (your username or an organization: lastcall asks GitHub which), and
+  one click creates the App, private to that account. You must be signed in to github.com as that account, or, for an
+  organization, be one of its owners or allowed to manage its GitHub Apps. Then install it on the repositories lastcall
+  may work on.
 - 🤖 **Accounts.** Add each AI subscription that lastcall may use, and sign it in with its tool's own official
   login. lastcall never sees it:
 
@@ -164,8 +174,9 @@ docker compose logs lastcall        # Web UI setup code: XXXX-XXXX
   want: from Sentry or GlitchTip, your containers' logs or Loki (see *Your project's settings* below).
 
 That is all. When a reset comes with capacity left, lastcall bursts on its own, and the dashboard shows what it
-does. Pause it from the dashboard at any time, or start an audit or an improvement plan yourself from the Projects
-page.
+does. Pause it from the dashboard at any time: Pause holds the bursts only, so an audit, tests, upgrades or an
+improvement plan that you start yourself from the Projects page still runs. Choose the language of the pages in
+Settings.
 
 The web UI listens only on this machine. To run lastcall on a server and reach it from elsewhere, see
 [On a server](#-on-a-server); to move to a new release, [Updating](#-updating).
@@ -174,7 +185,7 @@ The web UI listens only on this machine. To run lastcall on a server and reach i
 <summary>Prefer the terminal? Everything works from the command line too.</summary>
 
 ```sh
-docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-github-login>
+docker compose run --rm -p 127.0.0.1:8765:8765 cli github setup --owner <your-login-or-organization>
 docker compose run --rm cli account add claude-max --engine claude-code --language English
 docker compose run --rm cli account add openrouter --engine opencode --provider openrouter \
   --model <model> --budget 20                                  # asks for the key; or --key-file - with -T
@@ -210,6 +221,12 @@ docker compose run --rm cli pause                                               
 lastcall runs the same on a server as on your computer. Its web UI listens only on the server itself
 (`127.0.0.1:8080`), so nobody else reaches it until you choose how. On Linux, that needs Docker 28.3.3 or later:
 older versions can let machines on the same local network reach ports published on `127.0.0.1`.
+
+The `Web UI on …` line of the log (`docker compose logs lastcall`) gives the address that Docker publishes, from
+`LASTCALL_BIND` and `LASTCALL_PORT`. With `LASTCALL_BIND=0.0.0.0` it names the port of the server's addresses, such as
+`http://<this server's address>:8080/`. `LASTCALL_PORT` in `.env` changes the port on the host from 8080, and then the
+tunnel and the proxy below use the new one. A proxy in a container still reaches `http://lastcall:8080`: only the host's
+port changes.
 
 - **An SSH tunnel**, with nothing to change. From your computer, run `ssh -L 8080:127.0.0.1:8080 you@your-server`,
   then open http://127.0.0.1:8080.
@@ -412,6 +429,13 @@ advice.
   - Container logs as signals: the errors and restarts of your apps' containers on the same machine, chosen on the
     Settings page with suggestions, or by a label.
   - Logs in Loki, for apps on other machines.
+- ✅ **v0.7, a web UI that explains itself.**
+  - The Last round web UI: one warm design in a light and a dark scheme, with a "?" on every page that explains what
+    is confusing there.
+  - A GitHub App page that asks one question, whose repositories they are, and finds out whether the owner is a person
+    or an organization.
+  - The log says the address where Docker publishes the web UI.
+  - Plans that go stale at the reset: a plan made before it never starts a burst after it.
 - 🔭 **Next, as people ask for it** ([open an issue](https://github.com/ne0x86/lastcall/issues/new/choose)).
   - GitLab and Forgejo, next to GitHub.
   - A lastcall agent for the containers of other machines without Loki.
@@ -434,6 +458,9 @@ export COMPOSE_FILE=compose.yaml:compose.dev.yaml
 docker compose --profile build --profile cli --profile test build
 docker compose --profile test run --rm it
 ```
+
+They use the same volume and network names as an installed lastcall: do not run them on a machine where your own
+lastcall is running.
 
 A release sets the version in two places that a test keeps in agreement, `__version__` and the image tag in
 `compose.yaml`. Once its images are published, the `stable` branch, which the quickstart clones, moves to its tag.
