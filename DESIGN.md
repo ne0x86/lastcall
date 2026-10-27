@@ -461,11 +461,11 @@ multiplies the score.
     read.
 - **Container logs** (`lastcall.logs`), for apps that run in Docker on lastcall's own host, with no change to their
   code. None is read until the owner gives it a project:
-  - The settings page lists the host's containers (`lastcall logs list` in the terminal), and the owner chooses the
-    project of each one to read. lastcall suggests one from the container's image (`ghcr.io/<owner>/<name>`, without
-    its tag), else its Compose project, else its name (`<name>-web-1`), when only one project fits. A suggestion is
-    read only once the owner saves it, and a no to it is remembered, so that it is not suggested again. The choices
-    live in the service's database.
+  - The settings page lists the host's containers (`lastcall logs list` in the terminal; section 13 describes the
+    page), and the owner chooses the project of each one to read. lastcall suggests one from the container's image
+    (`ghcr.io/<owner>/<name>`, without its tag), else its Compose project, else its name (`<name>-web-1`), when only one
+    project fits. A suggestion is read only once the owner chooses it, and a no to it is remembered, so that it is not
+    suggested again. The choices live in the service's database.
   - A container labelled `lastcall.project=<owner/name>` in its compose file is read for that project, matched
     without regard to case, with no choice on the settings page, which shows it with its project: the choice can
     live with the app. The two ways work together, and the label wins over a choice.
@@ -789,10 +789,10 @@ the notice sticks to the top from 48 rem up (when the window is also at least 36
 clear when it scrolls to the card or to a focused control; on a phone it stays in the flow above the cards, so it never
 hides what it brought you to. The settings page holds the connection to an error tracker (Sentry or GlitchTip: the
 address, the organization and a read-only token, saved only when one request with them gets through), the container logs
-(the host's containers, each with its project or the one lastcall suggests, and the label that works as well), the logs
-in Loki (the connection, the label that names the sources, and the project of each, with suggestions), and the
-notifications: the destinations, chosen by service with only the fields that service needs (Telegram finds the owner's
-chat from the bot's recent messages) or as any Apprise URL, saved only when their test notification gets through, kept
+(the host's containers, and the label that works as well), the logs in Loki (the connection, the label that names the
+sources, and the sources), both lists in three parts, which the paragraphs below describe, and the notifications: the
+destinations, chosen by service with only the fields that service needs (Telegram finds the owner's chat from the bot's
+recent messages) or as any Apprise URL, saved only when their test notification gets through, kept
 in the secret store and shown with their secrets hidden; the events (a pull request opens, decisions or ideas wait,
 lastcall merges an approved pull request or proposes a revert, a run fails or stops early, an account has paid usage on
 or its quota cannot be read, and, if the owner wants, a burst starts) and their language. A problem is told once when it
@@ -815,6 +815,38 @@ with any other value, and when nothing is left it adds nothing and answers with 
 brings the owner back after the installation starts a reading of the suggestions, so that the list is there on arrival.
 Adding by an address, which asks GitHub whether the App is installed there, stays for a repository that is not in the
 list.
+
+The containers of the settings page and the sources in Loki come in three parts, so that dozens of them stay short
+(`_lists.html` draws both). `Read now` comes first: what lastcall reads, in compact rows. A container with the label
+`lastcall.project` says that its label decides and has nothing to stop; one whose label names no project says so, and is
+read once the project is added. One that the owner chose shows its project, as the Projects page writes it, with a Stop
+reading button, which records the owner's no. The suggested ones, which have no label, no choice and one project that
+fits, use the tiles of the Projects page's add-many form: a checkbox with the container and the project that it would be
+read for, a button that reads all of them, and a bar that reads or skips the ticked ones (a skip records the no, as
+`lastcall logs set <container> -` does, so that the suggestion does not come back). Every other container or source goes
+in a fold that says how many they are, closed unless a filter is set or a typed project is refused. From the seventh on,
+the fold has a filter by name (`logs_q` and `loki_q` in the address, ignoring case, each keeping the other's, and the
+fold opens while one is set), and each of them gets one text field whose `<datalist>` holds the projects, so that the
+page lists the projects once, not once in every row. A choice for a project that was removed shows apart in that fold,
+as before, and no save erases it: an empty field changes nothing. lastcall's own containers, which are in its Compose
+project or are named `lastcall-...`, never show, in either list.
+
+The forms of those parts post to `POST /settings/logs` and `POST /settings/loki/sources` (which also says the label that
+names the sources: the choices belong to it). Each row is `name-N` and, for a project, `project-N`, and `pick` says what
+the button asks: `selected` (the rows ticked in `tick`), `suggested` (all of them), `skip` or `stop` (a no), or, without
+it, the projects typed in the fold of the others. The server asks the host and Loki nothing: it checks every project
+against the projects, ignoring case, and writes it as the Projects page writes it. A project typed that is none of them
+saves nothing: the section says so and gives back what was typed, with the fold open. A form that names a container or a
+source that is not acceptable (one of lastcall's steps), or a suggestion for a project that does not exist, is refused
+as a forged form, and a button for the ticked ones with none ticked says so.
+
+With more than 6 projects, or while one is set, the Projects page offers a search by name (`search`, in the whole
+repository name, ignoring case) and the filter links All, Active, Inactive and Waiting for you (`show`: pull requests to
+review, decisions in an issue or ideas to choose, as the dashboard lists them), each with its count for the current
+search, and the current one with `aria-current`. The form and the links bring the page back to the bar (`#find`) and
+keep the suggestions' filter (`q`), which in turn keeps these; a search that leaves no project says so, with a link to
+show them all. Also with more than 6 projects, each card's Run now starts folded, like its Settings, so that the cards
+are short: its title is the summary that opens it, and its "?" moves inside, after a line that says what it does.
 
 The state at the top of a project's card, its chip ("active · priority ×2" or "inactive"), is a button in a small form:
 one click turns the project's bursts on or off (`POST /projects/<owner>/<name>/active`). The form says the state that it

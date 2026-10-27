@@ -964,26 +964,28 @@ def test_container_logs_from_the_web(tmp_path: Path) -> None:
     web.store.add_project("acme/blog")
     csrf = web.csrf()
     page = web.client.get("/settings").get_data(as_text=True)
-    assert "Container logs" in page and "Suggested: acme/shop. Save to read it." in page
-    assert '<option value="acme/shop" selected>acme/shop</option>' in page  # the suggestion comes chosen
-    assert "Read for acme/blog, from its label." in page and "lastcall.project: owner/name" in page
-    assert '<input type="hidden" name="shown-1" value="acme/shop">' in page
-    # each source's select says which container it is for, not only "Project"
+    # three parts (tests/test_lists.py has the rest): the label reads blog, the suggestion waits to be ticked, and
+    # redis is among the others. Changed with the new layout: a suggestion no longer comes chosen in a select
+    assert "Container logs" in page and "for acme/shop" in page and "lastcall.project: owner/name" in page
+    assert '<span class="mono">acme/blog</span> <span class="muted">· its label decides</span>' in page
+    assert '<input type="hidden" name="project-1" value="acme/shop">' in page  # what ticking it reads it for
+    assert '<input id="logs-pick-1" type="checkbox" name="tick" value="1" aria-describedby="logs-for-1">' in page
+    # each field says which container it is for, not only "Project"
     assert (
-        '<strong id="logs-name-1">shop-web-1</strong>' in page
-        and 'id="logs-1" aria-describedby="logs-name-1"' in page
+        'aria-label="Project for redis"' in page
+        and "<select" not in page.split('id="logs">')[1].split("</section>")[0]
     )
-    form = {"csrf": csrf, "name-1": "shop-web-1", "project-1": "acme/shop", "shown-1": "acme/shop"}
-    form |= {"name-3": "redis", "project-3": "", "shown-3": ""}
+    form = {"csrf": csrf, "name-1": "shop-web-1", "project-1": "acme/shop", "tick": "1", "pick": "selected"}
     response = web.client.post("/settings/logs", data=form, headers=SITE)
     assert response.headers["Location"] == "/settings?done=logs#logs"
-    assert logs.chosen(web.store) == {"shop-web-1": "acme/shop"}  # redis: no project, and none was shown
-    bad = {**form, "project-3": "someone/else"}
+    assert logs.chosen(web.store) == {"shop-web-1": "acme/shop"}  # redis: no project, and none was typed
+    bad = {"csrf": csrf, "name-1": "redis", "project-1": "someone/else", "pick": "others"}
     assert web.client.post("/settings/logs", data=bad, headers=SITE).status_code == 400
-    web.client.post("/settings/logs", data={**form, "project-1": ""}, headers=SITE)  # the owner says no to it
+    stop = {"csrf": csrf, "name-1": "shop-web-1", "pick": "stop"}
+    web.client.post("/settings/logs", data=stop, headers=SITE)  # the owner says no to it
     assert logs.chosen(web.store) == {"shop-web-1": ""}
     page = web.client.get("/settings").get_data(as_text=True)
-    assert "Suggested:" not in page and '<option value="acme/shop" selected>' not in page  # not suggested again
+    assert "for acme/shop" not in page and "chosen here" not in page  # not suggested again
 
     def broken() -> list[dict[str, Any]]:
         raise SandboxError("supervisor unreachable")
@@ -1037,10 +1039,12 @@ def test_loki_from_the_web(tmp_path: Path) -> None:
     page = web.client.get("/settings").get_data(as_text=True)
     assert "Connected to http://loki.example.com:3100." in page
     assert '<option value="container" selected>container</option>' in page
-    assert "Compose project: shop" in page and "Suggested: acme/shop. Save to read it." in page
-    assert 'id="loki-1" aria-describedby="loki-name-1"' in page and 'id="loki-name-1"' in page
-    rows = {"csrf": csrf, "label": "container", "name-1": "redis", "project-1": "", "shown-1": ""}
-    rows |= {"name-2": "shop-web-1", "project-2": "acme/shop", "shown-2": "acme/shop"}
+    # changed with the new layout: the suggestion is a tile to tick, and redis is among the others
+    assert "Compose project: shop" in page and "for acme/shop" in page
+    assert '<input id="loki-pick-1" type="checkbox" name="tick" value="1" aria-describedby="loki-for-1">' in page
+    assert 'aria-label="Project for redis"' in page
+    rows = {"csrf": csrf, "label": "container", "name-1": "shop-web-1", "project-1": "acme/shop"}
+    rows |= {"tick": "1", "pick": "selected"}
     response = web.client.post("/settings/loki/sources", data=rows, headers=SITE)
     assert response.headers["Location"] == "/settings?done=loki_sources#loki"
     assert (web.store.setting(loki.LABEL), loki.chosen(web.store)) == ("container", {"shop-web-1": "acme/shop"})
@@ -3041,12 +3045,12 @@ def test_a_removed_project_keeps_its_container_and_source_choices_and_settings_n
     page = web.client.get("/settings").get_data(as_text=True)
     note = "It was chosen for acme/shop, which is not a project now: add acme/shop again and it is read again."
     assert page.count(note) == 2  # a container and a source
-    assert '<option value="acme/blog" selected>' not in page and 'value="acme/shop"' not in page
-    assert page.count('<input type="hidden" name="shown-1" value="">') == 2  # the page shows no project for them
+    assert 'value="acme/shop"' not in page and "chosen here" not in page
+    assert page.count("Nothing is read yet.") == 2  # neither is read now: the project is not there to read them for
     spanish = web.client.get("/settings", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert spanish.count("Se eligió para acme/shop, que ya no es un proyecto: añade acme/shop de nuevo") == 2
     # saving the form as the page sends it keeps the choices
-    form = {"csrf": csrf, "name-1": "shop-web-1", "project-1": "", "shown-1": ""}
+    form = {"csrf": csrf, "name-1": "shop-web-1", "project-1": "", "pick": "others"}
     assert web.client.post("/settings/logs", data=form, headers=SITE).status_code == 302
     sources = web.client.post("/settings/loki/sources", data={**form, "label": "container"}, headers=SITE)
     assert sources.status_code == 302
@@ -3054,9 +3058,8 @@ def test_a_removed_project_keeps_its_container_and_source_choices_and_settings_n
     # adding the project again brings the choices back, with nothing to say about them
     web.store.add_project("acme/shop")
     page = web.client.get("/settings").get_data(as_text=True)
-    assert page.count('<option value="acme/shop" selected>acme/shop</option>') == 2
-    assert "is not a project now" not in page
-    assert page.count('<input type="hidden" name="shown-1" value="acme/shop">') == 2
+    assert page.count('<span class="mono">acme/shop</span> <span class="muted">· chosen here</span>') == 2
+    assert "is not a project now" not in page and page.count('aria-label="Stop reading shop-web-1"') == 2
     assert logs.names_for("acme/shop", listed, logs.chosen(web.store)) == ["shop-web-1"]
 
 

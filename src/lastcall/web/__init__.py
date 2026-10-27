@@ -280,13 +280,30 @@ def create_app(
     @app.get("/projects")
     @signed_in
     def projects_page() -> ResponseReturnValue:
-        return show_projects(query=request.args.get("q", ""))
+        args = request.args
+        return show_projects(query=args.get("q", ""), search=args.get("search", ""), show=args.get("show", "all"))
 
-    def show_projects(status: int = 200, error: str = "", install: str = "", query: str = "") -> ResponseReturnValue:
-        """The Projects page. `query` is what its filter looks for in the suggestions' names."""
+    def show_projects(
+        status: int = 200,
+        error: str = "",
+        install: str = "",
+        query: str = "",
+        search: str = "",
+        show: str = "all",
+    ) -> ResponseReturnValue:
+        """The Projects page. `query` is what its filter looks for in the suggestions' names; `search` and `show` are
+        what the owner looks for in the projects' names, and which filter of the cards (project_views.FILTERS)."""
         found = App.load(secrets)
         view = project_views.build(
-            store, g.lang, clock(), found.install_url if found else "", reading.is_set(), permissions_link, query
+            store,
+            g.lang,
+            clock(),
+            found.install_url if found else "",
+            reading.is_set(),
+            permissions_link,
+            query,
+            search,
+            show,
         )
         view.tracker = signals.Tracker.load(secrets) is not None
         done = request.args.get("done", "")
@@ -548,8 +565,16 @@ def create_app(
         tried: Mapping[str, str] | None = None,
         loki_error: str = "",
         loki_tried: Mapping[str, str] | None = None,
+        logs_error: str = "",
+        logs_typed: Mapping[str, str] | None = None,
+        loki_typed: Mapping[str, str] | None = None,
     ) -> ResponseReturnValue:
+        """The Settings page. A mistake in one of the forms of the lists of containers or sources says it in that
+        section (`logs_error`, `loki_error`) and gives back the projects that the owner typed there (`logs_typed`,
+        `loki_typed`). The filters by name of the two lists are in the address (`logs_q`, `loki_q`)."""
         chosen, filled = notifications.events(), dict(values or {})
+        logs_q = project_views.clean_query(request.args.get("logs_q", ""))
+        loki_q = project_views.clean_query(request.args.get("loki_q", ""))
         language = (
             notifications.language() if store.setting("notify_language") else g.lang
         )  # until saved: this page's
@@ -572,8 +597,8 @@ def create_app(
             "chats": list(chats),
             "fanout": store.setting("fanout") == "yes",
             "tracker": tracker,
-            "logs": containers_view(),
-            "loki": loki_view(loki_tried),
+            "logs": containers_view(logs_q, logs_typed),
+            "loki": loki_view(loki_tried, loki_q, loki_typed),
             "signals_url": (tried or {}).get("url") or (tracker.url if tracker else "https://sentry.io"),
             "signals_org": (tried or {}).get("org") or (tracker.org if tracker else ""),
         }
@@ -595,6 +620,7 @@ def create_app(
             signals_error=signals_error,
             sentry_tokens=SENTRY_TOKENS,
             loki_error=loki_error,
+            logs_error=logs_error,
         )
 
     @app.post("/settings/signals")
@@ -619,44 +645,56 @@ def create_app(
         log(f"Web UI: errors in production read from {url}, organization {org}")
         return redirect(url_for("settings_page", done="signals") + "#signals")
 
+    def refusal(refused: logs.Refused, kind: str) -> ResponseReturnValue:
+        """The answer to a form of a list of containers (`kind` "logs") or of sources in Loki ("loki") that
+        `logs.apply_form` refuses: an error page for a form that the page never sends, else the Settings page, with
+        the mistake said in the section and what the owner typed in its place."""
+        if refused.reason == "form":
+            return problem(400, "web.error.form")
+        if refused.reason == "none":
+            message = t(f"web.{kind}.none_ticked")
+        else:
+            message = t("web.logs.not_a_project", project=refused.wrong)
+        if kind == "logs":
+            return show_settings(400, logs_error=message, logs_typed=refused.typed)
+        return show_settings(400, loki_error=message, loki_typed=refused.typed)
+
     @app.post("/settings/logs")
     @signed_in
     def logs_settings() -> ResponseReturnValue:
-        """The project of each container, as the owner chooses it: lastcall reads the containers that have one."""
-        form, repos = request.form, {p.repo for p in store.projects()}
-        choices = logs.chosen(store)
-        for key, name in form.items():
-            if not key.startswith("name-"):
-                continue
-            index = key.removeprefix("name-")
-            project = form.get("project-" + index, "")
-            if not CONTAINER.fullmatch(name) or project not in {"", *repos}:
-                return problem(400, "web.error.form")
-            if project or form.get("shown-" + index):  # a project, or a no to the one that the page showed
-                choices[name] = project
+        """What the forms of the Container logs section ask (`logs.apply_form`): to read the ticked suggestions, or
+        all of them, to skip the ticked ones, to stop reading one, or to read the containers that got a project in
+        the fold of the others. The project of each is checked against the projects, whatever its case."""
+        form = request.form
+        try:
+            choices = logs.apply_form(
+                form,
+                form.getlist("tick"),
+                logs.chosen(store),
+                [p.repo for p in store.projects()],
+                lambda name: bool(CONTAINER.fullmatch(name)) and not name.startswith(STEP),  # never a step's
+            )
+        except logs.Refused as refused:
+            return refusal(refused, "logs")
         logs.choose(store, choices)
         log(f"Web UI: containers read for their projects: {', '.join(sorted(k for k, v in choices.items() if v))}")
         return redirect(url_for("settings_page", done="logs") + "#logs")
 
-    def containers_view() -> dict[str, Any]:
-        """The containers of this host, each with its project, or the one lastcall suggests."""
+    def containers_view(query: str = "", typed: Mapping[str, str] | None = None) -> dict[str, Any]:
+        """The containers of this host in the three parts that the page shows (`logs.parts`)."""
         if containers is None:
-            return {"error": t("web.logs.unavailable"), "rows": [], "repos": []}
+            return {**lists_view(logs.Parts([], [], []), [], query, {}), "error": t("web.logs.unavailable")}
         try:
             listed = containers()
         except Exception as e:  # an optional integration never takes the page down
             known = isinstance(e, (SandboxError, OSError))
             if not known:
                 log(f"Web UI: the containers could not be listed: {brief(e)}")
-            return {"error": t("web.logs.failed", error=str(e)[:200] if known else brief(e)), "rows": [], "repos": []}
-        repos, choices = [p.repo for p in store.projects()], logs.chosen(store)
-        rows = []
-        for c in listed:
-            name = str(c.get("name") or "")
-            choice, gone = logs.shown(choices.get(name, ""), repos)
-            hint = "" if c.get("label") or name in choices else logs.suggest(c, repos)
-            rows.append({**c, "selected": choice or hint, "suggested": hint, "gone": gone})
-        return {"error": "", "rows": rows, "repos": repos}
+            failed = t("web.logs.failed", error=str(e)[:200] if known else brief(e))
+            return {**lists_view(logs.Parts([], [], []), [], query, {}), "error": failed}
+        repos = [p.repo for p in store.projects()]
+        found = logs.parts(listed, repos, logs.chosen(store))
+        return {**lists_view(found, repos, query, typed or {}), "error": ""}
 
     @app.post("/settings/loki")
     @signed_in
@@ -697,21 +735,22 @@ def create_app(
     @app.post("/settings/loki/sources")
     @signed_in
     def loki_sources() -> ResponseReturnValue:
-        """The project of each source in Loki, as the owner chooses it: lastcall reads the sources that have one."""
-        form, repos = request.form, {p.repo for p in store.projects()}
+        """What the forms of the sources in Loki ask, as the containers' do (`logs_settings`): lastcall reads the
+        sources that have a project. Each form says the label that names the sources: the choices belong to it."""
+        form = request.form
         label = form.get("label", "")
         if not loki.LABEL_NAME.fullmatch(label):
             return problem(400, "web.error.form")
-        choices = loki.chosen(store) if label == store.setting(loki.LABEL) else {}
-        for key, name in form.items():
-            if not key.startswith("name-"):
-                continue
-            index = key.removeprefix("name-")
-            project = form.get("project-" + index, "")
-            if not loki.SOURCE.fullmatch(name) or name.startswith(STEP) or project not in {"", *repos}:
-                return problem(400, "web.error.form")
-            if project or form.get("shown-" + index):  # a project, or a no to the one that the page showed
-                choices[name] = project
+        try:
+            choices = logs.apply_form(
+                form,
+                form.getlist("tick"),
+                loki.chosen(store) if label == store.setting(loki.LABEL) else {},
+                [p.repo for p in store.projects()],
+                lambda name: bool(loki.SOURCE.fullmatch(name)) and not name.startswith(STEP),
+            )
+        except logs.Refused as refused:
+            return refusal(refused, "loki")
         store.set_setting(loki.LABEL, label)
         loki.choose(store, choices)
         read = ", ".join(sorted(k for k, v in choices.items() if v))
@@ -725,15 +764,18 @@ def create_app(
         log("Web UI: Loki disconnected")
         return redirect(url_for("settings_page", done="loki_removed") + "#loki")
 
-    def loki_view(tried: Mapping[str, str] | None) -> dict[str, Any]:
-        """The connection to Loki, and its sources, each with its project, or the one lastcall suggests."""
+    def loki_view(
+        tried: Mapping[str, str] | None, query: str = "", typed: Mapping[str, str] | None = None
+    ) -> dict[str, Any]:
+        """The connection to Loki, and its sources in the three parts that the page shows (`logs.parts`)."""
         connection, tried = loki.Loki.load(secrets), tried or {}
         view: dict[str, Any] = {
             "connection": connection,
             "url": tried.get("url") or (connection.url if connection else ""),
             "user": tried.get("user") or (connection.user if connection else ""),
             "tenant": tried.get("tenant") or (connection.tenant if connection else ""),
-            **{"error": "", "labels": [], "label": "", "rows": [], "repos": []},
+            **lists_view(logs.Parts([], [], []), [], query, {}),
+            **{"error": "", "labels": [], "label": ""},
         }
         if connection is None:
             return view
@@ -747,13 +789,8 @@ def create_app(
             if not known:
                 log(f"Web UI: Loki's sources could not be listed: {brief(e)}")
             return {**view, "error": t("web.loki.sources_failed", error=str(e)[:200] if known else brief(e))}
-        rows = []
-        for s in listed:
-            name = s["name"]
-            choice, gone = logs.shown(choices.get(name, ""), repos)
-            hint = "" if name in choices else logs.suggest(s, repos)
-            rows.append({**s, "selected": choice or hint, "suggested": hint, "gone": gone})
-        return {**view, "labels": names, "label": label, "rows": rows, "repos": repos}
+        found = logs.parts(listed, repos, choices)
+        return {**view, **lists_view(found, repos, query, typed or {}), "labels": names, "label": label}
 
     @app.post("/settings/signals/remove")
     @signed_in
@@ -1241,6 +1278,25 @@ def brief(error: BaseException) -> str:
     data, and a header's value or an authorization is masked wherever it shows in the message."""
     message = CREDENTIAL.sub(lambda m: f"{(m.group(1) or m.group(2)).lower()} ***", " ".join(str(error).split()))
     return f"{type(error).__name__}: {message[:120]}" if message else type(error).__name__
+
+
+def lists_view(found: logs.Parts, repos: Sequence[str], query: str, typed: Mapping[str, str]) -> dict[str, Any]:
+    """What the template needs of a list of containers or sources in three parts: those that are read, those that
+    are suggested, and the others that the filter by name leaves, each with what the owner typed next to it before a
+    mistake in the form. The fold of the others says how many there are in all (`total`) and offers the filter once
+    there are many of them or while one is set."""
+    others = [{**o, "typed": typed.get(str(o["name"]), "")} for o in found.others_named(query)]
+    return {
+        "read": found.read,
+        "suggested": found.suggested,
+        "others": others,
+        "total": len(found.others),
+        "count": found.count,
+        "query": query,
+        "typed": bool(typed),
+        "filterable": len(found.others) > project_views.MANY or bool(query),
+        "repos": list(repos),
+    }
 
 
 def language() -> str:
