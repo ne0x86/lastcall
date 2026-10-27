@@ -173,6 +173,8 @@ Projects, and Settings holds a fourth that is optional:
 - 📁 **Projects.** lastcall suggests your repositories and says why. Tick the ones you want, or add the suggested ones
   or all of them at once, with a filter when you have many. Any other repository goes in by its address. A click on
   a project's state turns its bursts on or off, and its trash button removes it from lastcall but keeps its history.
+  With many projects, a search by name and the links All, Active, Inactive and Waiting for you (each with its count)
+  keep the list short, and each card's Run now starts folded.
 - 🔔 **Settings.** Where lastcall should notify you. Choose the service and fill in what it asks for: Telegram (paste
   your bot's token and lastcall finds your chat), ntfy, Discord, Slack or email, or any of the
   [services that Apprise reaches](https://github.com/caronc/apprise#supported-notifications). lastcall saves a
@@ -345,10 +347,14 @@ code where they happen, and the reviewers look for their causes first. Projects 
 first. The messages are masked before they reach a model.
 
 **Container logs.** If your apps run in Docker on the same machine as lastcall, it can read their logs too, with or
-without a tracker, and with no change to their code. On the Settings page, under *Container logs*, choose the
-project of each container to read, and save. lastcall lists the machine's containers and suggests a project for
-each from its image (`ghcr.io/owner/name`), its Compose project or its name. It reads none until you save, and it
-remembers when you say no to a suggestion. In the terminal: `lastcall logs list`, then
+without a tracker, and with no change to their code. On the Settings page, under *Container logs*, lastcall lists the
+machine's containers in three parts, so that dozens of them stay short. *Read now* comes first: the containers that
+lastcall reads, each with its project and how it was chosen, and a button to stop reading one. Then come the suggested
+ones, which lastcall matched to a project from the container's image (`ghcr.io/owner/name`), its Compose project or
+its name: tick the ones to read, or read all of them at once. The rest wait in a fold that says how many they are,
+with a filter by name: type a project next to a container to read it, and the list of your projects narrows as you
+type. lastcall reads none until you choose it, and it remembers when you skip a suggestion or stop reading a
+container. lastcall's own containers never show there. In the terminal: `lastcall logs list`, then
 `lastcall logs set <container> <owner/name>`.
 
 You can also keep the choice in the app's compose file: label its containers with the project's name, as the
@@ -375,7 +381,9 @@ collects their logs, lastcall reads them there, with nothing to install on those
 1. On the Settings page, under *Logs in Loki*, give Loki's address and, if it asks for one, a login that can only
    read. In Grafana Cloud, that is the user number of your Loki and a token with the `logs:read` scope.
 2. lastcall lists the sources that Loki saw in the last 7 days, named by their `container` label when they have one,
-   and suggests the project of each, as for the containers on its own machine. Choose them, and save.
+   in the same three parts as the containers on its own machine: *Read now*, the suggested ones, which you tick (or
+   read all at once), and the rest in a fold with a filter by name, where you type a project next to a source. Each
+   shows the machines where it ran and its Compose project.
 
 It asks Loki only for the lines of the last day that may be part of an error, the newest 5,000 of each source, and
 reads them as it reads a container's. In the terminal: `lastcall loki connect --url http://<host>:3100`,

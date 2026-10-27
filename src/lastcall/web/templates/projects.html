@@ -11,7 +11,7 @@
 <header class="page-head">
   <h1>{{ t("web.projects.title") }}</h1>
   <p class="lede">{{ t("web.projects.intro") }}</p>
-  {%- if v.projects %}<p class="jump"><a href="#add-title">{{ t("web.add.title") }}</a></p>{% endif %}
+  {%- if v.known %}<p class="jump"><a href="#add-title">{{ t("web.add.title") }}</a></p>{% endif %}
 </header>
 
 {% if done %}<p class="notice done" role="status">{{ done }}</p>{% endif %}
@@ -73,10 +73,13 @@
       <input id="q" name="q" type="search" value="{{ v.query }}" maxlength="100" autocomplete="off" spellcheck="false">
       <button class="secondary">{{ t("web.suggest.filter_go") }}</button>
     </div>
+    {#- the search and the filter of the cards stay as they are -#}
+    {%- if v.search %}<input type="hidden" name="search" value="{{ v.search }}">{% endif %}
+    {%- if v.show != "all" %}<input type="hidden" name="show" value="{{ v.show }}">{% endif %}
   </form>
   {%- endif %}
   {%- if v.query %}
-  <p class="filter-note">{{ tn("web.suggest.matching", v.total, shown=v.shown, query=v.query) }} <a href="{{ url_for('projects_page') }}#suggestions">{{ t("web.suggest.show_all") }}</a></p>
+  <p class="filter-note">{{ tn("web.suggest.matching", v.total, shown=v.shown, query=v.query) }} <a href="{{ url_for('projects_page', search=v.search or None, show=v.show if v.show != 'all' else None) }}#suggestions">{{ t("web.suggest.show_all") }}</a></p>
   {%- endif %}
   {%- if v.shown %}
   <form method="post" action="{{ url_for('add_projects') }}" class="pick">
@@ -119,11 +122,39 @@
 </section>
 {%- endmacro %}
 
-{% if not v.projects %}
+{% if not v.known %}
 <p class="empty">{{ t("web.projects.empty") if v.github_ready else t("web.projects.none") }}</p>
 {{ add_section() }}
 {% else %}
 <section aria-label="{{ t('web.projects.title') }}">
+  {#- With many projects: a search by name and the filters, above the cards. Each link keeps the search and the filter of the
+      suggestions below, and all of them bring the page back here (#find). Their counts are those of the current search. -#}
+  {%- if v.can_search %}
+  <div class="find" id="find">
+    <form method="get" action="{{ url_for('projects_page') }}#find" class="filter" role="search">
+      <label for="search">{{ t("web.projects.search") }}</label>
+      <div class="row">
+        <input id="search" name="search" type="search" value="{{ v.search }}" maxlength="100" autocomplete="off" spellcheck="false">
+        <button class="secondary">{{ t("web.projects.search_go") }}</button>
+      </div>
+      {%- if v.show != "all" %}<input type="hidden" name="show" value="{{ v.show }}">{% endif %}
+      {%- if v.query %}<input type="hidden" name="q" value="{{ v.query }}">{% endif %}
+    </form>
+    <nav class="find-links" aria-label="{{ t('web.projects.show') }}">
+      <ul>
+        {%- for f in v.filters %}
+        <li><a href="{{ url_for('projects_page', show=f.key if f.key != 'all' else None, search=v.search or None, q=v.query or None) }}#find"{% if f.current %} aria-current="true"{% endif %}>{{ f.label }} <span class="count">{{ f.count }}</span></a></li>
+        {%- endfor %}
+      </ul>
+    </nav>
+    {%- if v.search or v.show != "all" %}
+    <p class="filter-note">{{ tn("web.projects.showing", v.known, shown=v.projects|length) }}</p>
+    {%- endif %}
+  </div>
+  {%- endif %}
+  {%- if not v.projects %}
+  <p class="empty">{{ t("web.projects.no_match") }} <a href="{{ url_for('projects_page', q=v.query or None) }}#find">{{ t("web.projects.show_all") }}</a></p>
+  {%- else %}
   <div class="grid projects">
     {%- for p in v.projects %}
     {%- set n = loop.index %}
@@ -183,12 +214,22 @@
       {%- if p.busy %}
       <p class="working busy">{{ p.busy }}</p>
       {%- elif v.accounts|length > 1 %}
+      {#- With many projects the group starts folded, like the settings below it, so that the cards are short: its title is
+          the summary that opens it, and its "?" moves inside, after a line that says what the group does. -#}
+      {%- if v.many %}
+      <details class="fold run-fold">
+        <summary>{{ t("web.project.run_now") }}</summary>
+      {%- endif %}
       <form method="post" action="{{ url_for('audit_now', owner=p.owner, name=p.name) }}" class="run-form">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <fieldset class="run-now has-help">
+        <fieldset class="run-now{% if not v.many %} has-help{% endif %}"{% if v.many %} aria-label="{{ t('web.project.run_now') }}"{% endif %}>
+          {%- if v.many %}
+          <div class="line"><p class="small muted">{{ t("web.project.run_summary") }}</p>{{ help(hb, "projects-run_now", t("web.project.run_now"), ["projects.run_now"], true) }}</div>
+          {%- else %}
           <legend>{{ t("web.project.run_now") }}</legend>{{ help(hb, "projects-run_now", t("web.project.run_now"), ["projects.run_now"]) }}
+          {%- endif %}
           <div class="field">
-            <div class="label-row"><label for="account-{{ n }}">{{ t("web.project.account") }}</label>{{ help(hb, "projects-account", t("web.project.account"), account_keys) }}</div>
+            <div class="label-row"><label for="account-{{ n }}">{{ t("web.project.account") }}</label>{{ help(hb, "projects-account", t("web.project.account"), account_keys, v.many) }}</div>
             <select id="account-{{ n }}" name="account">
               {%- for o in v.accounts %}<option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
             </select>
@@ -200,12 +241,15 @@
             <button class="secondary" formaction="{{ url_for('deps_now', owner=p.owner, name=p.name) }}">{{ t("web.project.deps_now") }}</button>
           </div>
           <ul class="run-hints" aria-label="{{ t('web.project.run_hints') }}">
-            <li><p>{{ t("web.project.improve_hint") }}</p>{{ help(hb, "projects-improve", t("web.project.improve"), ["projects.improve"]) }}</li>
+            <li><p>{{ t("web.project.improve_hint") }}</p>{{ help(hb, "projects-improve", t("web.project.improve"), ["projects.improve"], v.many) }}</li>
             <li><p>{{ t("web.project.tests_hint") }}</p></li>
             <li><p>{{ t("web.project.deps_hint") }}</p></li>
           </ul>
         </fieldset>
       </form>
+      {%- if v.many %}
+      </details>
+      {%- endif %}
       {%- else %}
       <p class="muted">{{ t("web.project.no_accounts") }}</p>
       {%- endif %}
@@ -271,6 +315,7 @@
     </article>
     {%- endfor %}
   </div>
+  {%- endif %}
 </section>
 {{ add_section() }}
 {% endif %}

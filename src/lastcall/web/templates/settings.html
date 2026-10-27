@@ -2,6 +2,7 @@
 {% block title %}{{ t("web.settings.title") }}{% endblock %}
 {% block main %}
 {%- from "_help.html" import help, bubbles with context %}
+{%- from "_lists.html" import lists with context %}
 {%- set hb = namespace(items=[], seen=[]) %}
 {%- set event_help = ("decisions", "merged", "reverted", "paid", "quota", "burst") %}
 <header class="page-head">
@@ -317,36 +318,15 @@
       <li>{{ t("web.logs.step1") }}</li>
       <li>{{ t("web.logs.step2") }}</li>
     </ol>
+    {%- if logs_error %}
+    <p class="notice error" role="alert">{{ logs_error }}</p>
+    {%- endif %}
     {%- if v.logs.error %}
     <p class="notice error" role="alert">{{ v.logs.error }}</p>
-    {%- elif not v.logs.rows %}
+    {%- elif not v.logs.count %}
     <p class="empty">{{ t("web.logs.none") }}</p>
     {%- else %}
-    <form method="post" action="{{ url_for('logs_settings') }}#logs" class="stack">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <ul class="rows sources">
-        {%- for c in v.logs.rows %}
-        <li>
-          <p class="source-name"><strong id="logs-name-{{ loop.index }}">{{ c.name }}</strong> <span class="chip">{{ c.state }}</span></p>
-          <p class="hint">{{ c.image }}</p>
-          {%- if c.label %}
-          <p class="small">{{ t("web.logs.from_label", project=c.label) }}</p>
-          {%- else %}
-          <input type="hidden" name="name-{{ loop.index }}" value="{{ c.name }}">
-          <input type="hidden" name="shown-{{ loop.index }}" value="{{ c.selected }}">
-          <div class="label-row"><label for="logs-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>{{ help(hb, "settings-logs_project", t("web.logs.project"), ["settings.logs_project"]) }}</div>
-          <select id="logs-{{ loop.index }}" aria-describedby="logs-name-{{ loop.index }}" name="project-{{ loop.index }}">
-            <option value="">{{ t("web.logs.not_read") }}</option>
-            {%- for repo in v.logs.repos %}<option value="{{ repo }}"{% if repo == c.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
-          </select>
-          {%- if c.suggested %}<p class="hint">{{ t("web.logs.suggested", project=c.suggested) }}</p>{% endif %}
-          {%- if c.gone %}<p class="hint">{{ t("web.logs.gone", project=c.gone) }}</p>{% endif %}
-          {%- endif %}
-        </li>
-        {%- endfor %}
-      </ul>
-      <button>{{ t("web.logs.save") }}</button>
-    </form>
+    {{ lists(hb, "logs", v.logs, url_for('logs_settings'), "h4", (), [("loki_q", v.loki.query)] if v.loki.query else []) }}
     {%- endif %}
     <details class="fold">
       <summary>{{ t("web.logs.label_title") }}</summary>
@@ -416,32 +396,11 @@
       </div>
       <button class="secondary">{{ t("web.loki.use_label") }}</button>
     </form>
-    {%- if v.loki.label and not v.loki.rows %}
+    {%- if v.loki.label and not v.loki.count %}
     <p class="empty">{{ t("web.loki.none") }}</p>
-    {%- elif v.loki.rows %}
-    <form method="post" action="{{ url_for('loki_sources') }}#loki" class="stack">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="label" value="{{ v.loki.label }}">
-      <div class="section-head"><h4>{{ t("web.help.settings.loki_sources.title") }}</h4>{{ help(hb, "settings-loki_sources", t("web.help.settings.loki_sources.title"), ["settings.loki_sources"]) }}</div>
-      <ul class="rows sources">
-        {%- for s in v.loki.rows %}
-        <li>
-          <p class="source-name"><strong id="loki-name-{{ loop.index }}">{{ s.name }}</strong>{% for host in s.hosts %} <span class="chip">{{ host }}</span>{% endfor %}</p>
-          {%- if s.compose_project %}<p class="hint">{{ t("web.loki.compose", project=s.compose_project) }}</p>{% endif %}
-          <input type="hidden" name="name-{{ loop.index }}" value="{{ s.name }}">
-          <input type="hidden" name="shown-{{ loop.index }}" value="{{ s.selected }}">
-          <label for="loki-{{ loop.index }}" class="small">{{ t("web.logs.project") }}</label>
-          <select id="loki-{{ loop.index }}" aria-describedby="loki-name-{{ loop.index }}" name="project-{{ loop.index }}">
-            <option value="">{{ t("web.logs.not_read") }}</option>
-            {%- for repo in v.loki.repos %}<option value="{{ repo }}"{% if repo == s.selected %} selected{% endif %}>{{ repo }}</option>{% endfor %}
-          </select>
-          {%- if s.suggested %}<p class="hint">{{ t("web.logs.suggested", project=s.suggested) }}</p>{% endif %}
-          {%- if s.gone %}<p class="hint">{{ t("web.logs.gone", project=s.gone) }}</p>{% endif %}
-        </li>
-        {%- endfor %}
-      </ul>
-      <button>{{ t("web.logs.save") }}</button>
-    </form>
+    {%- elif v.loki.count %}
+    <div class="section-head"><h4>{{ t("web.help.settings.loki_sources.title") }}</h4>{{ help(hb, "settings-loki_sources", t("web.help.settings.loki_sources.title"), ["settings.loki_sources"]) }}</div>
+    {{ lists(hb, "loki", v.loki, url_for('loki_sources'), "h5", [("label", v.loki.label)], [("logs_q", v.logs.query)] if v.logs.query else []) }}
     {%- endif %}
     {%- endif %}
     <form method="post" action="{{ url_for('disconnect_loki') }}#loki">
