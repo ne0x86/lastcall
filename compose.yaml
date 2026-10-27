@@ -53,8 +53,8 @@ services:
     networks: [sandbox, outside]
     volumes:
       - ./egress/filter:/etc/tinyproxy/filter:ro
-    healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "8888"]
+    healthcheck:  # without connecting: tinyproxy logs each connection that sends nothing as an error
+      test: ["CMD-SHELL", "netstat -ltn | grep -q ':8888 '"]
       interval: 5s
       retries: 12
     restart: unless-stopped
