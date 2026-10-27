@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -17,7 +18,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from lastcall import cli, github
-from lastcall.github import App, GitHub, GitHubError, Response, app_jwt, lacking
+from lastcall.github import APP_SECRET, App, GitHub, GitHubError, Response, app_jwt, lacking
 from lastcall.github_setup import SetupServer, clean_owner, form_action, manifest, owner_kind, run_setup
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
@@ -57,6 +58,18 @@ def test_app_round_trip(app: App, tmp_path: Path) -> None:
     app.save(store)
     assert App.load(store) == app
     assert app.install_url == "https://github.com/apps/lastcall-ne0x86/installations/new"
+
+
+def test_an_app_saved_before_it_could_return_loads_as_one_that_does_not(app: App, tmp_path: Path) -> None:
+    store = SecretStore(tmp_path)
+    before = asdict(app)
+    del before["returns"]  # what the App's file held before GitHub could bring the owner back
+    store.set_json(APP_SECRET, before)
+    loaded = App.load(store)
+    assert loaded == app and loaded is not None and loaded.returns is False
+    replace(app, returns=True).save(store)
+    returning = App.load(store)
+    assert returning is not None and returning.returns is True
 
 
 # API
@@ -210,6 +223,17 @@ def test_manifest_asks_only_what_lastcall_needs() -> None:
     assert len(manifest("a-very-long-organization-name-indeed", "")["name"]) == 34
 
 
+def test_manifest_asks_github_to_come_back_after_the_installation_only_with_a_setup_url() -> None:
+    plain = manifest("ne0x86", "http://127.0.0.1:8765/callback")
+    assert "setup_url" not in plain and "setup_on_update" not in plain
+    returning = manifest("ne0x86", "http://127.0.0.1:8765/callback", "http://127.0.0.1:8765/installed")
+    assert returning["setup_url"] == "http://127.0.0.1:8765/installed"
+    assert returning["setup_on_update"] is True  # adding or removing a repository later brings the owner back too
+    assert returning["redirect_url"] == plain["redirect_url"]
+    others = {key: value for key, value in returning.items() if key not in ("setup_url", "setup_on_update")}
+    assert others == plain  # nothing else changes
+
+
 def test_form_action_for_an_organization() -> None:
     assert form_action("acme", True, "s").startswith("https://github.com/organizations/acme/settings/apps/new?")
 
@@ -271,6 +295,7 @@ def test_setup_page_posts_the_manifest_to_github(setup_server: SetupServer) -> N
     assert value is not None
     sent = json.loads(html.unescape(value.group(1)))
     assert sent["redirect_url"] == f"http://127.0.0.1:{setup_server.server_address[1]}/callback"
+    assert "setup_url" not in sent and "setup_on_update" not in sent  # this page stops once the App exists
 
 
 def test_callback_with_a_wrong_state_is_refused(setup_server: SetupServer) -> None:
@@ -286,6 +311,12 @@ def test_callback_saves_the_app_for_lastcall_only(setup_server: SetupServer, app
     assert app.install_url in page
     assert App.load(SecretStore(tmp_path)) == app
     assert (tmp_path / "github-app.secret").stat().st_mode & 0o777 == 0o600
+
+
+def test_the_command_saves_an_app_that_github_does_not_bring_back(setup_server: SetupServer, tmp_path: Path) -> None:
+    status, _ = get(setup_server, f"/callback?code=one-time-code&state={setup_server.state}")
+    saved = App.load(SecretStore(tmp_path))
+    assert status == 200 and saved is not None and saved.returns is False
 
 
 def test_callback_records_the_owner_that_github_says(tmp_path: Path, app: App) -> None:
@@ -575,3 +606,13 @@ def test_the_log_sends_a_docker_user_to_the_web_ui_before_the_command_line(
         "Waiting for the GitHub App: sign in to the web UI and open GitHub App, from Getting started"
     )
     assert "or from Settings" in line and line.index("web UI") < line.index("`lastcall github setup --owner <login>`")
+
+
+def test_an_app_that_a_later_version_saved_with_more_fields_still_loads(tmp_path: Path) -> None:
+    store = SecretStore(tmp_path / "secrets")
+    App(1, "lastcall-acme", "lastcall-acme", "acme", "https://github.com/apps/lastcall-acme", "pem", True).save(store)
+    saved = store.get_json(APP_SECRET)
+    assert saved is not None
+    store.set_json(APP_SECRET, {**saved, "something_new": "yes"})
+    found = App.load(store)
+    assert found is not None and found.slug == "lastcall-acme" and found.returns is True

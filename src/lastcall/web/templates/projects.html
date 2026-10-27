@@ -22,15 +22,16 @@
 </div>
 {% endif %}
 
+{#- A suggestion is a row of the "Add many" form: the checkbox and the name that ticks it, then a small link to the
+    repository on GitHub, as a project's card links its name. -#}
 {%- macro suggestion(s, again=false) %}
+  {%- set box = "pick-" ~ s.repo|replace("/", "--") %}
   <li class="suggestion">
-    <div class="row spread">
-      <p class="suggestion-name"><a href="{{ s.url }}">{{ s.repo }}</a>{% if s.suggested %} <span class="badge">{{ t("web.suggest.suggested") }}</span>{% endif %}</p>
-      <form method="post" action="{{ url_for('add_project') }}">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="repo" value="{{ s.repo }}">
-        <button class="secondary" aria-label="{{ t('web.suggest.add') }} {{ s.repo }}">{{ t("web.suggest.add") }}</button>
-      </form>
+    <div class="pick-line">
+      <input id="{{ box }}" type="checkbox" name="repo" value="{{ s.repo }}">
+      <label for="{{ box }}" class="suggestion-name">{{ s.repo }}</label>
+      <a class="repo-link" href="{{ s.url }}" title="{{ t('web.suggest.open', repo=s.repo) }}"><span class="visually-hidden">{{ t("web.suggest.open", repo=s.repo) }}</span></a>
+      {%- if s.suggested %} <span class="badge">{{ t("web.suggest.suggested") }}</span>{% endif %}
     </div>
     <div class="suggestion-meta"><span class="chip score">{{ s.score }}</span>{{ help(hb, "projects-score", t("web.help.projects.score.title"), ["projects.score"], again) }}
       {%- if s.language %} <span class="muted small">{{ s.language }}</span>{% endif %}
@@ -63,14 +64,55 @@
     </form>
   </div>
   {%- if v.all_added %}<p>{{ t("web.suggest.all_added") }}</p>{% endif %}
-  {%- if v.suggested %}
-  <ul class="plain suggestions">{% for s in v.suggested %}{{ suggestion(s) }}{% endfor %}</ul>
+  {%- if v.total %}
+  <div id="suggestions">{# where the filter, and Show all, bring the page back to #}
+  {%- if v.total > 6 or v.query %}
+  <form method="get" action="{{ url_for('projects_page') }}#suggestions" class="filter" role="search">
+    <label for="q">{{ t("web.suggest.filter") }}</label>
+    <div class="row">
+      <input id="q" name="q" type="search" value="{{ v.query }}" maxlength="100" autocomplete="off" spellcheck="false">
+      <button class="secondary">{{ t("web.suggest.filter_go") }}</button>
+    </div>
+  </form>
   {%- endif %}
-  {%- if v.others %}
-  <details>
-    <summary>{{ tn("web.suggest.others", v.others|length) }}</summary>
-    <ul class="plain suggestions">{% for s in v.others %}{{ suggestion(s, loop.first) }}{% endfor %}</ul>
-  </details>
+  {%- if v.query %}
+  <p class="filter-note">{{ tn("web.suggest.matching", v.total, shown=v.shown, query=v.query) }} <a href="{{ url_for('projects_page') }}#suggestions">{{ t("web.suggest.show_all") }}</a></p>
+  {%- endif %}
+  {%- if v.shown %}
+  <form method="post" action="{{ url_for('add_projects') }}" class="pick">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="q" value="{{ v.query }}">
+    {%- if v.suggested or v.addable > v.suggested|length %}
+    <div class="pick-all">
+      {%- if v.suggested %}
+      <button class="secondary" name="pick" value="suggested">{{ tn("web.suggest.add_suggested", v.suggested|length) }}</button>
+      {%- endif %}
+      {%- if v.addable > v.suggested|length %}
+      <button class="secondary" name="pick" value="all">{{ tn("web.suggest.add_all", v.addable) }}</button>
+      {%- endif %}
+    </div>
+    {%- endif %}
+    {%- if v.addable < v.shown and v.addable > v.suggested|length %}
+    <p class="hint pick-note">{{ t("web.suggest.all_hint") }}</p>
+    {%- endif %}
+    <fieldset class="picks">
+      <legend>{{ t("web.suggest.choose") }}</legend>
+      {%- if v.suggested %}
+      <ul class="suggestions">{% for s in v.suggested %}{{ suggestion(s) }}{% endfor %}</ul>
+      {%- endif %}
+      {%- if v.others %}
+      <details{% if v.query %} open{% endif %}>
+        <summary>{{ tn("web.suggest.others", v.others|length) }}</summary>
+        <ul class="suggestions">{% for s in v.others %}{{ suggestion(s, loop.first) }}{% endfor %}</ul>
+      </details>
+      {%- endif %}
+    </fieldset>
+    <div class="pick-bar">
+      <button name="pick" value="selected">{{ t("web.suggest.add_selected") }}</button>
+    </div>
+  </form>
+  {%- endif %}
+  </div>
   {%- endif %}
   <div class="line install-link"><p><a href="{{ v.install_url }}">{{ t("web.suggest.install") }}</a></p>{{ help(hb, "projects-install", t("web.suggest.install"), ["projects.install"], true) }}</div>
   {%- endif %}

@@ -147,7 +147,7 @@ Projects, and Settings holds a fourth that is optional:
 - 🐙 **GitHub App.** Say whose repositories they are (your username or an organization: lastcall asks GitHub which), and
   one click creates the App, private to that account. You must be signed in to github.com as that account, or, for an
   organization, be one of its owners or allowed to manage its GitHub Apps. Then install it on the repositories lastcall
-  may work on.
+  may work on: GitHub brings you back to lastcall when you do, and lastcall reads them from there.
 - 🤖 **Accounts.** Add each AI subscription that lastcall may use, and sign it in with its tool's own official
   login. lastcall never sees it:
 
@@ -166,7 +166,8 @@ Projects, and Settings holds a fourth that is optional:
   docker compose --profile local up -d ollama                      # the model server
   docker compose --profile local run --rm ollama-pull qwen3-coder  # a model, about 19 GB: a graphics card helps
   ```
-- 📁 **Projects.** lastcall suggests your repositories and says why. Add the ones you want, or any by its address.
+- 📁 **Projects.** lastcall suggests your repositories and says why. Tick the ones you want, or add the suggested ones
+  or all of them at once, with a filter when you have many. Any other repository goes in by its address.
 - 🔔 **Settings.** Where lastcall should notify you. Choose the service and fill in what it asks for: Telegram (paste
   your bot's token and lastcall finds your chat), ntfy, Discord, Slack or email, or any of the
   [services that Apprise reaches](https://github.com/caronc/apprise#supported-notifications). lastcall saves a
@@ -254,7 +255,8 @@ port changes.
 
   Keep the port reachable by the proxy only, as `127.0.0.1` does: whoever reaches it directly could pass for anyone
   in those headers. Without the headers, forms answer that they did not come from this site, the session cookie
-  loses `Secure`, and the GitHub App that you create from the web UI sends you back to an address you cannot reach.
+  loses `Secure`, and the GitHub App that you create from the web UI sends you back, once it is created and once you
+  install it, to an address you cannot reach.
   `LASTCALL_WEB_ORIGIN`, such as `https://lastcall.example.com`, only adds origins that forms may come from; it does
   not replace the headers.
 

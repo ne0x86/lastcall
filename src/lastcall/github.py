@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,7 @@ class App:
     owner: str
     html_url: str
     pem: str
+    returns: bool = False  # GitHub brings the owner back to the web UI after an installation (its setup_url)
 
     @property
     def install_url(self) -> str:
@@ -80,7 +81,10 @@ class App:
     @classmethod
     def load(cls, store: SecretStore) -> App | None:
         data = store.get_json(APP_SECRET)
-        return cls(**data) if data else None
+        if not data:
+            return None
+        known = {f.name for f in fields(cls)}  # a later version may save more: what this one does not know waits
+        return cls(**{name: value for name, value in data.items() if name in known})
 
     def save(self, store: SecretStore) -> None:
         store.set_json(APP_SECRET, asdict(self))

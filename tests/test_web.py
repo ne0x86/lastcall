@@ -3,7 +3,8 @@ import http.client
 import json
 import re
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -14,6 +15,7 @@ import waitress.server
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from flask.testing import FlaskClient
+from werkzeug.test import TestResponse
 
 import lastcall.web as site
 from lastcall.accounts import Account
@@ -23,6 +25,7 @@ from lastcall.quota import HOUR, QuotaError, Reading, Window
 from lastcall.recipes.audit import AuditReport
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
+from lastcall.suggest import Suggestion
 from lastcall.tiers import TIERS
 from lastcall.web import CSP, GRANT_TIMEOUT, create_app, serve
 from lastcall.web.auth import (
@@ -39,7 +42,7 @@ from lastcall.web.auth import (
 )
 from test_loki import FakeLoki
 from test_notify import Outbox
-from test_projects import FakeGitHub
+from test_projects import APP, FakeGitHub
 
 NOW = 1_800_000_000.0
 DAY = 86_400.0
@@ -74,7 +77,7 @@ class Web:
             log=self.logs.append,
             origins=origins,
             github=(lambda: cast(GitHub, github)) if github else None,
-            background=lambda work: work(),
+            background=options.pop("background", lambda work: work()),
             notifier=Notifier(self.secrets, self.store, send=self.outbox, log=self.logs.append),
             **options,
         )
@@ -444,7 +447,7 @@ def test_suggestions_in_spanish(github_web: Web) -> None:
     assert response.headers["Location"] == "/projects?done=refreshing"
     page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
     assert "Leído de GitHub ahora mismo." in page
-    assert 'acme/api</a> <span class="badge">sugerido</span>' in page
+    assert ">acme/api</label>" in page and '</a> <span class="badge">sugerido</span>' in page
     assert "tests · CI · 1\u00a0issue abierto" in page and "unos 11k tokens de código" in page
     assert "<summary>1 repositorio más</summary>" in page and "excluido: archivado" in page
     web.store.add_project("acme/api")
@@ -1625,7 +1628,7 @@ def test_the_github_page_has_steps_a_way_back_and_its_help(tmp_path: Path) -> No
     ready = Web(tmp_path / "ready", github=FakeGitHub())
     ready.set_up()
     page = ready.client.get("/github").get_data(as_text=True)
-    assert 'class="status-line"' in page and 'href="/projects">Next: choose your projects</a>' in page
+    assert 'class="status-line"' in page and 'href="/github/installed">Next: choose your projects</a>' in page
     assert '<li class="is-done">Create' in page and "help-github-install" in page
     assert "lastcall works through your own GitHub App" not in page
     done = ready.client.get("/github?done=app_created").get_data(as_text=True)
@@ -2205,3 +2208,507 @@ def test_the_owner_of_a_repository_is_asked_without_regard_to_case(tmp_path: Pat
     github = Installations({"acme": installation("Acme", "Organization", LACKING)})
     web = checks_web(tmp_path, app_pem, github, "Acme/api", "acme/web", owner="acme")
     assert len(notices(web.client.get("/projects").get_data(as_text=True))) == 2 and len(github.asked) == 1
+
+
+# easier first steps: GitHub brings the owner back after the installation, and many projects are added at once
+
+
+class CountingGitHub(FakeGitHub):
+    """The two repositories of FakeGitHub, and how many times they were read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.readings = 0
+
+    def installations(self) -> list[dict[str, Any]]:
+        self.readings += 1
+        return super().installations()
+
+
+class NoGitHub(FakeGitHub):
+    """A GitHub that fails the test as soon as anything asks it for anything."""
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in ("installations", "installation_token", "repositories", "files", "repository_token", "repository"):
+            raise AssertionError(f"GitHub was asked: {name}")
+        return super().__getattribute__(name)
+
+
+def never_fetch(req: Request) -> Response:
+    raise AssertionError(f"GitHub was asked: {req.full_url}")
+
+
+SUGGESTED = ("acme/api", "acme/web", "acme/Worker", "acme/api-client")
+OTHERS = ("acme/docs", "acme/old-site", "acme/legacy-API")
+
+
+def suggest_many(store: Store, suggested: Collection[str] = SUGGESTED, others: Collection[str] = OTHERS) -> None:
+    """What a reading of GitHub left in the store: the repositories, the first ones recommended."""
+    why: tuple[tuple[str, dict[str, Any]], ...] = (("push", {"count": 3}), ("tests", {}))
+    found = [Suggestion(name, 60 - n, True, "Python", 8_000, why) for n, name in enumerate(suggested)]
+    found += [Suggestion(name, 20 - n, False, "Go", 3_000, why) for n, name in enumerate(others)]
+    store.save_suggestions(found, NOW)
+
+
+def many_web(tmp_path: Path, **suggestions: Collection[str]) -> Web:
+    """A signed-in web UI whose GitHub fails the test when asked: Add many reads the store only."""
+    web = Web(tmp_path, github=NoGitHub(), fetch=never_fetch)
+    web.set_up()
+    suggest_many(web.store, **suggestions)
+    return web
+
+
+def add_many(web: Web, pick: str, *repos: str, q: str | None = None) -> TestResponse:
+    form: dict[str, Any] = {"csrf": web.csrf(), "pick": pick, "repo": list(repos)}
+    if q is not None:
+        form["q"] = q
+    return web.client.post("/projects/add-many", data=form, headers=SITE)
+
+
+def added(web: Web) -> set[str]:
+    return {p.repo for p in web.store.projects()}
+
+
+def pick_form(page: str) -> str:
+    """The form that adds many projects, the only one of the Projects page that posts to /projects/add-many."""
+    found = re.search(r'<form method="post" action="/projects/add-many" class="pick">(.*?)</form>', page, re.S)
+    assert found, "the Projects page has no Add many form"
+    return found.group(1)
+
+
+def test_the_manifest_that_the_web_ui_sends_asks_github_to_come_back_and_the_app_remembers_it(tmp_path: Path) -> None:
+    conversion = {
+        "id": 42,
+        "slug": "lastcall-acme",
+        "name": "lastcall-acme",
+        "owner": {"login": "acme"},
+        "html_url": "https://github.com/apps/lastcall-acme",
+        "pem": "-----BEGIN RSA PRIVATE KEY-----",
+    }
+    web = Web(tmp_path, exchange=lambda code: conversion)
+    web.set_up()
+    page = web.client.get("/github/new?owner=acme&org=1").get_data(as_text=True)
+    value = re.search(r'name="manifest" value="([^"]+)"', page)
+    action = re.search(CREATE_FORM, page)
+    assert value and action
+    sent = json.loads(html.unescape(value.group(1)))
+    assert sent["redirect_url"] == "http://localhost/github/callback"  # built like the redirect url
+    assert sent["setup_url"] == "http://localhost/github/installed" and sent["setup_on_update"] is True
+    state = parse_qs(urlsplit(html.unescape(action.group(1))).query)["state"][0]
+    assert web.client.get(f"/github/callback?code=abc&state={state}").status_code == 302
+    saved = App.load(web.secrets)
+    assert saved is not None and saved.returns is True  # GitHub will bring the owner back after installing it
+
+
+def test_coming_back_from_github_reads_the_repositories_and_goes_to_the_projects(tmp_path: Path) -> None:
+    github = CountingGitHub()
+    web = Web(tmp_path, github=github)
+    web.set_up()
+    assert web.store.suggestions() == [] and github.readings == 0
+    web.logs.clear()
+    # GitHub adds an installation_id, and anyone can write one: no part of the address is used
+    for query in ("?installation_id=4242&setup_action=install", "?installation_id=not-a-number", ""):
+        github.readings = 0
+        response = web.client.get("/github/installed" + query)
+        assert response.status_code == 302 and response.headers["Location"] == "/projects?done=installed"
+        assert github.readings == 1
+    assert [s.repo for s in web.store.suggestions()] == ["acme/api", "acme/old-site"]
+    lines = [line for line in web.logs if "after its installation page" in line]
+    assert lines == ["Web UI: reading the repositories of the GitHub App, after its installation page"] * 3
+    assert "4242" not in "".join(web.logs)  # and never the id that anyone can write
+    english = web.client.get("/projects?done=installed").get_data(as_text=True)
+    assert (
+        '<p class="notice done" role="status">lastcall is reading the repositories where your GitHub App is '
+        "installed. Reload this page in a moment and tick the ones it may work on.</p>" in english
+    )
+    spanish = web.client.get("/projects?done=installed", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert (
+        '<p class="notice done" role="status">lastcall está leyendo los repositorios donde está instalada tu '
+        "GitHub App. Recarga esta página en un momento y marca aquellos en los que puede trabajar.</p>" in spanish
+    )
+
+
+def test_coming_back_from_github_needs_a_signed_in_owner_and_an_app(tmp_path: Path) -> None:
+    web = Web(tmp_path / "none")
+    assert web.client.get("/github/installed").headers["Location"] == "/setup"
+    web.set_up()
+    without_app = web.client.get("/github/installed?installation_id=7")
+    assert without_app.status_code == 302 and without_app.headers["Location"] == "/github"
+    assert web.store.suggestions() == []
+    github = CountingGitHub()
+    ready = Web(tmp_path / "app", github=github)
+    ready.set_up()
+    stranger = ready.app.test_client()
+    assert stranger.get("/github/installed?installation_id=7").headers["Location"] == "/login"
+    assert github.readings == 0 and ready.store.suggestions() == []  # nobody who is not signed in starts a reading
+
+
+def test_one_reading_of_the_repositories_at_a_time_whoever_asks_for_it(tmp_path: Path) -> None:
+    github = CountingGitHub()
+    waiting: list[Callable[[], None]] = []
+    web = Web(tmp_path, github=github, background=waiting.append)
+    web.set_up()
+    assert web.client.post("/projects/refresh", data={"csrf": web.csrf()}, headers=SITE).status_code == 302
+    for _ in range(2):
+        assert web.client.get("/github/installed").headers["Location"] == "/projects?done=installed"
+    assert len(waiting) == 1 and github.readings == 0  # one is waiting to run: the others did not start another
+    page = web.client.get("/projects?done=installed").get_data(as_text=True)
+    assert "Reading from GitHub now. Reload this page in a minute." in page  # the page's own line stays
+    waiting.pop()()  # the reading goes through
+    assert github.readings == 1 and len(web.store.suggestions()) == 2
+    web.client.get("/github/installed")
+    assert len(waiting) == 1  # and the next one may start
+
+
+@pytest.mark.parametrize("returns", [True, False])
+def test_the_github_page_at_step_two_leads_to_the_installation_and_then_to_the_projects(
+    tmp_path: Path, returns: bool
+) -> None:
+    web = Web(tmp_path, github=FakeGitHub())
+    replace(APP, returns=returns).save(web.secrets)  # an App that GitHub brings back, or one made before it could
+    web.set_up()
+    page = web.client.get("/github").get_data(as_text=True)
+    install = re.search(
+        r'<a class="button" href="(https://github\.com/[^"]+)"([^>]*)>Install it on your repositories</a>', page
+    )
+    assert install and install.group(1) == APP.install_url
+    back = "When the App is installed, GitHub brings you back here to choose your projects."
+    tab = (
+        "GitHub opens in a new tab. When the App is installed there, "
+        "come back to this tab and press the button below."
+    )
+    if returns:
+        assert "target=" not in install.group(2) and 'rel="noopener"' not in page  # the same tab: GitHub comes back
+        assert f'<p class="hint" id="install-back">{back}</p>' in page and tab not in page
+    else:
+        assert ' target="_blank" rel="noopener"' in install.group(2)  # another tab: this one waits
+        assert f'<p class="hint" id="install-back">{tab}</p>' in page and back not in page
+    assert 'aria-describedby="install-back"' in install.group(2)  # the line is the button's description
+    # the "?" stays after the button, and the next step is a button after the line, inside the card
+    assert re.search(
+        r'Install it on your repositories</a><button type="button" class="help" popovertarget="help-github-install"',
+        page,
+    )
+    next_step = '<a class="button secondary" href="/github/installed">Next: choose your projects</a>'
+    card = page.split('<section class="card readable github-card">')[1].split("</section>")[0]
+    assert card.index("Install it on your repositories") < card.index('id="install-back"') < card.index(next_step)
+    assert 'class="next-step"' not in page and 'href="/projects">Next' not in page  # the small link is gone
+    assert page.count("Next: choose your projects") == 1 and "help-github-install" in page
+    # the steps bar is the same
+    assert '<li class="is-done">Create' in page and '<li aria-current="step">Install</li>' in page
+    assert "<li>Choose projects</li>" in page
+    assert help_buttons_inside_a_paragraph(page) == [] and " style=" not in page and "<script" not in page
+    spanish = web.client.get("/github", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert ">Siguiente: elige tus proyectos</a>" in spanish
+    if returns:
+        assert "Cuando la App esté instalada, GitHub te trae de vuelta aquí para que elijas tus proyectos." in spanish
+    else:
+        assert (
+            "GitHub se abre en una pestaña nueva. Cuando la App esté instalada allí, vuelve a esta pestaña" in spanish
+        )
+        assert "y pulsa el botón de abajo." in spanish
+    # without an App the page has none of this
+    none = Web(tmp_path / "none")
+    none.set_up()
+    assert "install-back" not in none.client.get("/github").get_data(as_text=True)
+
+
+def test_add_many_adds_what_was_ticked_with_the_name_that_the_suggestion_has(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    web.logs.clear()
+    response = add_many(web, "selected", "acme/web", "ACME/WORKER", "acme/web")  # any case, and twice
+    assert response.status_code == 302 and response.headers["Location"] == "/projects?done=added_many&count=2"
+    assert added(web) == {"acme/web", "acme/Worker"}  # as the suggestion writes them
+    assert [p.weight for p in web.store.projects()] == [1, 1] and all(p.active for p in web.store.projects())
+    assert [line for line in web.logs if "projects added" in line] == [
+        "Web UI: projects added from the suggestions (selected): 2"
+    ]
+    page = web.client.get("/projects?done=added_many&count=2").get_data(as_text=True)
+    assert "2 projects added. lastcall audits them in coming bursts." in page
+    assert 'value="acme/web"' not in page and 'value="acme/api"' in page  # they left the suggestions
+    spanish = web.client.get("/projects?done=added_many&count=2", headers={"Accept-Language": "es"})
+    assert "2 proyectos añadidos. lastcall los audita en las próximas ráfagas." in spanish.get_data(as_text=True)
+    one = add_many(web, "selected", "acme/docs")
+    assert one.headers["Location"] == "/projects?done=added_many&count=1"
+    assert "1 project added. lastcall audits it in a coming burst." in web.client.get(
+        one.headers["Location"]
+    ).get_data(as_text=True)
+    assert "1 proyecto añadido. lastcall lo audita en una de las próximas ráfagas." in web.client.get(
+        one.headers["Location"], headers={"Accept-Language": "es"}
+    ).get_data(as_text=True)
+
+
+@pytest.mark.parametrize("count", ["0", "-3", "abc", "", "99999999999", "1.5"])
+def test_a_count_that_is_not_a_count_says_nothing(tmp_path: Path, count: str) -> None:
+    web = many_web(tmp_path)
+    page = web.client.get(f"/projects?done=added_many&count={count}").get_data(as_text=True)
+    assert 'role="status"' not in page  # no notice, and no number that anyone wrote in the address
+
+
+def test_add_many_does_nothing_with_a_value_that_is_not_a_suggestion_or_is_a_project_already(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    web.store.add_project("acme/api")
+    web.store.update_project("acme/api", active=True, weight=3, language="Spanish", max_prs=2)
+    web.store.add_project("acme/Cased")  # a project the suggestions also list, written in another case
+    web.store.save_suggestions([*web.store.suggestions(), Suggestion("acme/cased", 50, True, None, 100, ())], NOW)
+    strangers = ("acme/nothing", "evil/repo", "../etc/passwd", "acme/api ", "", "acme/docs/extra")
+    response = add_many(web, "selected", "acme/api", "ACME/API", "acme/cased", *strangers, "acme/DOCS")
+    assert response.headers["Location"] == "/projects?done=added_many&count=1"
+    assert added(web) == {"acme/api", "acme/Cased", "acme/docs"}  # only acme/docs, as it is in the suggestions
+    api = web.store.project("acme/api")
+    assert api is not None and (api.weight, api.language, api.max_prs) == (3, "Spanish", 2)  # its settings stay
+    # nothing that counts: the same error as with nothing ticked, and nothing added
+    before = added(web)
+    for repos in ((), ("acme/api",), ("acme/nothing", "evil/repo"), ("acme/docs",)):
+        refused = add_many(web, "selected", *repos)
+        page = refused.get_data(as_text=True)
+        assert refused.status_code == 400
+        assert 'role="alert"' in page and "Tick at least one repository." in page
+        assert added(web) == before
+    assert add_many(web, "selected").status_code == 400
+    spanish = web.client.post(
+        "/projects/add-many", data={"csrf": web.csrf(), "pick": "selected"}, headers={**SITE, "Accept-Language": "es"}
+    )
+    assert "Marca al menos un repositorio." in spanish.get_data(as_text=True)
+
+
+def test_add_many_gives_the_projects_page_back_with_its_filter_when_nothing_was_chosen(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    page = add_many(web, "selected", q=" API ").get_data(as_text=True)
+    assert "Tick at least one repository" in page
+    assert '<input type="hidden" name="q" value="API">' in page and "3 of 7 repositories match" in page
+    assert '<input id="q" name="q" type="search" value="API"' in page  # the owner sees the list as it was
+    assert added(web) == set()
+
+
+@pytest.mark.parametrize("pick", ["", "everything", "SELECTED"])
+def test_a_button_that_the_form_does_not_have_adds_only_what_was_ticked(tmp_path: Path, pick: str) -> None:
+    web = many_web(tmp_path)
+    assert add_many(web, pick).status_code == 400 and added(web) == set()
+    assert add_many(web, pick, "acme/docs").headers["Location"] == "/projects?done=added_many&count=1"
+    assert added(web) == {"acme/docs"}
+
+
+def test_add_many_adds_the_suggested_ones_or_all_of_them_as_the_filter_shows_them(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    web.store.add_project("acme/web")  # not a suggestion any more
+    # the suggested ones left: api, Worker and api-client; the tick of another one does not count
+    done = add_many(web, "suggested", "acme/docs", q="")
+    assert done.headers["Location"] == "/projects?done=added_many&count=3"
+    assert added(web) == {"acme/web", "acme/api", "acme/Worker", "acme/api-client"}
+    # all of what is left: docs, old-site and legacy-API
+    assert add_many(web, "all").headers["Location"] == "/projects?done=added_many&count=3"
+    assert added(web) == {"acme/web", *SUGGESTED, *OTHERS}
+    assert [line for line in web.logs if "projects added" in line][-2:] == [
+        "Web UI: projects added from the suggestions (suggested): 3",
+        "Web UI: projects added from the suggestions (all): 3",
+    ]
+    assert (
+        add_many(web, "all").status_code == 400 and add_many(web, "suggested").status_code == 400
+    )  # nothing is left
+
+
+def test_add_all_skips_the_archived_repositories_the_forks_and_the_empty_ones_which_only_a_tick_adds(
+    tmp_path: Path,
+) -> None:
+    web = many_web(tmp_path, suggested=("acme/api",), others=("acme/docs",))
+    left_out = [Suggestion(f"acme/{why}", 0, False, None, 0, ((why, {}),)) for why in ("archived", "fork", "empty")]
+    web.store.save_suggestions([*web.store.suggestions(), *left_out], NOW)
+    form = pick_form(web.client.get("/projects").get_data(as_text=True))
+    assert ">Add all 2</button>" in form  # api and docs, not the three that lastcall leaves out
+    assert "“Add all” leaves out the archived repositories, the forks and the empty ones" in form  # and says so
+    assert 'value="acme/archived"' in form and 'value="acme/fork"' in form  # they can still be ticked
+    assert add_many(web, "all").headers["Location"] == "/projects?done=added_many&count=2"
+    assert added(web) == {"acme/api", "acme/docs"}
+    form = pick_form(web.client.get("/projects").get_data(as_text=True))
+    assert 'value="all"' not in form and 'value="suggested"' not in form  # nothing left that Add all would add
+    assert add_many(web, "all").status_code == 400
+    assert add_many(web, "selected", "acme/fork").headers["Location"] == "/projects?done=added_many&count=1"
+    assert added(web) == {"acme/api", "acme/docs", "acme/fork"}
+
+
+def test_add_many_with_a_filter_adds_what_the_owner_sees(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    # "api", whatever the case: api and api-client are suggested, legacy-API is not
+    assert add_many(web, "suggested", q="API").headers["Location"] == "/projects?done=added_many&count=2"
+    assert added(web) == {"acme/api", "acme/api-client"}
+    assert add_many(web, "all", q="  api ").headers["Location"] == "/projects?done=added_many&count=1"
+    assert added(web) == {"acme/api", "acme/api-client", "acme/legacy-API"}
+    assert add_many(web, "all", q="api").status_code == 400  # all that it shows is added
+    assert add_many(web, "suggested", q="zzz").status_code == 400
+    assert add_many(web, "all", q="zzz").status_code == 400
+    # what the owner ticked counts whatever the filter says: the ticked rows were on the page
+    assert add_many(web, "selected", "acme/docs", q="api").headers["Location"] == "/projects?done=added_many&count=1"
+    assert added(web) == {"acme/api", "acme/api-client", "acme/legacy-API", "acme/docs"}
+    # a filter cut at 100 characters, as the page cuts it
+    assert add_many(web, "all", q="x" * 5000).status_code == 400
+
+
+def test_add_many_needs_the_csrf_token_this_sites_origin_and_a_signed_in_owner(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    form = {"pick": "all", "repo": ["acme/docs"]}
+    missing = web.client.post("/projects/add-many", data=form, headers=SITE)
+    forged = web.client.post("/projects/add-many", data={**form, "csrf": "forged"}, headers=SITE)
+    for refused in (missing, forged):
+        assert refused.status_code == 403 and "This form has expired" in refused.get_data(as_text=True)
+    elsewhere = web.client.post(
+        "/projects/add-many", data={**form, "csrf": web.csrf()}, headers={"Origin": "https://evil.example"}
+    )
+    assert elsewhere.status_code == 403 and "Form not accepted" in elsewhere.get_data(as_text=True)
+    stranger = web.app.test_client()
+    signed_out = stranger.post("/projects/add-many", data={**form, "csrf": web.csrf()}, headers=SITE)
+    assert signed_out.status_code == 302 and signed_out.headers["Location"] == "/login"
+    assert added(web) == set()  # and no GitHub was asked: NoGitHub would have failed
+
+
+def test_the_projects_page_has_one_form_for_the_suggestions_with_a_checkbox_in_each_row(tmp_path: Path) -> None:
+    web = many_web(tmp_path)
+    page = web.client.get("/projects").get_data(as_text=True)
+    form = pick_form(page)
+    assert re.search(
+        r'<input type="hidden" name="csrf" value="[^"]+">\s*<input type="hidden" name="q" value="">', form
+    )
+    assert re.search(r'<fieldset class="picks">\s*<legend>Choose the repositories to add</legend>', form)
+    assert re.findall(r'type="checkbox" name="repo" value="([^"]+)"', form) == [*SUGGESTED, *OTHERS]  # best first
+    for name in (*SUGGESTED, *OTHERS):
+        box = "pick-" + name.replace("/", "--")
+        assert f'<input id="{box}" type="checkbox" name="repo" value="{name}">' in form
+        assert f'<label for="{box}" class="suggestion-name">{name}</label>' in form  # the name ticks the box
+        assert f'<a class="repo-link" href="https://github.com/{name}"' in form  # and the link is a separate one
+    assert form.count('class="badge">suggested</span>') == 4 and form.count("<li ") == 7
+    assert form.count('class="chip score"') == 7 and "last push 3\u00a0days ago" in form  # the rest of each row stays
+    assert re.search(r'class="help" popovertarget="help-projects-score"', form)
+    # the rows have no form of their own: the only other form that posts to /projects/add takes an address
+    assert page.count('action="/projects/add"') == 1
+    assert 'for="repo">owner/name, or its address on GitHub</label>' in page
+    # three buttons: the two that add many at once above the list, and the primary one in the bar under it; the "?"
+    # inside the form never submits
+    buttons = re.findall(r"<button[^>]*>[^<]*</button>", form)
+    submits = [b for b in buttons if 'name="pick"' in b]
+    assert submits == [
+        '<button class="secondary" name="pick" value="suggested">Add the 4 suggested</button>',
+        '<button class="secondary" name="pick" value="all">Add all 7</button>',
+        '<button name="pick" value="selected">Add selected</button>',
+    ]
+    assert form.index('class="pick-all"') < form.index('<fieldset class="picks">') < form.index('class="pick-bar"')
+    bar = form.split('<div class="pick-bar">')[1]
+    assert bar.count('name="pick"') == 1 and 'value="selected"' in bar  # the bar at the bottom stays small
+    assert all(b.startswith('<button type="button" class="help"') for b in buttons if b not in submits)
+    assert help_buttons_inside_a_paragraph(page) == [] and " style=" not in page and "<script" not in page
+    assert not re.search(r"\son[a-z]+=", page)
+    spanish = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert 'value="selected">Añadir los marcados</button>' in spanish
+    assert ">Añadir los 4 sugeridos</button>" in spanish and ">Añadir todos (7)</button>" in spanish
+    assert "<legend>Elige los repositorios que quieres añadir</legend>" in spanish
+
+
+def test_the_buttons_that_add_many_count_what_is_shown_and_appear_only_when_they_mean_something(
+    tmp_path: Path,
+) -> None:
+    web = many_web(tmp_path, suggested=("acme/api",), others=())
+    page = pick_form(web.client.get("/projects").get_data(as_text=True))
+    assert ">Add selected</button>" in page and ">Add the suggested one</button>" in page
+    assert 'value="all"' not in page  # nothing besides the suggested ones: no "Add all"
+    suggest_many(web.store, suggested=(), others=("acme/docs",))
+    page = pick_form(web.client.get("/projects").get_data(as_text=True))
+    assert ">Add selected</button>" in page and ">Add the repository</button>" in page
+    assert 'value="suggested"' not in page and "<details" in page  # nothing recommended: no such button
+    suggest_many(web.store, suggested=("acme/api", "acme/web"), others=("acme/docs", "acme/old-site", "acme/x"))
+    page = pick_form(web.client.get("/projects").get_data(as_text=True))
+    assert ">Add the 2 suggested</button>" in page and ">Add all 5</button>" in page
+    assert "<summary>3 more repositories</summary>" in page
+    web.store.add_project("acme/web")  # a project is not offered any more
+    page = pick_form(web.client.get("/projects").get_data(as_text=True))
+    assert ">Add the suggested one</button>" in page and ">Add all 4</button>" in page
+    empty = web.client.get("/projects?q=nothing-like-it").get_data(as_text=True)
+    assert 'name="pick"' not in empty and "/projects/add-many" not in empty  # no list, no buttons
+    web.store.save_suggestions([], NOW)
+    none = web.client.get("/projects").get_data(as_text=True)
+    assert "/projects/add-many" not in none and 'type="search"' not in none
+
+
+def test_the_projects_page_filters_the_suggestions_by_name_whatever_the_case(tmp_path: Path) -> None:
+    web = many_web(tmp_path)  # seven suggestions: more than six
+    page = web.client.get("/projects").get_data(as_text=True)
+    assert '<div id="suggestions">' in page  # where the filter and Show all bring the page back to
+    assert '<form method="get" action="/projects#suggestions" class="filter" role="search">' in page
+    assert '<label for="q">Filter by name</label>' in page and 'type="search" value=""' in page
+    assert ">Filter</button>" in page and 'class="filter-note"' not in page and "<details>" in page
+    page = web.client.get("/projects?q=API").get_data(as_text=True)
+    form = pick_form(page)
+    assert re.findall(r'name="repo" value="([^"]+)"', form) == ["acme/api", "acme/api-client", "acme/legacy-API"]
+    assert (
+        '<p class="filter-note">3 of 7 repositories match “API”. <a href="/projects#suggestions">Show all</a></p>'
+        in page
+    )
+    assert '<input type="hidden" name="q" value="API">' in form and 'type="search" value="API"' in page
+    assert ">Add the 2 suggested</button>" in form and ">Add all 3</button>" in form  # what is shown
+    assert "<details open>" in form and "<summary>1 more repository</summary>" in form  # a match is never hidden
+    spanish = web.client.get("/projects?q=api", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "3 de 7 repositorios coinciden con «api». " in spanish and ">Ver todos</a>" in spanish
+    assert ">Filtrar</button>" in spanish and "Filtrar por nombre</label>" in spanish
+    nothing = web.client.get("/projects?q=zzz").get_data(as_text=True)
+    assert "0 of 7 repositories match “zzz”." in nothing and 'type="search" value="zzz"' in nothing
+    assert 'type="checkbox"' not in nothing and 'name="pick"' not in nothing  # the filter stays, to be cleared
+    assert '<a href="/projects#suggestions">Show all</a>' in nothing
+    # the text is the owner's own: it is escaped, spaces around it do not count, and a long one is cut
+    odd = web.client.get("/projects?q=%3Cb%3Ex%3C/b%3E").get_data(as_text=True)
+    assert "&lt;b&gt;x&lt;/b&gt;" in odd and "<b>x</b>" not in odd
+    spaced = web.client.get("/projects?q=%20%20api%20").get_data(as_text=True)
+    assert "3 of 7 repositories match “api”." in spaced
+    assert f'value="{"x" * 100}"' in web.client.get("/projects?q=" + "x" * 300).get_data(as_text=True)
+    assert " style=" not in nothing and "<script" not in nothing and help_buttons_inside_a_paragraph(nothing) == []
+
+
+def test_the_filter_shows_with_more_than_six_suggestions_or_when_one_is_set(tmp_path: Path) -> None:
+    web = many_web(tmp_path, suggested=("acme/a", "acme/b", "acme/c"), others=("acme/d", "acme/e", "acme/f"))
+    few = web.client.get("/projects").get_data(as_text=True)
+    assert 'type="search"' not in few and "filter-note" not in few  # six: no filter, and no one to confuse
+    assert 'type="checkbox"' in few and ">Add all 6</button>" in few
+    narrowed = web.client.get("/projects?q=b").get_data(as_text=True)
+    assert 'type="search" value="b"' in narrowed  # set: it shows
+    assert "1 of 6 repositories match “b”." in narrowed
+    # Show all lands where the filter was, even when the list is too short to need one
+    assert '<div id="suggestions">' in narrowed and '<a href="/projects#suggestions">Show all</a>' in narrowed
+    assert '<div id="suggestions">' in few
+    suggest_many(web.store, suggested=("acme/a", "acme/b", "acme/c"), others=("acme/d", "acme/e", "acme/f", "acme/g"))
+    assert 'type="search"' in web.client.get("/projects").get_data(as_text=True)  # seven: it shows
+    web.store.add_project("acme/a")  # a project is not a suggestion: six are left
+    assert 'type="search"' not in web.client.get("/projects").get_data(as_text=True)
+    web.store.save_suggestions([], NOW)  # nothing to filter, nothing to come back to
+    assert 'id="suggestions"' not in web.client.get("/projects?q=b").get_data(as_text=True)
+
+
+def test_the_projects_page_without_the_app_has_no_suggestions_to_add_many_of(web: Web) -> None:
+    web.set_up()
+    suggest_many(web.store)
+    page = web.client.get("/projects?q=api").get_data(as_text=True)
+    assert "Create the GitHub App first" in page
+    assert "/projects/add-many" not in page and 'type="search"' not in page
+
+
+def test_what_the_filter_and_add_many_ask_of_the_suggestions() -> None:
+    from lastcall.store import ProjectRow
+    from lastcall.web.project_views import clean_query, left_to_add, matching
+
+    found = [
+        Suggestion(name, 50, True, None, 0, ()) for name in ("acme/API", "acme/web", "Acme/api-client", "acme/x")
+    ]
+    assert [s.repo for s in matching(found, "api")] == ["acme/API", "Acme/api-client"]
+    assert [s.repo for s in matching(found, "API-")] == ["Acme/api-client"]
+    assert [s.repo for s in matching(found, "")] == [s.repo for s in found]
+    assert matching(found, "acme/web ") == []  # clean_query trims it before
+    assert clean_query("  api \n") == "api" and clean_query("x" * 500) == "x" * 100 and clean_query("   ") == ""
+    projects = [ProjectRow("ACME/web", True, 1, None, 3)]
+    assert [s.repo for s in left_to_add(projects, found)] == ["acme/API", "Acme/api-client", "acme/x"]
+
+
+def test_the_layout_of_the_add_many_form_keeps_its_buttons_in_view() -> None:
+    css = (Path(__file__).parent.parent / "src/lastcall/web/static/style.css").read_text(encoding="utf-8")
+    bar = re.search(r"\n\.pick-bar \{(.*?)\n\}", css, re.S)
+    assert bar is not None and "position: sticky;" in bar.group(1) and "bottom: 0;" in bar.group(1)
+    assert "html:has(.pick-bar) { scroll-padding-bottom:" in css  # a field in focus is never behind the bar
+    assert '.suggestion-name::after { content: ""; position: absolute; inset: 0; }' in css  # a tap anywhere ticks
+    assert (
+        "button.secondary, a.button.secondary {" in css
+    )  # "Next: choose your projects" is a link in a button's look

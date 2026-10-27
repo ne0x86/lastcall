@@ -66,6 +66,7 @@ GRANT_SECONDS = 600.0  # what GitHub says an installation was granted, kept 10 m
 RETRY_SECONDS = 60.0  # a gap (the owner is fixing it) or a miss is kept only a minute, so that the notice goes soon
 GRANT_TIMEOUT = 5  # seconds that the Projects page waits for GitHub's answer on one installation
 MAX_GRANTS = 100
+MAX_ADDED = 100_000  # the most that a "N projects added" notice says: the number is in the address
 CREDENTIAL = re.compile(r"(?i)\b(bearer|basic)\s+[^\"']*|\b(authorization|header value)\W+.*")
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
 CSP = (
@@ -279,17 +280,21 @@ def create_app(
     @app.get("/projects")
     @signed_in
     def projects_page() -> ResponseReturnValue:
-        return show_projects()
+        return show_projects(query=request.args.get("q", ""))
 
-    def show_projects(status: int = 200, error: str = "", install: str = "") -> ResponseReturnValue:
+    def show_projects(status: int = 200, error: str = "", install: str = "", query: str = "") -> ResponseReturnValue:
+        """The Projects page. `query` is what its filter looks for in the suggestions' names."""
         found = App.load(secrets)
         view = project_views.build(
-            store, g.lang, clock(), found.install_url if found else "", reading.is_set(), permissions_link
+            store, g.lang, clock(), found.install_url if found else "", reading.is_set(), permissions_link, query
         )
         view.tracker = signals.Tracker.load(secrets) is not None
         done = request.args.get("done", "")
-        known = ("added", "saved", "queued", "improve", "tests", "deps", "refreshing")
+        known = ("added", "saved", "queued", "improve", "tests", "deps", "refreshing", "installed")
         message = t(f"web.done.{done}") if done in known and not error else ""
+        count = request.args.get("count", 0, type=int)  # how many projects "Add many" added
+        if done == "added_many" and 0 < count <= MAX_ADDED and not error:
+            message = i18n.plural(g.lang, "web.done.added_many", count)
         return page("projects.html", status, v=view, done=message, error=error, install=install)
 
     def permissions_page(repo: str) -> str | None:
@@ -355,24 +360,54 @@ def create_app(
             log(f"Web UI: project {name} added")
         return redirect(url_for("projects_page", done="added"))
 
+    @app.post("/projects/add-many")
+    @signed_in
+    def add_projects() -> ResponseReturnValue:
+        """Add repositories from the suggestions in one go: the ones that were ticked, the suggested ones, or all of
+        them but the archived ones, the forks and the empty ones, the last two as the filter shows them (`q`). It
+        asks GitHub nothing: only a repository that the last reading found, and that is not a project yet, is added,
+        with the name that the reading gave it."""
+        form, query = request.form, project_views.clean_query(request.form.get("q", ""))
+        left = project_views.left_to_add(store.projects(), store.suggestions())
+        pick = form.get("pick", "")
+        if pick == "suggested":
+            chosen = [s for s in project_views.matching(left, query) if s.suggested]
+        elif pick == "all":  # never an archived repository, a fork or an empty one: those only when ticked
+            chosen = project_views.addable(project_views.matching(left, query))
+        else:  # "selected": whatever else a form says
+            pick, ticked = "selected", {repo.lower() for repo in form.getlist("repo")}
+            chosen = [s for s in left if s.repo.lower() in ticked]
+        if not chosen:
+            return show_projects(400, t("web.add.none"), query=query)
+        for s in chosen:
+            store.add_project(s.repo)
+        log(f"Web UI: projects added from the suggestions ({pick}): {len(chosen)}")
+        return redirect(url_for("projects_page", done="added_many", count=len(chosen)))
+
+    def read_repositories(client: GitHub) -> None:
+        """Read the repositories that the App is installed on, for the suggestions, outside the request. A reading
+        that is under way is enough: it does not start a second one."""
+        if reading.is_set():
+            return
+        reading.set()
+
+        def work() -> None:
+            try:
+                projects.refresh(store, client, clock())
+            except (GitHubError, OSError) as e:
+                log(f"suggestions: {e}")
+            finally:
+                reading.clear()
+
+        later(work)
+
     @app.post("/projects/refresh")
     @signed_in
     def refresh_projects() -> ResponseReturnValue:
         client = connect()
         if client is None:
             return show_projects(400, t("web.add.no_app"))
-        if not reading.is_set():
-            reading.set()
-
-            def work() -> None:
-                try:
-                    projects.refresh(store, client, clock())
-                except (GitHubError, OSError) as e:
-                    log(f"suggestions: {e}")
-                finally:
-                    reading.clear()
-
-            later(work)
+        read_repositories(client)
         return redirect(url_for("projects_page", done="refreshing"))
 
     def project_anchor(repo: str) -> str:
@@ -808,7 +843,9 @@ def create_app(
             app_states[state] = now
             while len(app_states) > MAX_STATES:  # every GET adds one: the oldest give way
                 del app_states[next(iter(app_states))]
-        values = manifest(owner, url_for("github_callback", _external=True))
+        values = manifest(
+            owner, url_for("github_callback", _external=True), url_for("github_installed", _external=True)
+        )
         permissions = ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in PERMISSIONS.items())
         g.github_form = True
         return page(
@@ -842,12 +879,27 @@ def create_app(
                 str(data["owner"]["login"]),
                 str(data["html_url"]),
                 str(data["pem"]),
+                returns=True,  # its manifest has a setup_url: GitHub brings the owner back after the installation
             )
         except (GitHubError, KeyError, TypeError, ValueError, OSError) as e:
             return page("github.html", 502, app=None, error=t("web.github.failed", error=e))
         created.save(secrets)
         log(f"Web UI: GitHub App {created.name} created")
         return redirect(url_for("github_page", done="app_created"))
+
+    @app.get("/github/installed")
+    @signed_in
+    def github_installed() -> ResponseReturnValue:
+        """Where GitHub brings the owner back after installing the App (the manifest's setup_url) or changing where
+        it is installed. GitHub adds an installation_id that anyone can forge, so nothing in the address is used:
+        this reads the repositories that the App is installed on, as the Projects page's own button does, and sends
+        the owner there to tick the ones lastcall may work on."""
+        client = connect()
+        if client is None:
+            return redirect(url_for("github_page"))
+        read_repositories(client)
+        log("Web UI: reading the repositories of the GitHub App, after its installation page")
+        return redirect(url_for("projects_page", done="installed"))
 
     @app.get("/accounts")
     @signed_in

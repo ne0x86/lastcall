@@ -68,3 +68,17 @@ def test_the_design_lists_every_permission_that_the_manifest_asks_for() -> None:
 def test_the_readme_says_what_the_two_after_the_merge_settings_need() -> None:
     after = README.split("**After the merge.**")[1].split("\n## ")[0]
     assert "need the GitHub App to read checks and commit statuses" in after and "older App" in after
+
+
+def test_the_documents_say_how_the_first_steps_go() -> None:
+    steps = " ".join(README.split("**3. Follow the dashboard.**")[1].split("That is all.")[0].split())
+    assert "GitHub brings you back to lastcall when you do" in steps
+    assert "Tick the ones you want, or add the suggested ones or all of them at once, with a filter" in steps
+    onboarding = DESIGN.split("### Onboarding")[1].split("2. **Suggestions.**")[0]
+    assert all(word in onboarding for word in ("`setup_url`", "`setup_on_update`", "/github/installed", "`returns`"))
+    web_ui = DESIGN.split("## 13. Web UI and CLI")[1].split("## 14. Extensibility")[0]
+    assert "`POST /projects/add-many`" in web_ui and "`#suggestions`" in web_ui and "hidden field (`q`)" in web_ui
+    # the routes and the anchor that they name exist
+    source = (ROOT / "src/lastcall/web/__init__.py").read_text(encoding="utf-8")
+    assert '"/github/installed"' in source and '"/projects/add-many"' in source
+    assert 'id="suggestions"' in (ROOT / "src/lastcall/web/templates/projects.html").read_text(encoding="utf-8")
