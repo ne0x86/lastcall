@@ -56,9 +56,10 @@ engine is one module and a few small changes:
    - the domains its CLI needs (`egress`);
    - where the CLI keeps its login (`home`), the variable that points it there (`home_env`), and its own login
      command. An engine that runs on API keys or on a local model server has no login: it implements `Keyed`
-     instead, its `providers` (each with where to create a key and where its models are listed) and `with_key`,
-     which returns the engine on an account's key. The key reaches the step only as a file in `/ctx`
-     (`Invocation.files`), never on the command line or in the environment;
+     instead, its `providers` (each with where to create a key, where its models are listed and, when models.dev
+     has them, its id there, so that the Accounts page suggests its models) and `with_key`, which returns the
+     engine on an account's key. The key reaches the step only as a file in `/ctx` (`Invocation.files`), never on
+     the command line or in the environment;
    - how a step becomes a command line (`invocation`), and how the output becomes events and a result (`parse` and
      `result`).
 2. **If the CLI can read the account's quota without calling the model,** add `quota_invocation` and
@@ -66,8 +67,9 @@ engine is one module and a few small changes:
    engine is `Keyed`: then lastcall's ledger reads what its steps cost, so `result` must report `cost_usd`. A
    window that limits only some models names the model in `Window.model`.
 3. **Register it** in `src/lastcall/engines/__init__.py`.
-4. **Pick its models** for each tier (fast, balanced, deep) in `src/lastcall/data/tiers.json`. An engine on API
-   keys may have none there: each of its accounts names its models.
+4. **Pick its models** for each tier (fast, balanced, deep) in `src/lastcall/data/tiers.json`, and the names that
+   its CLI takes under `models`, which the Accounts page suggests. An engine on API keys may have none there:
+   each of its accounts names its models.
 5. **Install its CLI**, at a pinned version, in `runner/Dockerfile`, and add its login to `runner/login.sh`, or, for
    an engine with no login, a branch that says so. A test checks that every engine has one there.
 6. **Regenerate `egress/filter`.** The command is in `tests/test_egress.py`.

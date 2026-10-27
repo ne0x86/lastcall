@@ -95,3 +95,51 @@ def test_the_texts_about_the_checks_call_the_two_settings_as_the_projects_page_d
         permissions = text(lang, "web.help.github.permissions")  # what the manifest asks for, and why
         for label in (merge, watch):
             assert label in lead and label in permissions, (lang, label)
+
+
+def test_the_help_of_a_projects_language_quotes_the_option_where_it_really_is() -> None:
+    for lang in ("en", "es"):
+        assert text(lang, "web.project.language.account") in text(lang, "web.help.projects.language"), lang
+
+
+def test_the_help_of_the_turns_calls_the_two_boxes_and_the_two_buttons_as_the_page_does() -> None:
+    for lang in ("en", "es"):
+        turns = text(lang, "web.help.projects.turns")
+        for key in ("web.project.tests", "web.project.deps", "web.project.tests_now", "web.project.deps_now"):
+            assert text(lang, key) in turns, (lang, key)
+
+
+def test_the_help_of_the_watch_calls_the_active_box_as_the_page_does() -> None:
+    for lang in ("en", "es"):
+        assert text(lang, "web.project.active") in text(lang, "web.help.projects.watch"), lang
+
+
+def test_the_hint_and_the_help_of_the_watch_both_say_that_logs_do_not_take_part() -> None:
+    said = {
+        "en": ("not your logs or error tracker", "take no part in the watch"),
+        "es": ("no tus logs ni tu tracker de errores", "no intervienen en la vigilancia"),
+    }
+    for lang, (hint, bubble) in said.items():
+        assert hint in text(lang, "web.project.watch_hint"), lang
+        assert bubble in text(lang, "web.help.projects.watch"), lang
+
+
+def test_the_help_about_effort_names_no_default_so_that_the_data_file_alone_decides_them() -> None:
+    for lang, catalog in MESSAGES.items():
+        for key, template in catalog.items():
+            if key.startswith(("web.tiers.", "web.help.accounts.")):
+                assert "xhigh" not in template, (lang, key)
+
+
+def test_the_suggestions_say_where_they_come_from_in_both_languages() -> None:
+    for lang in ("en", "es"):
+        assert "models.dev" in text(lang, "web.tiers.suggest.catalog", provider="OpenRouter"), lang
+        assert "Codex" in text(lang, "web.tiers.suggest.cli", tool="Codex"), lang
+        assert "qwen/qwen3-coder" in text(lang, "web.accounts.model_suggest"), lang
+
+
+def test_the_default_language_of_a_project_fits_a_closed_select_on_a_phone() -> None:
+    """A closed select cuts its text short: about 30 characters fit in a phone's, and the field is cut at 24 to leave
+    room for the narrower ones."""
+    for lang in ("en", "es"):
+        assert len(text(lang, "web.project.language.account")) <= 24, lang

@@ -1111,6 +1111,7 @@ fieldset.has-help > legend { float: left; margin: 0; }
 .project-settings fieldset { gap: var(--s3); padding: var(--s3); background: var(--surface); border-radius: var(--r-md); }
 .project-settings .check-row { min-height: 0; }
 .project-settings .check-row .hint { margin-top: 0; }
+.project-settings .fields { grid-template-columns: minmax(0, 1fr); }  /* a select a row: a closed select cuts its text short */
 
 /* Add a project: the manual field, then suggestions as rows. */
 .add-card .inline { margin-bottom: var(--s2); }

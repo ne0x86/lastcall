@@ -125,7 +125,7 @@
             <div class="fields">
               <div class="field">
                 <label for="model-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.model") }}</label>
-                <input id="model-{{ n }}-{{ tr.tier }}" name="model-{{ tr.tier }}" type="text" value="{{ tr.model }}" placeholder="{{ tr.default_model }}" maxlength="100" autocomplete="off" spellcheck="false"{% if not tr.default_model %} required{% endif %}>
+                <input id="model-{{ n }}-{{ tr.tier }}" name="model-{{ tr.tier }}" type="text" value="{{ tr.model }}" placeholder="{{ tr.default_model }}" maxlength="100" autocomplete="off" spellcheck="false"{% if c.suggest %} list="{{ c.suggest.list }}"{% endif %}{% if not tr.default_model %} required{% endif %}>
               </div>
               <div class="field">
                 <div class="label-row"><label for="effort-{{ n }}-{{ tr.tier }}">{{ t("web.tiers.effort") }}</label>{% if loop.first %}{{ help(hb, "accounts-effort", t("web.tiers.effort"), ["accounts.effort"], true) }}{% endif %}</div>
@@ -138,6 +138,9 @@
           </fieldset>
           {%- endfor %}
           <p class="hint">{{ t("web.tiers.keyed_hint") if row.keyed else t("web.tiers.default_hint") }}</p>
+          {%- if c.suggest %}
+          <p class="hint">{{ c.suggest.note }}</p>
+          {%- endif %}
           <button class="secondary">{{ t("web.tiers.save") }}</button>
         </form>
       </div>
@@ -228,12 +231,12 @@
         </div>
         <div class="field">
           <label for="key-model">{{ t("web.accounts.model_label") }}</label>
-          <input id="key-model" name="model" type="text" value="{{ f.model or '' }}" autocomplete="off" spellcheck="false" required aria-describedby="key-model-hint">
-          <p id="key-model-hint" class="hint">{{ t("web.accounts.model_hint") }}</p>
+          <input id="key-model" name="model" type="text" value="{{ f.model or '' }}" autocomplete="off" spellcheck="false"{% if key_list %} list="{{ key_list }}"{% endif %} required aria-describedby="key-model-hint">
+          <p id="key-model-hint" class="hint">{{ t("web.accounts.model_hint") }}{% if key_list %} {{ t("web.accounts.model_suggest") }}{% endif %}</p>
         </div>
         <div class="field">
           <div class="label-row"><label for="key-review">{{ t("web.accounts.review_label") }}</label>{{ help(hb, "accounts-review", t("web.accounts.review_label"), ["accounts.review_model"], true) }}</div>
-          <input id="key-review" name="review_model" type="text" value="{{ f.review_model or '' }}" autocomplete="off" spellcheck="false" aria-describedby="key-review-hint">
+          <input id="key-review" name="review_model" type="text" value="{{ f.review_model or '' }}" autocomplete="off" spellcheck="false"{% if key_list %} list="{{ key_list }}"{% endif %} aria-describedby="key-review-hint">
           <p id="key-review-hint" class="hint">{{ t("web.accounts.review_hint") }}</p>
         </div>
         <div class="field">
@@ -311,5 +314,10 @@
     {%- endif %}
   </div>
 </section>
+{#- The datalists that the model fields point to (`list`): one for each kind of account on the page, whatever the number of
+    its cards. A browser shows them as suggestions and lets the owner type any other name. -#}
+{%- for list_id, names in datalists.items() %}
+<datalist id="{{ list_id }}">{% for name in names %}<option value="{{ name }}"></option>{% endfor %}</datalist>
+{%- endfor %}
 {{ bubbles(hb) }}
 {% endblock %}

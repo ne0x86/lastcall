@@ -37,19 +37,27 @@ from lastcall.engines.base import (
 KEY_FILE = f"{CONTEXT_DIR}/key"
 LOCAL = "ollama"  # local models: an OpenAI-compatible server, by default the compose service `ollama`
 LOCAL_URL = "http://ollama:11434/v1"
-PROVIDERS = (
-    Provider("openrouter", "OpenRouter", "https://openrouter.ai/settings/keys", "https://openrouter.ai/models"),
+PROVIDERS = (  # the models.dev id of each API is its name; a local model server has no catalog to ask
+    Provider(
+        "openrouter",
+        "OpenRouter",
+        "https://openrouter.ai/settings/keys",
+        "https://openrouter.ai/models",
+        "openrouter",
+    ),
     Provider(
         "anthropic",
         "Anthropic API",
         "https://platform.claude.com/settings/keys",
         "https://platform.claude.com/docs/en/models/overview",
+        "anthropic",
     ),
     Provider(
         "openai",
         "OpenAI API",
         "https://platform.openai.com/api-keys",
         "https://developers.openai.com/api/docs/models",
+        "openai",
     ),
     Provider(LOCAL, "Ollama", "", "https://ollama.com/library"),
 )

@@ -272,12 +272,12 @@ accounts:
   - id: claude-max
     engine: claude-code
     login: cli                 # official login inside the account's credential volume
-    tiers: {fast: haiku/medium, balanced: sonnet/high, deep: opus/high}
+    tiers: {fast: haiku/medium, balanced: sonnet/high, deep: opus/xhigh}
     spend: {policy: before-reset, reserve_pct: 10}
   - id: chatgpt-plus
     engine: codex
     login: cli
-    tiers: {fast: gpt-6-luna/high, balanced: gpt-6.1-sol/high, deep: gpt-6.1-sol/high}
+    tiers: {fast: gpt-6-luna/medium, balanced: gpt-6.1-sol/high, deep: gpt-6.1-sol/xhigh}
     spend: {policy: before-reset, reserve_pct: 10}
   - id: openrouter             # v0.5
     engine: opencode
@@ -300,6 +300,33 @@ page (*Models and effort*) or with `lastcall account tier <account> <tier> --mod
 goes back to the default. The data file also lists the effort levels that each engine's CLI takes: Claude Code's
 `--effort` (low to max), Codex's `model_reasoning_effort` (minimal to max) and OpenCode's `--variant`, whose levels
 depend on the model. More effort finds more, and spends more of the quota or the budget.
+
+The default efforts differ by tier because the work does: `fast` is only asked for by a repository's own reviewers,
+so it takes `medium`; `balanced` runs the reviewers, at `high`; and `deep` runs the judge, the implementers and the
+improvement plans, where quality matters most and lastcall spends quota that would expire anyway, at `xhigh`. Both
+engines' effort lists include `xhigh`.
+
+**Suggested models.** The model fields of that page suggest names with a `<datalist>`: the owner picks one or types
+any other, since the catalogs change every month. Where the names come from depends on the account:
+
+- An account on a CLI login gets the `models` of its engine in the data file, the names that its CLI takes: Claude
+  Code's aliases `haiku`, `sonnet` and `opus`, which mean the newest model of their family on the Anthropic API,
+  and the models that Codex's own catalog lists for choosing and has not replaced with a newer one
+  (`codex debug models --bundled`). `fable` is left out on purpose: `claude -p` can bill a Fable request to usage
+  credits without asking, and lastcall never spends paid usage.
+- An account on an API key (OpenCode on OpenRouter, Anthropic or OpenAI) gets the models of its provider from
+  models.dev's public catalog, `https://models.dev/api.json`, where OpenCode reads its prices too. The id of the
+  provider there is `Provider.catalog`. The web UI asks through the same `fetch` as its other lookups, with a
+  `User-Agent` of its own (models.dev answers 403 to the default one) and gzip (the catalog weighs 6 MB, or 0.6 MB
+  packed), and waits 5 seconds at most. One request answers for every provider, and the answer stays in memory for
+  a day, since the Accounts page asks on every load. A failure is kept for 10 minutes: meanwhile the fields suggest
+  nothing and the page works as before. Of each provider it keeps at most 1000 models, the ones that a step can
+  run on: they call tools, have a price (the budget needs one) and are not deprecated, and their ids are ones that
+  an account may name.
+- The form that adds an API key cannot follow the provider that it has chosen, since the page runs no script: its
+  model fields suggest the models of every provider together (OpenRouter writes the maker first, as in
+  `qwen/qwen3-coder`).
+- A local model server (Ollama) gets no suggestions: the web UI cannot reach it.
 
 **Several accounts on one project.** Different providers find different problems (section 16). A review step can
 therefore fan out across accounts, and one judge merges the results.

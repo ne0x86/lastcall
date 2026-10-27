@@ -32,7 +32,7 @@ from flask import Flask, Response, g, redirect, render_template, request, url_fo
 from flask.typing import ResponseReturnValue
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from lastcall import __version__, cron, destinations, engines, i18n, logs, loki, projects, signals
+from lastcall import __version__, catalog, cron, destinations, engines, i18n, logs, loki, projects, signals
 from lastcall.accounts import ACCOUNT_ID, MODEL, Account, policies, tier_models
 from lastcall.engines.base import Keyed
 from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, lacking, permissions_of, urlopen
@@ -45,6 +45,7 @@ from lastcall.secretstore import SecretStore
 from lastcall.store import AccountRow, Store
 from lastcall.supervisor import STEP
 from lastcall.tiers import TIERS, defaults, efforts
+from lastcall.tiers import models as cli_models
 from lastcall.web import auth, dashboard, project_views
 
 COOKIE = "lastcall_session"
@@ -66,6 +67,10 @@ GRANT_SECONDS = 600.0  # what GitHub says an installation was granted, kept 10 m
 RETRY_SECONDS = 60.0  # a gap (the owner is fixing it) or a miss is kept only a minute, so that the notice goes soon
 GRANT_TIMEOUT = 5  # seconds that the Projects page waits for GitHub's answer on one installation
 MAX_GRANTS = 100
+CATALOG_SECONDS = 86_400.0  # the models that models.dev lists for an API's provider, kept a day: they weigh 6 MB
+CATALOG_RETRY_SECONDS = 600.0  # a miss is kept 10 minutes, so that a models.dev that is down costs one wait
+CATALOG_TIMEOUT = 5  # seconds that the Accounts page waits for models.dev
+KEYS_LIST = "models-keys"  # the datalist of the form that adds an API key: the models of every provider
 MAX_ADDED = 100_000  # the most that a "N projects added" notice says: the number is in the address
 CREDENTIAL = re.compile(r"(?i)\b(bearer|basic)\s+[^\"']*|\b(authorization|header value)\W+.*")
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
@@ -109,8 +114,9 @@ def create_app(
     """The web UI's application. `github` gives the GitHub client (by default, from the App in the secret store);
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
     reads an account's quota in the sandbox; without it, the web UI cannot check a new account's login.
-    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats, and
-    GitHub whether an owner is a person or an organization, and what the App's installation was granted."""
+    `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats,
+    GitHub whether an owner is a person or an organization, and what the App's installation was granted, and
+    models.dev which models an API key's provider offers."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -125,7 +131,8 @@ def create_app(
     app_states: dict[str, float] = {}  # manifest forms shown, by state, with when they were shown
     owner_answers: dict[str, tuple[str, float]] = {}  # what GitHub said an owner is ("user", "org", "missing"), when
     grant_answers: dict[str, tuple[str | None, float]] = {}  # permissions_page of an owner's installation, and when
-    cache_lock = threading.Lock()  # for app_states, owner_answers and grant_answers: waitress answers on 8 threads
+    catalog_answers: dict[str, tuple[tuple[str, ...], float]] = {}  # a provider's models in models.dev, until when
+    cache_lock = threading.Lock()  # for the four above: waitress answers on 8 threads
     quota_errors: dict[str, tuple[float, str]] = {}  # the last failed quota reading of each account, and when
 
     def connect() -> GitHub | None:
@@ -340,6 +347,32 @@ def create_app(
             while len(grant_answers) > MAX_GRANTS:
                 del grant_answers[next(iter(grant_answers))]
         return found or ""
+
+    def catalog_models(provider: str) -> tuple[str, ...]:
+        """The models that models.dev lists for a provider of API keys (its id there), from the last day when it was
+        asked: the Accounts page asks on every load, and the answer weighs 6 MB. One request answers for every
+        provider. A failure is kept 10 minutes, so that a models.dev that is down costs the page one wait in that
+        time, not one at every load; meanwhile it suggests no models. Bounded: one entry for each provider that an
+        engine offers, and `catalog.MAX_MODELS` models in each."""
+        asked = catalog_providers()
+        if provider not in asked:
+            return ()
+        now = clock()
+        with cache_lock:
+            known = catalog_answers.get(provider)
+        if known is not None and now < known[1]:
+            return known[0]
+        try:
+            found = catalog.models(fetch, asked, CATALOG_TIMEOUT)
+            until = now + CATALOG_SECONDS
+        except Exception as e:  # an optional lookup never takes the page down
+            log(f"Web UI: models.dev gave no models: {brief(e)}")
+            found, until = {}, now + CATALOG_RETRY_SECONDS
+        with cache_lock:
+            for name in asked:
+                catalog_answers.pop(name, None)  # asked again: it goes to the end, as the newest
+                catalog_answers[name] = (found.get(name, ()), until)
+        return found.get(provider, ())
 
     @app.post("/projects/add")
     @signed_in
@@ -951,13 +984,23 @@ def create_app(
         message = t(f"web.done.{done}") if done in known and not error else ""
         all_engines = [engines.get(name) for name in sorted(engines.BUILTIN)]
         sources = [(e, p) for e in all_engines if isinstance(e, Keyed) for p in e.providers]
+        lists: dict[str, tuple[str, ...]] = {}  # the datalists of the page, by id: what its model fields suggest
+        cards = [account_card(row, now, working, lists) for row in store.accounts()]
+        keys = [(f"{e.name}/{p.name}", p) for e, p in sources if p.keys]
+        # Without a script, the form that adds an API key cannot follow the provider that it has chosen: its model
+        # fields suggest the models of every provider, and OpenRouter writes the maker first (qwen/qwen3-coder).
+        everyone = {name for _, p in keys for name in catalog_models(p.catalog)}
+        if everyone:
+            lists[KEYS_LIST] = tuple(sorted(everyone, key=lambda name: (name.casefold(), name)))
         return page(
             "accounts.html",
             status,
-            cards=[account_card(row, now, working) for row in store.accounts()],
+            cards=cards,
             held="down" if down else ("paused" if paused else ""),
             engines=[(e.name, f"{e.provider} ({e.title})") for e in all_engines if e.login],
-            keys=[(f"{e.name}/{p.name}", p) for e, p in sources if p.keys],
+            keys=keys,
+            datalists=lists,
+            key_list=KEYS_LIST if everyone else "",
             local=next(((f"{e.name}/{p.name}", p) for e, p in sources if not p.keys), None),
             writing=[(name, dashboard.language_name(g.lang, name).capitalize()) for name in project_views.LANGUAGES],
             known=project_views.LANGUAGES,
@@ -993,7 +1036,32 @@ def create_app(
             return ""
         return failed[1]
 
-    def account_card(row: AccountRow, now: float, working: Mapping[str, dict[str, Any]]) -> dict[str, Any]:
+    def suggestions(row: AccountRow, lists: dict[str, tuple[str, ...]]) -> dict[str, str]:
+        """The datalist that suggests models in the fields of an account's tiers, and the note that says where its
+        names come from: for an account on a CLI login, the names that the CLI takes, from lastcall's data file; for
+        an account on an API key, what models.dev lists for its provider. Empty when there is nothing to suggest: a
+        local model server (the web UI cannot reach it), a models.dev that did not answer, an engine that is gone."""
+        if row.engine not in engines.BUILTIN:
+            return {}
+        engine = engines.get(row.engine)
+        if not row.keyed:
+            names, key, note = cli_models(row.engine), row.engine, t("web.tiers.suggest.cli", tool=engine.title)
+        elif isinstance(engine, Keyed):
+            source = next((p for p in engine.providers if p.name == row.provider), None)
+            if source is None:
+                return {}
+            names, key = catalog_models(source.catalog), f"{row.engine}-{source.name}"
+            note = t("web.tiers.suggest.catalog", provider=source.title)
+        else:
+            return {}
+        if not names:
+            return {}
+        lists[f"models-{key}"] = names
+        return {"list": f"models-{key}", "note": note}
+
+    def account_card(
+        row: AccountRow, now: float, working: Mapping[str, dict[str, Any]], lists: dict[str, tuple[str, ...]]
+    ) -> dict[str, Any]:
         try:
             base = defaults(row.engine)
         except ValueError:  # an engine with no defaults, such as opencode: the account names its models
@@ -1008,6 +1076,7 @@ def create_app(
             "policies": [],
             "needs_key": False,
             "levels": efforts(row.engine),
+            "suggest": suggestions(row, lists),
             "tiers": [
                 {
                     "tier": tier,
@@ -1234,6 +1303,16 @@ def create_app(
         return problem(404, "web.error.not_found")
 
     return app
+
+
+def catalog_providers() -> tuple[str, ...]:
+    """The ids in models.dev of the providers that the engines on API keys offer: what the web UI asks it about."""
+    found: list[str] = []
+    for name in sorted(engines.BUILTIN):
+        engine = engines.get(name)
+        if isinstance(engine, Keyed):
+            found += [p.catalog for p in engine.providers if p.catalog]
+    return tuple(dict.fromkeys(found))
 
 
 def brief(error: BaseException) -> str:

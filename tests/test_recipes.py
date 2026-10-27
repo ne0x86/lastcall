@@ -58,7 +58,7 @@ def test_schemas_are_strict(name: str) -> None:
 
 
 def test_default_tiers() -> None:
-    assert defaults("claude-code")["deep"] == ("opus", "high")
+    assert defaults("claude-code")["deep"] == ("opus", "xhigh")
     assert set(defaults("codex")) == {"fast", "balanced", "deep"}
     with pytest.raises(ValueError, match="no default tiers"):
         defaults("scripted")

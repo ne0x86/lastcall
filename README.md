@@ -113,9 +113,13 @@ spending limit at the provider too.
 
 **Models and effort.** Every step asks for a tier: the reviewers for *balanced*; the judge, the implementers and the
 improvement plans for *deep*; your repository's own reviewers for the one they name. Each engine has a default
-model and effort per tier, such as opus at `high` effort for Claude Code's *deep*. On the Accounts page, under
+model and effort per tier, such as opus at `xhigh` effort for Claude Code's *deep*. The efforts differ because the
+work does: *deep* runs at `xhigh` because quality matters most there and the quota would expire anyway, *balanced* at
+`high`, and *fast*, which only your repository's own reviewers ask for, at `medium`. On the Accounts page, under
 *Models and effort*, or with `lastcall account tier`, you can change both for one account, subscriptions included.
-More effort finds more, and spends more of the quota.
+The Model field suggests names and takes any other you type: the ones that the engine's CLI takes or, for an API key,
+the models that [models.dev](https://models.dev) lists for its provider. More effort finds more, and spends more of
+the quota.
 
 The rest of lastcall only knows the engine contract. Adding another tool is one module and a few small changes:
 [CONTRIBUTING.md](CONTRIBUTING.md#adding-an-engine) lists them.
@@ -387,7 +391,9 @@ in lastcall only, never in `.lastcall.yml`, so that nobody can turn them on from
   later run, on the current code.
 - **Watch after the merge.** For a day after a merge, lastcall looks at the checks of the merged commit and, if you
   give one, at a health address every 10 minutes. When the checks fail where they passed before, or the address
-  fails 3 times in a row, it opens a pull request that reverts the change, pauses the project and tells you.
+  fails 3 times in a row, it opens a pull request that reverts the change, pauses the project and tells you. Nothing
+  else takes part in the watch: container logs, Loki and your error tracker feed the audits, which use them to find
+  the causes of errors.
 
 Both need the GitHub App to read checks and commit statuses, which Apps created by lastcall 0.7.2 or later have; the
 Projects page says what to do for an older App.
@@ -457,7 +463,8 @@ With a local model on Ollama, it goes to no model provider.
 The names and versions of your dependencies go to [osv.dev](https://osv.dev) in every audit, and to
 [deps.dev](https://deps.dev) for upgrades. The agents' steps reach nothing beyond the allowlist in
 [egress/filter](egress/filter), and errors from production are masked before they reach a model. lastcall itself
-sends no telemetry.
+sends no telemetry. Opening the Accounts page makes it ask [models.dev](https://models.dev), about once a day, for
+the names of the models that an API key's provider offers, in a request that carries nothing of yours.
 
 ### What if a file in my repository tricks the agent?
 

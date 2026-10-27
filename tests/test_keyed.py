@@ -65,7 +65,7 @@ def test_models_come_per_tier_and_keep_the_default_effort() -> None:
     assert tier_models("") == {}
     assert openrouter().tiers()["deep"] == ("qwen/qwen3-coder", None)
     claude = Account("claude", "claude-code", models={"deep": "sonnet"})
-    assert claude.tiers()["deep"] == ("sonnet", "high")  # the account's own model, the default effort
+    assert claude.tiers()["deep"] == ("sonnet", "xhigh")  # the account's own model, the default effort
     assert claude.tiers()["fast"] == ("haiku", "medium")
 
 
@@ -93,7 +93,7 @@ def test_an_account_chooses_the_model_and_effort_of_each_tier(
     row = store.account("max")
     assert row is not None and row.account().tiers() == claude.tiers()
     assert cli.main(["account", "tier", "max", "deep", "--effort", "-"]) == 0  # back to the default
-    assert "deep      opus, effort high\n" in capsys.readouterr().out
+    assert "deep      opus, effort xhigh\n" in capsys.readouterr().out
     assert cli.main(["account", "tier", "max", "balanced", "--model", "-"]) == 0
     assert cli.main(["account", "tier", "max", "fast", "--effort", "low"]) == 0
     assert "fast      haiku, effort low (its own)" in capsys.readouterr().out
@@ -287,7 +287,7 @@ def test_models_of_a_subscription(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         == 0
     )
     row = Store(tmp_path / "state" / "lastcall.db").account("claude")
-    assert row is not None and row.account().tiers()["deep"] == ("sonnet", "high")
+    assert row is not None and row.account().tiers()["deep"] == ("sonnet", "xhigh")
     models: Mapping[str, str] = row.models
     assert set(models) == {"fast", "balanced", "deep"}
 

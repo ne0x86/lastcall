@@ -3,7 +3,7 @@ import http.client
 import json
 import re
 import threading
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -18,6 +18,7 @@ from flask.testing import FlaskClient
 from werkzeug.test import TestResponse
 
 import lastcall.web as site
+from lastcall import catalog
 from lastcall.accounts import Account
 from lastcall.github import App, GitHub, Response
 from lastcall.notify import Notifier
@@ -40,6 +41,7 @@ from lastcall.web.auth import (
     hash_password,
     start_session,
 )
+from test_catalog import CATALOG, ModelsDev, model
 from test_loki import FakeLoki
 from test_notify import Outbox
 from test_projects import APP, FakeGitHub
@@ -57,6 +59,12 @@ class Clock:
 
     def __call__(self) -> float:
         return self.now
+
+
+def offline(req: Request) -> Response:
+    """The `fetch` of a test that gives none: nothing reaches the network (models.dev is never asked from a test), and
+    a lookup that needs it fails as it does on a host with no way out."""
+    raise OSError(f"offline: {req.full_url}")
 
 
 class Web:
@@ -79,6 +87,7 @@ class Web:
             github=(lambda: cast(GitHub, github)) if github else None,
             background=options.pop("background", lambda work: work()),
             notifier=Notifier(self.secrets, self.store, send=self.outbox, log=self.logs.append),
+            fetch=options.pop("fetch", offline),
             **options,
         )
         self.client = self.app.test_client()
@@ -743,7 +752,7 @@ def test_models_and_effort_from_the_web(web: Web) -> None:
     assert row is not None and row.account().tiers() == {
         "fast": ("haiku", "medium"),
         "balanced": ("claude-sonnet-5-5", "high"),
-        "deep": ("opus", "high"),
+        "deep": ("opus", "xhigh"),
     }
     for bad in ({"effort-deep": "ultra"}, {"model-deep": "opus; rm -rf /"}):
         assert web.client.post("/accounts/max/tiers", data={**form, **bad}, headers=SITE).status_code == 400
@@ -3067,3 +3076,420 @@ def test_without_popover_support_neither_the_question_nor_the_trash_button_shows
     assert ".trash, .bubble.confirm { display: none; }" in mine  # never a Remove button one click away in a card
     # an author's display on a popover overrides the browser's, and would show the closed question
     assert not re.search(r"\.bubble\.confirm\s*\{[^}]*\bdisplay:", css.replace(mine, ""))
+
+
+# the model fields suggest names: the CLI's own, or models.dev's for an API key (test_catalog's fakes never ask it)
+
+
+def account_html(page: str, account: str) -> str:
+    return page.split(f'id="account-{account}"')[1].split("</article>")[0]
+
+
+def datalists(page: str) -> dict[str, list[str]]:
+    """The datalists of a page, each with the values of its options."""
+    return {
+        found.group(1): [html.unescape(v) for v in re.findall(r'<option value="([^"]*)"></option>', found.group(2))]
+        for found in re.finditer(r'<datalist id="([^"]+)">(.*?)</datalist>', page, re.S)
+    }
+
+
+def lists_of(section: str, fields: Iterable[str]) -> list[str | None]:
+    """The datalist that each of these inputs points to with `list`: None for an input with none."""
+    found: list[str | None] = []
+    for name in fields:
+        tag = re.search(rf'<input [^>]*name="{name}"[^>]*>', section)
+        assert tag, name
+        attribute = re.search(r' list="([^"]+)"', tag.group(0))
+        found.append(attribute.group(1) if attribute else None)
+    return found
+
+
+def models_web(tmp_path: Path, fetch: ModelsDev | None = None, accounts: bool = True) -> tuple[Web, ModelsDev]:
+    """A signed-in web UI whose `fetch` is models.dev's fake, with one account of each kind."""
+    from lastcall.accounts import tier_models
+
+    fetch = fetch or ModelsDev()
+    web = Web(tmp_path, fetch=fetch)
+    web.set_up()
+    if not accounts:
+        return web, fetch
+    web.store.add_account("max", "claude-code")
+    web.store.add_account("chatgpt", "codex")
+    for name, provider in (("router", "openrouter"), ("direct", "anthropic"), ("sky", "openai")):
+        web.store.add_account(
+            name, "opencode", provider=provider, models=tier_models("a-model"), policy="budget", budget_usd=20
+        )
+    web.store.add_account("local", "opencode", provider="ollama", models=tier_models("qwen3-coder"), policy="manual")
+    return web, fetch
+
+
+# what test_catalog's catalog lists that a step can run on, in the order of the datalists
+OPENROUTER = ["anthropic/claude-sonnet-5.5", "beta/new-model", "qwen/qwen3-coder"]
+OPENROUTER += ["Qwen/Qwen3-coder-flash", "qwen/qwen3-coder:free"]
+EVERY_PROVIDER = sorted(
+    [*OPENROUTER, "claude-opus-5-5", "claude-sonnet-5-5", "gpt-6.1-sol"], key=lambda n: (n.lower(), n)
+)
+
+
+def test_the_model_field_of_each_tier_suggests_the_models_of_its_own_engine(tmp_path: Path) -> None:
+    web, fetch = models_web(tmp_path)
+    page = web.client.get("/accounts").get_data(as_text=True)
+    found = datalists(page)
+    assert found["models-claude-code"] == ["haiku", "sonnet", "opus"]  # lastcall's own list, from data/tiers.json
+    assert found["models-codex"] == ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]
+    assert found["models-opencode-openrouter"] == OPENROUTER  # what models.dev lists, as test_catalog filters it
+    assert found["models-opencode-anthropic"] == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    assert found["models-opencode-openai"] == ["gpt-6.1-sol"]
+    assert found["models-keys"] == EVERY_PROVIDER
+    assert len(found) == 6  # none for the local model server: the web UI cannot reach it
+    fields = [f"model-{tier}" for tier in TIERS]
+    for account, wanted in (
+        ("max", "models-claude-code"),
+        ("chatgpt", "models-codex"),
+        ("router", "models-opencode-openrouter"),
+        ("direct", "models-opencode-anthropic"),
+        ("sky", "models-opencode-openai"),
+    ):
+        assert lists_of(account_html(page, account), fields) == [wanted] * 3, account
+    assert lists_of(account_html(page, "local"), fields) == [None] * 3
+    assert all(page.count(f'<datalist id="{name}">') == 1 for name in found)  # once each, whatever points to it
+    assert len(fetch.asked) == 1  # one request, for every provider
+
+
+def test_two_accounts_of_a_kind_share_the_one_datalist_of_their_provider(tmp_path: Path) -> None:
+    from lastcall.accounts import tier_models
+
+    web, _ = models_web(tmp_path)
+    web.store.add_account(
+        "router-2", "opencode", provider="openrouter", models=tier_models("a-model"), policy="budget", budget_usd=5
+    )
+    web.store.add_account("max-2", "claude-code")
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert page.count('<datalist id="models-opencode-openrouter">') == 1
+    assert page.count('<datalist id="models-claude-code">') == 1
+    assert page.count('list="models-opencode-openrouter"') == 6 and page.count('list="models-claude-code"') == 6
+
+
+def test_the_fold_says_where_its_suggestions_come_from(tmp_path: Path) -> None:
+    web, _ = models_web(tmp_path)
+    page = web.client.get("/accounts").get_data(as_text=True)
+    said = {
+        "max": "The Model field suggests the names that Claude Code takes. Pick one, or type any other.",
+        "chatgpt": "The Model field suggests the names that Codex takes. Pick one, or type any other.",
+        "router": "The Model field suggests what models.dev lists for OpenRouter: models that use tools and have a "
+        "price. Pick one, or type any other.",
+        "direct": "The Model field suggests what models.dev lists for Anthropic API: models that use tools and "
+        "have a price. Pick one, or type any other.",
+    }
+    for account, text in said.items():
+        assert f'<p class="hint">{text}</p>' in account_html(page, account), account
+    assert "The Model field suggests" not in account_html(page, "local")
+    spanish = web.client.get("/accounts", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert (
+        "El campo Modelo sugiere los nombres que acepta Claude Code. Elige uno o escribe cualquier otro." in spanish
+    )
+    assert (
+        "El campo Modelo sugiere lo que models.dev lista para OpenRouter: modelos que usan herramientas y tienen "
+        in (account_html(spanish, "router"))
+    )
+
+
+def test_the_form_that_adds_an_api_key_suggests_the_models_of_every_provider(tmp_path: Path) -> None:
+    web, _ = models_web(tmp_path, accounts=False)  # the form is there with no card above it
+    english = web.client.get("/accounts").get_data(as_text=True)
+    spanish = web.client.get("/accounts", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert datalists(english) == {"models-keys": EVERY_PROVIDER}
+    for page in (english, spanish):
+        form = page.split('<div class="dest dest-key">')[1].split('<div class="dest ')[0]
+        assert lists_of(form, ["model", "review_model"]) == ["models-keys", "models-keys"]
+        local = page.split('<div class="dest dest-local">')[1]
+        assert lists_of(local, ["model"]) == [None]  # a local model server has no list to suggest from
+    hint = english.split('id="key-model-hint"')[1].split("</p>")[0]
+    assert (
+        "The field suggests what models.dev lists for all the providers, and OpenRouter writes the maker first"
+        in hint
+    )
+    assert "Pick one from the provider you chose, or type any other." in hint
+    assert "El campo sugiere lo que models.dev lista para todos los proveedores" in spanish
+
+
+def test_without_models_dev_the_form_that_adds_a_key_is_as_it_was(web: Web) -> None:
+    web.set_up()  # the web fixture's fetch is the offline one of the tests
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert "<datalist" not in page and ' list="' not in page
+    form = page.split('<div class="dest dest-key">')[1].split('<div class="dest ')[0]
+    assert "The model of every step, as the provider's list names it. lastcall counts" in html.unescape(form)
+    assert "models.dev lists" not in form
+
+
+def test_the_efforts_of_the_tiers_say_their_defaults(tmp_path: Path) -> None:
+    web, _ = models_web(tmp_path)
+    page = web.client.get("/accounts").get_data(as_text=True)
+    for account in ("max", "chatgpt"):  # the same for both: medium for fast, high for balanced, xhigh for deep
+        found = re.findall(r'<option value="">Default \((\w+)\)</option>', account_html(page, account))
+        assert found == ["medium", "high", "xhigh"], account
+    spanish = web.client.get("/accounts", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    found = re.findall(r'<option value="">Por defecto \((\w+)\)</option>', account_html(spanish, "chatgpt"))
+    assert found == ["medium", "high", "xhigh"]
+
+
+def test_models_dev_is_asked_once_a_day_for_every_provider_with_a_wait_of_5_seconds(tmp_path: Path) -> None:
+    web, fetch = models_web(tmp_path)
+    for _ in range(3):
+        assert web.client.get("/accounts").status_code == 200
+    assert len(fetch.asked) == 1  # three loads, one request
+    (req,) = fetch.asked
+    assert site.CATALOG_TIMEOUT == 5 and getattr(req, "timeout", None) == 5
+    assert (req.get_header("User-agent") or "").startswith("lastcall/") and req.get_header(
+        "Accept-encoding"
+    ) == "gzip"
+    web.clock.now += DAY - 1
+    web.client.get("/accounts")
+    assert len(fetch.asked) == 1
+    web.clock.now += 2
+    fetch.answer = {"openrouter": {"models": {"new/model": model()}}}  # models.dev changed its mind
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert len(fetch.asked) == 2
+    found = datalists(page)
+    assert found["models-opencode-openrouter"] == ["new/model"] and found["models-keys"] == ["new/model"]
+    assert "models-opencode-anthropic" not in found  # it lists none now, and is not asked again before the day is out
+    web.clock.now += DAY - 1
+    web.client.get("/accounts")
+    assert len(fetch.asked) == 2
+
+
+def test_only_the_accounts_page_asks_models_dev(tmp_path: Path) -> None:
+    web, fetch = models_web(tmp_path)
+    for path in ("/", "/projects", "/settings", "/github", "/login", "/healthz"):
+        web.client.get(path)
+    assert fetch.asked == []
+    web.client.get("/accounts")
+    assert len(fetch.asked) == 1
+
+
+FAILURES: list[Exception | tuple[int, bytes]] = [
+    OSError("no route to host"),
+    TimeoutError("timed out"),
+    RuntimeError("boom"),
+    (403, b"<html>Forbidden</html>"),
+    (500, b""),
+    (200, b"<html>a captive portal</html>"),
+    (200, b"[]"),
+    (200, b"null"),
+]
+
+
+@pytest.mark.parametrize("answer", FAILURES)
+def test_when_models_dev_does_not_answer_the_fields_suggest_nothing_and_the_page_goes_on(
+    tmp_path: Path, answer: Exception | tuple[int, bytes]
+) -> None:
+    web, _ = models_web(tmp_path, ModelsDev(answer))
+    response = web.client.get("/accounts")
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert sorted(datalists(page)) == ["models-claude-code", "models-codex"]  # what lastcall knows itself stays
+    assert lists_of(account_html(page, "router"), ["model-fast", "model-deep"]) == [None, None]
+    form = page.split('<div class="dest dest-key">')[1].split('<div class="dest ')[0]
+    assert lists_of(form, ["model", "review_model"]) == [None, None] and "models.dev lists" not in form
+    assert "models.dev lists for OpenRouter" not in account_html(page, "router")
+    assert 'name="model-deep"' in account_html(page, "router") and 'value="a-model"' in account_html(page, "router")
+    said = [line for line in web.logs if "models.dev gave no models" in line]
+    assert len(said) == 1 and "\n" not in said[0]  # one line in the log, never the answer
+
+
+def test_a_models_dev_that_does_not_answer_is_asked_again_after_10_minutes_not_at_every_load(tmp_path: Path) -> None:
+    web, fetch = models_web(tmp_path, ModelsDev(OSError("no route to host")))
+    for _ in range(3):
+        assert web.client.get("/accounts").status_code == 200
+    assert len(fetch.asked) == 1  # three loads, one wait
+    web.clock.now += 599
+    web.client.get("/accounts")
+    assert len(fetch.asked) == 1
+    web.clock.now += 2
+    fetch.answer = CATALOG
+    page = web.client.get("/accounts").get_data(as_text=True)
+    assert len(fetch.asked) == 2 and datalists(page)["models-opencode-openrouter"] == OPENROUTER
+    web.clock.now += 3600  # an answer is kept the whole day
+    web.client.get("/accounts")
+    assert len(fetch.asked) == 2
+
+
+def test_what_models_dev_says_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(catalog, "MAX_MODELS", 3)
+    many = {
+        name: {"models": {f"{name}/m{n:02}": model() for n in range(10, 0, -1)}}
+        for name in ("openrouter", "anthropic", "openai", "ollama-cloud", "mistral", "groq")
+    }
+    web, fetch = models_web(tmp_path, ModelsDev(many))
+    found = datalists(web.client.get("/accounts").get_data(as_text=True))
+    assert found["models-opencode-openrouter"] == ["openrouter/m01", "openrouter/m02", "openrouter/m03"]  # 3 at most
+    assert len(found["models-keys"]) == 9  # of the three providers that an engine offers: not of the other three
+    assert not any("mistral" in name or "groq" in name for name in found["models-keys"])
+    assert len(fetch.asked) == 1
+
+
+def test_a_catalog_over_the_limit_is_refused_and_the_page_goes_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(catalog, "MAX_BYTES", 500)
+    web, _ = models_web(tmp_path)
+    response = web.client.get("/accounts")
+    found = datalists(response.get_data(as_text=True))
+    assert response.status_code == 200 and "models-opencode-openrouter" not in found
+    assert any("too big" in line for line in web.logs)
+
+
+# the settings of a project say plainly what each option adds, and an account says what its language is for
+
+HINTS = {
+    "en": {
+        "tests": "Some bursts write tests instead of auditing: pull requests that add tests for behavior no test "
+        "checks.",
+        "deps": "Some bursts upgrade dependencies instead of auditing: pull requests for what needs more than a new "
+        "version number.",
+        "merge": "When you approve one of its pull requests on GitHub, lastcall merges it once its checks pass. "
+        "Without this, you merge it yourself.",
+        "watch": "For a day after a merge, lastcall watches only the merged commit's checks and the health address "
+        "below, not your logs or error tracker. If either breaks, it proposes a revert and pauses the project.",
+    },
+    "es": {
+        "tests": "Algunas ráfagas escriben tests en lugar de auditar: pull requests que añaden tests para el "
+        "comportamiento que ningún test comprueba.",
+        "deps": "Algunas ráfagas actualizan dependencias en lugar de auditar: pull requests para lo que necesita "
+        "algo más que un número de versión nuevo.",
+        "merge": "Cuando apruebas uno de sus pull requests en GitHub, lastcall lo fusiona en cuanto pasan sus "
+        "checks. Sin esto, lo fusionas tú.",
+        "watch": "Durante un día tras una fusión, lastcall vigila solo los checks del commit fusionado y la "
+        "dirección de salud de abajo, no tus logs ni tu tracker de errores. Si alguno falla, propone una reversión "
+        "y pausa el proyecto.",
+    },
+}
+
+
+def bubble(page: str, name: str) -> str:
+    """The text of a help bubble, as a reader sees it."""
+    found = re.search(rf'<div id="help-{name}" popover.*?</div>', page, re.S)
+    assert found, name
+    return html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", found.group(0)))).strip()
+
+
+@pytest.mark.parametrize("lang", ["en", "es"])
+def test_each_project_option_says_plainly_what_it_adds(github_web: Web, lang: str) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    page = web.client.get("/projects", headers={"Accept-Language": lang}).get_data(as_text=True)
+    found = re.findall(
+        r'<p class="hint" id="(tests|deps|merge|watch)-hint-1">(.*?)</p>', card(page, "acme/api"), re.S
+    )
+    assert {name: html.unescape(text) for name, text in found} == HINTS[lang]
+
+
+@pytest.mark.parametrize(
+    ("lang", "label", "option", "hint"),
+    [
+        (
+            "en",
+            "Language of its pull requests and issues",
+            "Same as the account",
+            "“Same as the account” uses the language of whichever account works on it, set on the Accounts page.",
+        ),
+        (
+            "es",
+            "Idioma de sus pull requests e issues",
+            "Igual que la cuenta",
+            "«Igual que la cuenta» usa el idioma de la cuenta que trabaje en él, el que se elige en Cuentas.",
+        ),
+    ],
+)
+def test_a_projects_language_says_what_it_is_and_what_its_default_means(
+    github_web: Web, lang: str, label: str, option: str, hint: str
+) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    page = web.client.get("/projects", headers={"Accept-Language": lang}).get_data(as_text=True)
+    mine = card(page, "acme/api")
+    assert f'<label for="language-1">{label}</label><button type="button" class="help"' in mine
+    assert f'<option value="" selected>{option}</option>' in mine
+    assert '<select id="language-1" name="language" aria-describedby="language-hint-1">' in mine
+    assert f'<p class="hint" id="language-hint-1">{hint}</p>' in mine  # what the default means, under the select
+    quoted = f"“{option}”" if lang == "en" else f"«{option}»"
+    assert quoted in bubble(page, "projects-language")  # the bubble calls the option as the select does
+
+
+@pytest.mark.parametrize(
+    ("lang", "label"),
+    [
+        ("en", "Language of its pull requests and issues"),
+        ("es", "Idioma de sus pull requests e issues"),
+    ],
+)
+def test_an_accounts_language_says_what_it_is_in_its_card_and_in_every_form_that_adds_one(
+    tmp_path: Path, lang: str, label: str
+) -> None:
+    web, _ = models_web(tmp_path)
+    page = web.client.get("/accounts", headers={"Accept-Language": lang}).get_data(as_text=True)
+    mine = account_html(page, "max")  # the number in the id is the card's place in the page
+    assert re.search(rf'<label for="language-\d+">{label}</label><button type="button" class="help"', mine)
+    for field in ("language", "key-language", "local-language"):
+        assert f'<label for="{field}">{label}</label><button type="button" class="help"' in page, field
+    assert bubble(page, "accounts-language").startswith(f"{label} ")  # the bubble is titled with it
+
+
+def test_the_two_selects_of_a_projects_settings_get_a_row_each_and_the_page_has_no_style_of_its_own(
+    github_web: Web,
+) -> None:
+    """A closed select cuts its text short (the language says "Same as the account" in a space of 27 characters on a
+    phone), and half a card is less: each select has the whole row."""
+    css = (Path(__file__).parent.parent / "src/lastcall/web/static/style.css").read_text(encoding="utf-8")
+    assert ".project-settings .fields { grid-template-columns: minmax(0, 1fr); }" in css
+    github_web.store.add_project("acme/api")
+    page = github_web.client.get("/projects").get_data(as_text=True)
+    assert " style=" not in page and "<style" not in page and "<script" not in page
+    assert not re.search(r"\son[a-z]+=", page)
+
+
+def test_the_details_line_of_an_account_still_says_what_language_it_writes_in(web: Web) -> None:
+    web.set_up()
+    web.store.add_account("claude", "claude-code", "Spanish", 10)
+    assert "Writes in Spanish · reserve 10%" in web.client.get("/accounts").get_data(as_text=True)
+    page = web.client.get("/accounts", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert "Escribe en español · reserva " in page
+
+
+@pytest.mark.parametrize("lang", ["en", "es"])
+def test_the_help_of_the_watch_says_that_logs_and_trackers_take_no_part_in_it(github_web: Web, lang: str) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    page = web.client.get("/projects", headers={"Accept-Language": lang}).get_data(as_text=True)
+    text = bubble(page, "projects-watch")
+    if lang == "en":
+        assert (
+            "watches two things only: the checks of the merged commit and, if you give one, the health address"
+            in text
+        )
+        assert "Container logs, Loki and your error tracker take no part in the watch" in text
+        assert "they feed the audits, which use them to find the causes of errors" in text
+    else:
+        assert "vigila solo dos cosas: los checks del commit fusionado y, si das una, la dirección de salud" in text
+        assert "Los logs de contenedores, Loki y tu tracker de errores no intervienen en la vigilancia" in text
+        assert "alimentan las auditorías, que los usan para encontrar las causas de los errores" in text
+
+
+@pytest.mark.parametrize("lang", ["en", "es"])
+def test_the_help_of_merging_and_of_the_turns_says_what_each_adds(github_web: Web, lang: str) -> None:
+    web = github_web
+    web.store.add_project("acme/api")
+    page = web.client.get("/projects", headers={"Accept-Language": lang}).get_data(as_text=True)
+    merge, turns = bubble(page, "projects-merge_on_approve"), bubble(page, "projects-turns")
+    if lang == "en":
+        assert "every 10 minutes" in merge and "(never a revert)" in merge and "Without this, you merge them" in merge
+        assert "protected branch" in merge and "A tests run opens pull requests that only add tests" in turns
+        assert "Tick “Tests too”, “Dependencies too” or both" in turns and "ticked or not" in turns
+    else:
+        assert (
+            "cada 10 minutos" in merge and "(nunca una reversión)" in merge and "Sin esto, los fusionas tú" in merge
+        )
+        assert (
+            "rama protegida" in merge and "Una ejecución de tests abre pull requests que solo añaden tests" in turns
+        )
+        assert "Marca «También tests», «También dependencias» o las dos" in turns and "estén marcadas o no" in turns
