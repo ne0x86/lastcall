@@ -25,6 +25,7 @@ from dataclasses import replace
 from functools import wraps
 from typing import Any
 from urllib.parse import urlsplit
+from urllib.request import Request
 
 import waitress
 from flask import Flask, Response, g, redirect, render_template, request, url_for
@@ -34,7 +35,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from lastcall import __version__, cron, destinations, engines, i18n, logs, loki, projects, signals
 from lastcall.accounts import ACCOUNT_ID, MODEL, Account, policies, tier_models
 from lastcall.engines.base import Keyed
-from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, urlopen
+from lastcall.github import PERMISSIONS, App, Fetch, GitHub, GitHubError, lacking, permissions_of, urlopen
+from lastcall.github import Response as Answer
 from lastcall.github_setup import LOGIN, Exchange, clean_owner, exchange_code, form_action, manifest, owner_kind
 from lastcall.notify import EVENTS, Notifier, describe
 from lastcall.quota import QuotaError, Reading
@@ -60,6 +62,10 @@ STATE_SECONDS = 3600.0  # a GitHub App manifest form is good for an hour
 MAX_STATES = 50  # manifest forms that wait for GitHub's answer: the oldest give way
 OWNER_SECONDS = 600.0  # GitHub's answer on what an owner is, kept 10 minutes: anonymous requests are 60 an hour
 MAX_OWNERS = 100
+GRANT_SECONDS = 600.0  # what GitHub says an installation was granted, kept 10 minutes: the Projects page asks on load
+RETRY_SECONDS = 60.0  # a gap (the owner is fixing it) or a miss is kept only a minute, so that the notice goes soon
+GRANT_TIMEOUT = 5  # seconds that the Projects page waits for GitHub's answer on one installation
+MAX_GRANTS = 100
 CREDENTIAL = re.compile(r"(?i)\b(bearer|basic)\s+[^\"']*|\b(authorization|header value)\W+.*")
 QUICKSTART = "https://github.com/ne0x86/lastcall#-quickstart"
 CSP = (
@@ -103,7 +109,7 @@ def create_app(
     `background` runs slow work, such as reading the installed repositories, outside the request. `read_quota`
     reads an account's quota in the sandbox; without it, the web UI cannot check a new account's login.
     `exchange` turns GitHub's one-time code into the App's credentials; `fetch` asks Telegram for a bot's chats, and
-    GitHub whether an owner is a person or an organization."""
+    GitHub whether an owner is a person or an organization, and what the App's installation was granted."""
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024  # forms are small
     if trust_proxy:
@@ -117,7 +123,8 @@ def create_app(
     notifications = notifier or Notifier(secrets, store, log=log)
     app_states: dict[str, float] = {}  # manifest forms shown, by state, with when they were shown
     owner_answers: dict[str, tuple[str, float]] = {}  # what GitHub said an owner is ("user", "org", "missing"), when
-    cache_lock = threading.Lock()  # for app_states and owner_answers: waitress answers on 8 threads
+    grant_answers: dict[str, tuple[str | None, float]] = {}  # permissions_page of an owner's installation, and when
+    cache_lock = threading.Lock()  # for app_states, owner_answers and grant_answers: waitress answers on 8 threads
     quota_errors: dict[str, tuple[float, str]] = {}  # the last failed quota reading of each account, and when
 
     def connect() -> GitHub | None:
@@ -276,12 +283,55 @@ def create_app(
 
     def show_projects(status: int = 200, error: str = "", install: str = "") -> ResponseReturnValue:
         found = App.load(secrets)
-        view = project_views.build(store, g.lang, clock(), found.install_url if found else "", reading.is_set())
+        view = project_views.build(
+            store, g.lang, clock(), found.install_url if found else "", reading.is_set(), permissions_link
+        )
         view.tracker = signals.Tracker.load(secrets) is not None
         done = request.args.get("done", "")
         known = ("added", "saved", "queued", "improve", "tests", "deps", "refreshing")
         message = t(f"web.done.{done}") if done in known and not error else ""
         return page("projects.html", status, v=view, done=message, error=error, install=install)
+
+    def permissions_page(repo: str) -> str | None:
+        """Where the App's owner gives it Checks and Commit statuses (read), when GitHub says that its installation on
+        the owner of `repo` lacks them; "" when it has them; None when GitHub cannot say."""
+        found = App.load(secrets)
+        if found is None:
+            return None
+
+        def quick(req: Request) -> Answer:
+            req.timeout = GRANT_TIMEOUT  # read by github.urlopen; a fake fetch ignores it
+            return fetch(req)
+
+        try:
+            installation = GitHub(found, quick, clock).installation(repo)
+        except Exception as e:  # an optional lookup never takes the page down
+            log(f"Web UI: what the GitHub App may do on {repo} could not be read: {brief(e)}")
+            return None
+        granted = permissions_of(installation)
+        if granted is None:
+            return None
+        if not lacking(granted):
+            return ""
+        org = found.org_owns(installation)
+        return None if org is None else found.permissions_url(org)
+
+    def permissions_link(repo: str) -> str:
+        """`permissions_page`, from the last 10 minutes when it was asked for the same owner (one installation holds
+        all its repositories), or from the last minute when it found a gap or did not know: the owner fixes a gap and
+        comes back to see it gone. Bounded, like the owner lookup."""
+        key, now = repo.partition("/")[0].lower(), clock()
+        with cache_lock:
+            known = grant_answers.get(key)
+        if known is not None and now - known[1] < (GRANT_SECONDS if known[0] == "" else RETRY_SECONDS):
+            return known[0] or ""
+        found = permissions_page(repo)
+        with cache_lock:
+            grant_answers.pop(key, None)  # asked again: it goes to the end, as the newest
+            grant_answers[key] = (found, now)
+            while len(grant_answers) > MAX_GRANTS:
+                del grant_answers[next(iter(grant_answers))]
+        return found or ""
 
     @app.post("/projects/add")
     @signed_in

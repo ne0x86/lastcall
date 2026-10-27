@@ -3,6 +3,9 @@ that asks for it, lastcall looks at the checks of the merged commit and at the p
 one. When the checks fail where they passed before the merge, or the address stops answering 3 times in a row, it
 opens a pull request that reverts the change, pauses the project and tells the owner. It never merges the revert:
 the owner does, if that change is the cause.
+
+Reading the checks needs the GitHub App's Checks and Commit statuses permissions (read). While the App lacks them,
+lastcall says so in the log and looks only at the health address.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lastcall import git, i18n
-from lastcall.approval import failing
+from lastcall.approval import ChecksUnreadable, ensure_readable, failing
 from lastcall.github import GitHub, GitHubError, GitHubForge
 from lastcall.store import ProjectRow, Store
 
@@ -57,6 +60,17 @@ def open_revert(client: GitHub, repo: str, pr: Mapping[str, Any], title: str, bo
         git.remove(work)
 
 
+def broken(client: GitHub, token: str, repo: str, sha: str) -> list[str]:
+    """The names of the checks that the merge broke: they fail on the merged commit and passed on the one before."""
+    ensure_readable(client, repo)
+    failed = failing(client, token, repo, sha)
+    if failed:
+        parent = client.request("GET", f"/repos/{repo}/commits/{sha}", token)["parents"][0]["sha"]
+        if not failing(client, token, repo, parent):
+            return failed
+    return []
+
+
 def cause(
     client: GitHub,
     token: str,
@@ -64,14 +78,18 @@ def cause(
     pr: Mapping[str, Any],
     project: ProjectRow,
     health: Callable[[str], bool],
+    log: Log = print,
 ) -> str | None:
-    """Why the merged change should be reverted, in the project's language; None while all is well."""
+    """Why the merged change should be reverted, in the project's language; None while all is well. When the App
+    cannot read the checks, `log` says so and the health address is still looked at."""
     language, repo, sha = project.language or "English", str(pr["repo"]), str(pr["merge_sha"])
-    failed = failing(client, token, repo, sha)
+    try:
+        failed = broken(client, token, repo, sha)
+    except ChecksUnreadable as e:
+        log(f"watch {repo}: {e}")
+        failed = []
     if failed:
-        parent = client.request("GET", f"/repos/{repo}/commits/{sha}", token)["parents"][0]["sha"]
-        if not failing(client, token, repo, parent):  # they passed before the merge: the change broke them
-            return i18n.text(language, "watch.checks", names=", ".join(failed))
+        return i18n.text(language, "watch.checks", names=", ".join(failed))
     if project.health_url:
         failures = store.health(str(pr["url"]), health(project.health_url))
         if failures >= HEALTH_FAILURES:
@@ -90,13 +108,20 @@ def watch(
 ) -> int:
     """Look at the merged pull requests under watch. Returns how many lastcall proposed to revert."""
     reverted = 0
+    told: set[str] = set()
+
+    def once(line: str) -> None:  # several merged pull requests of a project wait on the same permission
+        if line not in told:
+            told.add(line)
+            log(line)
+
     for pr in store.watched(time.time() if now is None else now):
         repo = str(pr["repo"])
         project = store.project(repo)
         if project is None or not project.watch:
             continue
         try:
-            why = cause(client, client.repository_token(repo), store, pr, project, health)
+            why = cause(client, client.repository_token(repo), store, pr, project, health, once)
         except GitHubError as e:
             log(f"watch {pr['url']}: {e}")
             continue

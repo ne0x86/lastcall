@@ -11,8 +11,11 @@ from urllib.request import Request
 
 import pytest
 import waitress.server
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from flask.testing import FlaskClient
 
+import lastcall.web as site
 from lastcall.accounts import Account
 from lastcall.github import App, GitHub, Response
 from lastcall.notify import Notifier
@@ -21,7 +24,7 @@ from lastcall.recipes.audit import AuditReport
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
 from lastcall.tiers import TIERS
-from lastcall.web import CSP, create_app, serve
+from lastcall.web import CSP, GRANT_TIMEOUT, create_app, serve
 from lastcall.web.auth import (
     IDLE_DAYS,
     LOCK_ALL,
@@ -1964,3 +1967,241 @@ def test_the_log_brackets_an_ipv6_address(monkeypatch: pytest.MonkeyPatch, tmp_p
         web.logs.clear()
         serve(web.app, host, 8080, log=web.logs.append)
         assert web.logs == [f"Web UI on {said} (in English and Spanish)"], host
+
+
+# an App made before v0.7.2 was not granted Checks and Commit statuses: the card of a project that needs them says so
+
+LACKING = {"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
+GRANTED = {**LACKING, "checks": "read", "statuses": "read"}
+ARROW = chr(0x203A)  # the single right-pointing angle quotation mark of "Settings > Applications"
+INSTALLED = f"Settings {ARROW} Applications {ARROW} Installed GitHub Apps {ARROW} Configure"  # where GitHub says so
+
+
+@pytest.fixture(scope="module")
+def app_pem() -> str:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+
+
+def installation(login: str, kind: str, permissions: Mapping[str, str]) -> tuple[int, object]:
+    """GitHub's answer for the App's installation on a repository's owner."""
+    return 200, {"id": 7, "account": {"login": login, "type": kind}, "target_type": kind, "permissions": permissions}
+
+
+class Installations:
+    """GitHub's /repos/<owner>/<name>/installation, asked with the App's own token: the answer of each owner that
+    has one (an exception is raised, as a network that fails does), 404 for any other. It records what was asked."""
+
+    PREFIX = "https://api.github.com/repos/"
+
+    def __init__(self, answers: Mapping[str, tuple[int, object] | Exception]) -> None:
+        self.answers = dict(answers)
+        self.asked: list[Request] = []
+
+    def __call__(self, req: Request) -> Response:
+        self.asked.append(req)
+        assert req.full_url.startswith(self.PREFIX) and req.full_url.endswith("/installation"), req.full_url
+        assert (req.get_header("Authorization") or "").startswith("Bearer ")  # the App's token, not an installation's
+        answer = self.answers.get(self.owner(req), (404, {"message": "Not Found"}))
+        if isinstance(answer, Exception):
+            raise answer
+        status, body = answer
+        return status, {}, body if isinstance(body, bytes) else json.dumps(body).encode()
+
+    def owner(self, req: Request) -> str:
+        return req.full_url.removeprefix(self.PREFIX).split("/")[0].lower()  # GitHub does not tell cases apart
+
+    def owners(self) -> list[str]:
+        return [self.owner(req) for req in self.asked]
+
+
+def turn_on(web: Web, repo: str, merge_on_approve: bool = True, watch: bool = False) -> None:
+    if web.store.project(repo) is None:
+        web.store.add_project(repo)
+    web.store.update_project(
+        repo, active=True, weight=1, language=None, max_prs=3, merge_on_approve=merge_on_approve, watch=watch
+    )
+
+
+def checks_web(tmp_path: Path, pem: str, github: Installations, *repos: str, owner: str = "acme") -> Web:
+    """A signed-in web UI, with the App of `owner`, and a project with merge on approve for each of `repos`."""
+    web = Web(tmp_path, fetch=github)
+    App(42, "lastcall-acme", "lastcall-acme", owner, "https://github.com/apps/lastcall-acme", pem).save(web.secrets)
+    web.set_up()
+    for repo in repos:
+        turn_on(web, repo)
+    return web
+
+
+def card(page: str, repo: str) -> str:
+    return page.split(f'id="project-{repo.replace("/", "--")}"')[1].split("</article>")[0]
+
+
+def notices(page: str) -> list[str]:
+    """The text of each notice about checks on the page."""
+    found = re.findall(r'<div class="notice checks" role="note">(.*?)</div>', page, re.S)
+    return [html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", n))).strip() for n in found]
+
+
+@pytest.mark.parametrize(
+    ("owner", "kind", "link"),
+    [
+        ("octocat", "User", "https://github.com/settings/apps/lastcall-acme/permissions"),
+        ("acme", "Organization", "https://github.com/organizations/acme/settings/apps/lastcall-acme/permissions"),
+    ],
+)
+def test_a_project_that_merges_or_watches_says_what_the_app_lacks_and_where_to_fix_it(
+    tmp_path: Path, app_pem: str, owner: str, kind: str, link: str
+) -> None:
+    github = Installations({owner: installation(owner, kind, LACKING)})
+    web = checks_web(tmp_path, app_pem, github, f"{owner}/api", owner=owner)
+    turn_on(web, f"{owner}/lib", merge_on_approve=False, watch=True)  # the watch needs them too
+    web.store.add_project(f"{owner}/web")  # neither: nothing to say
+    response = web.client.get("/projects")
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert len(notices(page)) == 2 and notices(card(page, f"{owner}/web")) == []
+    for repo in (f"{owner}/api", f"{owner}/lib"):
+        assert notices(card(page, repo)) == [
+            "“Merge after my approval” and “Watch after the merge” need the GitHub App to read checks and commit "
+            "statuses, and this App cannot yet. Open the App's permissions on GitHub. Set “Checks” and “Commit "
+            "statuses” to “Read-only” and save. Accept the new permissions where GitHub asks for it, on the App's "
+            f"installation: {INSTALLED}, or the organization's settings."
+        ]
+        block = re.findall(r'<div class="notice checks".*?</div>', card(page, repo), re.S)[0]
+        assert [html.unescape(url) for url in re.findall(r'<a href="([^"]+)"', block)] == [link]  # the same tab
+        assert not re.search(r"\s(target|style|on[a-z]+)=", block)  # what the content security policy would block
+    assert github.owners() == [owner]  # one installation holds all of the owner's repositories
+
+
+def test_the_notice_in_spanish_quotes_the_labels_of_the_two_settings(tmp_path: Path, app_pem: str) -> None:
+    github = Installations({"acme": installation("acme", "Organization", LACKING)})
+    web = checks_web(tmp_path, app_pem, github, "acme/api")
+    page = web.client.get("/projects", headers={"Accept-Language": "es"}).get_data(as_text=True)
+    assert notices(page) == [
+        "«Fusionar tras mi aprobación» y «Vigilar tras la fusión» necesitan que la GitHub App lea los checks y los "
+        "estados de commit, y esta App todavía no puede. Abre los permisos de la App en GitHub. Pon «Checks» y "
+        "«Commit statuses» en «Read-only» y guarda. Acepta los nuevos permisos donde GitHub te lo pida, en la "
+        f"instalación de la App: {INSTALLED}, o en los ajustes de la organización."
+    ]
+    assert 'name="merge_on_approve" value="1" checked> Fusionar tras mi aprobación' in page
+    assert 'name="watch" value="1"> Vigilar tras la fusión' in page
+
+
+@pytest.mark.parametrize("granted", [GRANTED, {**LACKING, "checks": "write", "statuses": "write"}])
+def test_no_notice_when_the_installation_can_read_the_checks(
+    tmp_path: Path, app_pem: str, granted: dict[str, str]
+) -> None:
+    github = Installations({"acme": installation("acme", "Organization", granted)})
+    web = checks_web(tmp_path, app_pem, github, "acme/api")
+    response = web.client.get("/projects")
+    assert response.status_code == 200 and notices(response.get_data(as_text=True)) == []
+    assert github.owners() == ["acme"]
+
+
+def test_a_project_that_reads_no_checks_never_asks_github(tmp_path: Path, app_pem: str) -> None:
+    github = Installations({})
+    web = checks_web(tmp_path, app_pem, github)
+    web.store.add_project("acme/api")
+    response = web.client.get("/projects")
+    assert response.status_code == 200 and notices(response.get_data(as_text=True)) == []
+    assert github.asked == []
+
+
+@pytest.mark.parametrize(
+    ("answer", "logged"),
+    [
+        (OSError("no route to host"), True),
+        (RuntimeError("boom"), True),
+        ((403, {"message": "API rate limit exceeded"}), True),
+        ((500, {}), True),
+        ((404, {"message": "Not Found"}), True),  # the App is not installed there
+        ((200, b"<html>not json</html>"), True),
+        ((200, {"id": 7, "account": {"login": "acme", "type": "Organization"}}), False),  # it does not say
+        (installation("other", "Organization", LACKING), False),  # not the App owner's account: no address
+        (installation("acme", "Bot", LACKING), False),
+    ],
+)
+def test_when_github_cannot_say_the_page_shows_nothing_and_does_not_fail(
+    tmp_path: Path, app_pem: str, answer: tuple[int, object] | Exception, logged: bool
+) -> None:
+    github = Installations({"acme": answer})
+    web = checks_web(tmp_path, app_pem, github, "acme/api")
+    response = web.client.get("/projects")
+    page = response.get_data(as_text=True)
+    assert response.status_code == 200 and notices(page) == []
+    assert 'name="merge_on_approve" value="1" checked>' in page  # the rest of the card is there
+    assert any("could not be read" in line for line in web.logs) == logged
+    assert not any("BEGIN" in line for line in web.logs)  # never the key
+
+
+def test_a_key_that_cannot_sign_never_breaks_the_page(tmp_path: Path) -> None:
+    web = Web(tmp_path, github=FakeGitHub())  # its App has "not a key" for a key
+    web.set_up()
+    turn_on(web, "acme/api")
+    response = web.client.get("/projects")
+    assert response.status_code == 200 and notices(response.get_data(as_text=True)) == []
+    assert any("could not be read" in line for line in web.logs)
+
+
+def test_the_page_waits_5_seconds_at_most_for_github(tmp_path: Path, app_pem: str) -> None:
+    github = Installations({"acme": installation("acme", "Organization", LACKING)})
+    checks_web(tmp_path, app_pem, github, "acme/api").client.get("/projects")
+    assert GRANT_TIMEOUT == 5 and [getattr(req, "timeout", None) for req in github.asked] == [5]
+
+
+def test_a_notice_is_asked_again_after_a_minute_and_what_is_granted_after_ten(tmp_path: Path, app_pem: str) -> None:
+    github = Installations({"acme": installation("acme", "Organization", LACKING)})
+    web = checks_web(tmp_path, app_pem, github, "acme/api")
+    assert len(notices(web.client.get("/projects").get_data(as_text=True))) == 1
+    github.answers["acme"] = installation("acme", "Organization", GRANTED)  # the owner accepted the new permissions
+    web.clock.now += 59
+    assert len(notices(web.client.get("/projects").get_data(as_text=True))) == 1 and len(github.asked) == 1
+    web.clock.now += 2
+    assert notices(web.client.get("/projects").get_data(as_text=True)) == [] and len(github.asked) == 2
+    web.clock.now += 598  # what it has been granted is kept 10 minutes
+    assert notices(web.client.get("/projects").get_data(as_text=True)) == [] and len(github.asked) == 2
+    web.clock.now += 2
+    web.client.get("/projects")
+    assert len(github.asked) == 3
+
+
+def test_a_github_that_does_not_answer_is_asked_again_after_a_minute_not_at_every_load(
+    tmp_path: Path, app_pem: str
+) -> None:
+    github = Installations({"acme": OSError("no route to host")})
+    web = checks_web(tmp_path, app_pem, github, "acme/api")
+    for _ in range(3):
+        assert web.client.get("/projects").status_code == 200
+    assert len(github.asked) == 1  # three loads, one wait
+    web.clock.now += 61
+    github.answers["acme"] = installation("acme", "Organization", LACKING)
+    assert len(notices(web.client.get("/projects").get_data(as_text=True))) == 1 and len(github.asked) == 2
+
+
+def test_what_github_says_about_installations_is_kept_for_a_bounded_number_of_owners(
+    tmp_path: Path, app_pem: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(site, "MAX_GRANTS", 3)
+    owners = [f"o{n}" for n in range(1, 6)]
+    github = Installations({o: installation(o, "Organization", GRANTED) for o in owners})
+    web = checks_web(tmp_path, app_pem, github, *(f"{o}/api" for o in owners), owner="o1")
+    web.client.get("/projects")
+    assert github.owners() == owners  # a project of each: five installations asked, the newest three kept
+    for only in ("o5", "o3"):  # still known: no new request
+        for o in owners:
+            turn_on(web, f"{o}/api", merge_on_approve=o == only)
+        web.client.get("/projects")
+        assert github.owners() == owners, only
+    for o in owners:
+        turn_on(web, f"{o}/api", merge_on_approve=o == "o2")
+    web.client.get("/projects")
+    assert github.owners() == [*owners, "o2"]  # the oldest was dropped: asked again
+
+
+def test_the_owner_of_a_repository_is_asked_without_regard_to_case(tmp_path: Path, app_pem: str) -> None:
+    github = Installations({"acme": installation("Acme", "Organization", LACKING)})
+    web = checks_web(tmp_path, app_pem, github, "Acme/api", "acme/web", owner="acme")
+    assert len(notices(web.client.get("/projects").get_data(as_text=True))) == 2 and len(github.asked) == 1

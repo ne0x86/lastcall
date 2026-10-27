@@ -86,3 +86,12 @@ def test_the_fan_out_hint_quotes_the_labels_where_the_option_really_is() -> None
         hint = text(lang, "web.runs.fanout_hint")
         for key in ("web.project.all", "web.project.account", "web.project.run_now", "web.project.audit"):
             assert text(lang, key) in hint, (lang, key)
+
+
+def test_the_texts_about_the_checks_call_the_two_settings_as_the_projects_page_does() -> None:
+    for lang in ("en", "es"):
+        merge, watch = text(lang, "web.project.merge_on_approve"), text(lang, "web.project.watch")
+        lead = text(lang, "web.project.checks.lead", merge=merge, watch=watch)
+        permissions = text(lang, "web.help.github.permissions")  # what the manifest asks for, and why
+        for label in (merge, watch):
+            assert label in lead and label in permissions, (lang, label)

@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from lastcall import cli, github
-from lastcall.github import App, GitHub, GitHubError, Response, app_jwt
+from lastcall.github import App, GitHub, GitHubError, Response, app_jwt, lacking
 from lastcall.github_setup import SetupServer, clean_owner, form_action, manifest, owner_kind, run_setup
 from lastcall.secretstore import SecretStore
 from lastcall.store import Store
@@ -112,6 +112,84 @@ def test_errors_carry_the_status(app: App) -> None:
         GitHub(app, fake).installation_token(7)
 
 
+def test_repository_token_asks_for_the_installation_and_then_for_its_token(app: App) -> None:
+    fake = FakeGitHub(
+        {
+            "GET /repos/o/r/installation": (200, {"id": 7, "permissions": {"contents": "write"}}),
+            "POST /app/installations/7/access_tokens": (201, {"token": "ghs_x"}),
+        }
+    )
+    assert GitHub(app, fake, lambda: NOW).repository_token("o/r") == "ghs_x"
+    assert [call[:2] for call in fake.calls] == [
+        ("GET", "/repos/o/r/installation"),
+        ("POST", "/app/installations/7/access_tokens"),
+    ]
+    assert {call[2] for call in fake.calls} == {f"Bearer {app_jwt(app, NOW)}"}  # the App's own token, twice
+
+
+def test_an_app_that_is_not_installed_says_where_to_install_it(app: App) -> None:
+    fake = FakeGitHub({"GET /repos/o/r/installation": (404, {"message": "Not Found"})})
+    with pytest.raises(GitHubError) as error:
+        GitHub(app, fake).repository_token("o/r")
+    assert error.value.status == 404
+    assert str(error.value).endswith(
+        "lastcall-ne0x86 is not installed on o/r: https://github.com/apps/lastcall-ne0x86/installations/new"
+    )
+
+
+def test_granted_is_what_the_installation_was_granted(app: App) -> None:
+    permissions = {"contents": "write", "checks": "read", "metadata": "read"}
+    fake = FakeGitHub({"GET /repos/o/r/installation": (200, {"id": 7, "permissions": permissions})})
+    client = GitHub(app, fake, lambda: NOW)
+    assert client.granted("o/r") == permissions
+    assert fake.calls == [("GET", "/repos/o/r/installation", f"Bearer {app_jwt(app, NOW)}")]
+    for answer in ({"id": 7}, {"id": 7, "permissions": None}, {"id": 7, "permissions": ["checks"]}):
+        fake.answers["GET /repos/o/r/installation"] = (200, answer)
+        assert client.granted("o/r") is None  # GitHub does not say
+
+
+@pytest.mark.parametrize(
+    ("granted", "missing"),
+    [
+        ({"checks": "read", "statuses": "read"}, []),
+        ({"checks": "write", "statuses": "write"}, []),  # write includes read
+        ({"checks": "read"}, ["statuses"]),
+        ({"statuses": "write"}, ["checks"]),
+        ({"contents": "write", "metadata": "read"}, ["checks", "statuses"]),
+        ({}, ["checks", "statuses"]),
+    ],
+)
+def test_lacking_names_what_an_installation_cannot_read(granted: dict[str, str], missing: list[str]) -> None:
+    assert lacking(granted) == missing
+
+
+def test_the_apps_permissions_page_is_a_persons_or_an_organizations(app: App) -> None:
+    assert app.permissions_url(False) == "https://github.com/settings/apps/lastcall-ne0x86/permissions"
+    assert (
+        app.permissions_url(True)
+        == "https://github.com/organizations/ne0x86/settings/apps/lastcall-ne0x86/permissions"
+    )
+
+
+@pytest.mark.parametrize(
+    ("installation", "org"),
+    [
+        ({"account": {"login": "ne0x86", "type": "User"}}, False),
+        ({"account": {"login": "NE0X86", "type": "Organization"}}, True),  # a login has no case
+        ({"account": {"login": "ne0x86"}, "target_type": "Organization"}, True),
+        ({"account": {"login": "other", "type": "Organization"}}, None),  # an App made public, installed elsewhere
+        ({"account": {"login": "ne0x86", "type": "Bot"}}, None),
+        ({"account": {"slug": "an-enterprise", "name": "An enterprise"}}, None),  # an enterprise has no login
+        ({"account": None}, None),
+        ({}, None),
+    ],
+)
+def test_the_account_of_an_installation_says_whether_an_organization_owns_the_app(
+    app: App, installation: dict[str, Any], org: bool | None
+) -> None:
+    assert app.org_owns(installation) is org  # a private App is installed only where its owner is
+
+
 # manifest flow
 
 
@@ -125,6 +203,8 @@ def test_manifest_asks_only_what_lastcall_needs() -> None:
         "contents": "write",
         "pull_requests": "write",
         "issues": "write",
+        "checks": "read",  # merge on approve and the watch read the checks of a commit...
+        "statuses": "read",  # ...and its commit statuses
         "metadata": "read",
     }
     assert len(manifest("a-very-long-organization-name-indeed", "")["name"]) == 34
