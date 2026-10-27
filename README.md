@@ -42,11 +42,11 @@ also spend an API key with a monthly budget, or a local model at the hours you c
 - 👀 **Merges and watches, if you want.** It merges the pull requests you approve once their checks pass, and it
   watches each merge for a day: when the checks or your health address break, it proposes a revert and pauses the
   project.
-- 🧠 **Remembers.** It never proposes again what you rejected or dismissed, and it finishes what did not fit last
-  time.
-- ⏳ **Picks its moment.** It spends only capacity that would otherwise expire. It keeps a reserve for you and stops
-  before any paid usage. An API key spends its monthly budget at the pace of the month, and a local model works at
-  the hours of its schedule.
+- 🧠 **Remembers.** It does not propose again what you rejected or dismissed unless it finds new evidence, and it
+  finishes what did not fit last time.
+- ⏳ **Picks its moment.** On its own, it spends only capacity that would otherwise expire. It keeps a reserve for
+  you and stops before any paid usage. An API key spends its monthly budget at the pace of the month, and a local
+  model works at the hours of its schedule.
 - 🖥️ **Shows you everything.** A dashboard in English and Spanish: what is left of every quota, the next burst, the
   pull requests to review and the decisions waiting for you. A "?" next to anything unclear explains it.
 - 🔔 **Tells you.** A notification when a pull request opens, a decision waits, an audit fails or an account needs
@@ -277,7 +277,7 @@ that `git pull` never conflicts. The release notes say when a version needs anyt
 - **If git stops because of your changes to `compose.yaml` or `egress/filter`**, move them out first: the address and
   the port go in `.env` (`LASTCALL_BIND`, `LASTCALL_PORT`), and anything else in a `compose.override.yaml`, which can
   also mount your own copy of the filter. Then run `git checkout -- compose.yaml egress/filter` and update again.
-- **To stay on one release**, check out its tag instead: `git fetch --tags && git checkout v0.7.0`. `git pull` then
+- **To stay on one release**, check out its tag instead: `git fetch --tags && git checkout v0.7.1`. `git pull` then
   stops until you follow releases again with `git checkout stable`.
 - **If you cloned a release by its tag, or `main`**, as earlier quickstarts did, switch once:
   `git fetch origin && git checkout stable`.
@@ -399,6 +399,132 @@ API keys and local models are the alternative: OpenCode runs on them, under each
 current terms of your provider before you connect an account;
 [DESIGN.md](DESIGN.md#3-provider-terms-and-responsible-use) has the details and the sources. This is not legal
 advice.
+
+## ❓ FAQ
+
+### Will lastcall use the quota I need for my own work?
+
+On its own, lastcall spends only what is left near the weekly reset, and it leaves you a reserve:
+- Each subscription keeps 10% of every week for you, unless you change it on the Accounts page.
+- A burst starts close enough to the reset to spend what is left, and never more than 48 hours before it.
+- Before every step, lastcall reads the quota again. When only the reserve is left of the week, from your own work
+  or the burst's, the burst stops. The step that is running finishes, so it can take a little of the reserve.
+- When the 5-hour window is 90% used, the burst waits for it to reset, so during a burst you may find that window
+  nearly full.
+- If the account has extra usage or credits turned on, lastcall spends nothing on it.
+
+Two kinds of run go beyond that: a run that is still going at the reset finishes on the new week, and a run that you
+start from the Projects page spends down to your reserve at any time. An account on an API key keeps no reserve: by
+default it spends its monthly budget at the pace of the month.
+
+### Is this allowed by my subscription's terms?
+
+Your provider's current terms decide that, so read them before you add an account. lastcall keeps to the rules in
+[Provider terms and responsible use](DESIGN.md#3-provider-terms-and-responsible-use): it runs each vendor's official,
+unmodified CLI with your own login, it never handles your subscription's credentials, and there is no hosted
+version. API keys and local models are the alternative, under each provider's API terms. This is not legal advice.
+
+### Can it break my repositories or merge on its own?
+
+Nothing reaches your default branch unless a person approves it. lastcall opens pull requests and issues. Before it
+pushes a change, it runs your tests again in a clean container and scans the change for secrets. A project without
+tests gets only a build check, or none, and the pull request says which.
+
+lastcall merges only if you turn on *Merge after my approval* for a project. Then it merges a pull request once you,
+or anyone who can write to the repository, approves its latest commit, and no check fails or is still running. A
+revert is only ever proposed, as a pull request.
+
+### Will it flood my repositories with pull requests?
+
+No. A judge checks every finding against the code and throws out the noise. An audit opens at most 3 pull requests,
+a number that each project can change, and the decisions that need you go to one issue. Each pull request is a small
+fix, with a regression test where one is possible. A burst skips a project while 2 of lastcall's pull requests wait
+for your review there, and an account audits a project at most once a week, unless you asked for something there,
+such as an issue you labelled `lastcall`. lastcall tells the judge what you rejected or dismissed, and the judge
+proposes it again only with new and clear evidence. You choose the repositories, and Pause on the dashboard stops new
+bursts.
+
+### Where does my code go?
+
+To the model of the account that works on it, as when you run that CLI yourself: Anthropic for Claude Code, OpenAI
+for Codex, or the provider of an API key. OpenRouter passes it on to the company that serves the model you chose.
+With a local model on Ollama, it goes to no model provider.
+
+The names and versions of your dependencies go to [osv.dev](https://osv.dev) in every audit, and to
+[deps.dev](https://deps.dev) for upgrades. The agents' steps reach nothing beyond the allowlist in
+[egress/filter](egress/filter), and errors from production are masked before they reach a model. lastcall itself
+sends no telemetry.
+
+### What if a file in my repository tricks the agent?
+
+That is why every step runs in a throwaway container: unprivileged, with no capabilities, and with the code
+read-only for reviewers. Its only way out is a proxy with a short allowlist: the model APIs and their logins, the
+package registries and a few services that lastcall's tools use. Agents never hold GitHub credentials and never
+push. A tricked agent could still read its own CLI login or API key: the secret scan keeps them out of what lastcall
+publishes, and the allowlist limits where else they could go. Every change goes through your tests, if the project
+has them, and a secret scan before lastcall pushes it, and you review it.
+
+### Why does it need the Docker socket?
+
+To start each step in its own container. Only the supervisor has the socket, and it has no network: it talks to
+lastcall through a Unix socket and applies the same isolation to every container it starts. It never starts, stops
+or changes your other containers. The web UI and the service, which talk to GitHub, have no Docker socket: they can
+only ask the supervisor to run a step, list the containers, or read the logs of those that you gave a project.
+
+### Does it need my GitHub password or a personal token?
+
+No. You create a GitHub App from the web UI in one click, private to your account or organization, and install it
+only on the repositories that lastcall may work on. lastcall keeps the App's private key in its secret store and
+makes tokens from it that expire after an hour. Agents never see either.
+
+### Does my computer have to stay on?
+
+lastcall spends only while it runs. If your computer sleeps through the hours before a reset, that leftover is gone.
+A server, or any machine that is always on, is awake for every reset: see [On a server](#-on-a-server).
+
+### Which tools and plans does it work with?
+
+Claude Code on Claude Pro, Max and Team; Codex on ChatGPT Plus, Pro and Business; OpenCode on API keys of
+OpenRouter, Anthropic and OpenAI, and on local models with Ollama. [Engines](#-engines) has the details, and says how
+another tool can plug in.
+
+### Does it work with GitLab, Forgejo or Bitbucket?
+
+Not yet: lastcall works with GitHub only. GitLab and Forgejo are next on the roadmap, as people ask for them, so
+[open an issue](https://github.com/ne0x86/lastcall/issues/new/choose) if you need one.
+
+### Does it run on ARM, such as a Raspberry Pi?
+
+Its images are built for amd64 and arm64, so it should run on a 64-bit ARM machine with Docker 26 or later, but it
+has not been tested on one yet. Each step can use up to 3 GB of memory and 2 CPUs. A local model runs in its own
+container and needs much more: qwen3-coder alone is about 19 GB.
+
+### What does it cost?
+
+lastcall is free and open source, under the Apache-2.0 license. On a subscription it spends only quota that you
+already pay for, and never extra usage. An API key spends at most its monthly budget, but a step that is already
+running may go a little over it: give the key its own spending limit at the provider too. A local model costs only
+the power of the machine that runs it.
+
+### Why not just run `claude -p` from cron?
+
+You could. lastcall adds what makes it safe to leave running: it times each burst to the reset and keeps your
+reserve, runs every step in a sandbox, has a judge check each finding against the code, checks every fix in a clean
+container with your own tests when you have them, remembers what you rejected, and delivers small pull requests from
+your own GitHub App, with a dashboard that shows all of it.
+
+### How do I stop it, or remove it?
+
+- **Pause** on the dashboard, or `docker compose run --rm cli pause`, stops new bursts. A run that has started
+  finishes, what you start from the Projects page still runs, and *Merge after my approval* still merges.
+- **`docker compose --profile local stop`** stops lastcall and its local model server, and `docker compose up -d`
+  starts lastcall again.
+- **To remove it**, pause first and wait until no run is going: a step that is still running outlives the next
+  command, and Docker cannot delete the data it uses. Then run `docker compose --profile local down -v` in the
+  lastcall folder. That deletes its containers and its data: the settings of accounts and projects, the history, the
+  secrets and the local models. Your accounts' logins stay in their own volumes: list them with
+  `docker volume ls --filter name=lastcall-account-` and delete each with `docker volume rm <name>`. Last, delete the
+  GitHub App on GitHub: under Settings › Developer settings › GitHub Apps, or in your organization's settings.
 
 ## 🗺️ Roadmap
 
