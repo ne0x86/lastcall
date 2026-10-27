@@ -1,6 +1,6 @@
 # lastcall design
 
-Status: **v0.6 released, October 2026**, open for discussion. This document describes what lastcall is and how it
+Status: **v0.7 released, October 2026**, open for discussion. This document describes what lastcall is and how it
 works. Section 17 says what is done and what comes next; open decisions are listed in section 19.
 
 ## 1. What lastcall is
