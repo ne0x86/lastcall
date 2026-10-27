@@ -4,7 +4,7 @@ suggestions for the installed repositories that are not projects yet."""
 from __future__ import annotations
 
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +16,7 @@ from lastcall.web.dashboard import ago, language_name, project_view
 WEIGHTS = (("0.5", "low"), ("1", "normal"), ("2", "high"), ("3", "top"))
 LANGUAGES = ("English", "Spanish")
 MAX_PRS = range(1, 6)
+MAX_QUERY = 100  # characters of what the filter of the suggestions looks for: a repository's name has 140 at most
 # what a project's card says while an order of each recipe waits, or while a run of it works
 QUEUED = {
     "audit": "web.project.queued",
@@ -86,15 +87,22 @@ class ProjectsPage:
     refreshed: str
     projects: list[ProjectCard] = field(default_factory=list)
     accounts: list[Option] = field(default_factory=list)
-    suggested: list[SuggestionView] = field(default_factory=list)
+    suggested: list[SuggestionView] = field(default_factory=list)  # what the filter shows
     others: list[SuggestionView] = field(default_factory=list)
     all_added: bool = False
     tracker: bool = False  # the owner connected an error tracker: each project may name its project there
+    query: str = ""  # what the filter looks for in their names; "" for no filter
+    total: int = 0  # the repositories that are not projects yet, before the filter
 
     @property
     def has_all(self) -> bool:
         """Whether the account choice offers "all free accounts": only with two or more enabled accounts."""
         return any(o.value == "*" for o in self.accounts)
+
+    @property
+    def shown(self) -> int:
+        """How many repositories the filter leaves, suggested or not."""
+        return len(self.suggested) + len(self.others)
 
 
 def build(
@@ -104,9 +112,11 @@ def build(
     install_url: str,
     reading: bool,
     permissions_url: Callable[[str], str],
+    query: str = "",
 ) -> ProjectsPage:
     """`permissions_url` says, for a repository, where its owner gives the App what reading checks takes: "" when the
-    App has it already, or when that is not known. It is asked only for the projects that read checks."""
+    App has it already, or when that is not known. It is asked only for the projects that read checks. `query` is
+    what the filter looks for in the names of the suggestions."""
     projects = store.projects()
     busy = {o["repo"].lower(): text(lang, QUEUED.get(o["kind"], QUEUED["audit"])) for o in store.orders()}
     busy |= {r["repo"].lower(): text(lang, RUNNING.get(r["recipe"], RUNNING["audit"])) for r in store.running()}
@@ -129,13 +139,32 @@ def build(
     if len(enabled) > 1:
         page.accounts.append(Option("*", text(lang, "web.project.all")))
     page.accounts += [Option(a.id, a.id) for a in enabled]
-    names = {p.repo.lower() for p in projects}
-    found = store.suggestions()
-    left = [s for s in found if s.repo.lower() not in names]
-    page.suggested = [suggestion_view(lang, s) for s in left if s.suggested]
-    page.others = [suggestion_view(lang, s) for s in left if not s.suggested]
+    found, query = store.suggestions(), clean_query(query)
+    left = left_to_add(projects, found)
+    shown = matching(left, query)
+    page.query, page.total = query, len(left)
+    page.suggested = [suggestion_view(lang, s) for s in shown if s.suggested]
+    page.others = [suggestion_view(lang, s) for s in shown if not s.suggested]
     page.all_added = bool(found) and not left
     return page
+
+
+def left_to_add(projects: Iterable[ProjectRow], found: Iterable[Suggestion]) -> list[Suggestion]:
+    """The suggestions for repositories that are not projects yet, in the order of the page: what it lists, and the
+    only repositories that "Add many" accepts."""
+    names = {p.repo.lower() for p in projects}
+    return [s for s in found if s.repo.lower() not in names]
+
+
+def clean_query(typed: str) -> str:
+    """What the filter of the suggestions looks for: the text without the spaces around it, cut at 100 characters."""
+    return typed.strip()[:MAX_QUERY]
+
+
+def matching(found: Iterable[Suggestion], query: str) -> list[Suggestion]:
+    """The suggestions whose repository name contains `query`, whatever the case; all of them for an empty one."""
+    wanted = query.casefold()
+    return [s for s in found if wanted in s.repo.casefold()]
 
 
 def card(

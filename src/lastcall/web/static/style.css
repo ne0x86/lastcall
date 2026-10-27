@@ -771,17 +771,12 @@ fieldset.tier .fields { grid-template-columns: repeat(auto-fit, minmax(min(100%,
 .check-row .check input { position: absolute; left: 0; top: .65rem; margin: 0; }
 .check-row .help { margin: 0 0 0 .3rem; }
 
-/* Rows of a field and a button, and the lists the Projects and Settings pages share. */
+/* Rows of a field and a button. */
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .row input, .row select { flex: 1 1 12rem; width: auto; }
-.spread { justify-content: space-between; flex-wrap: nowrap; }
-.spread p { margin: 0; overflow-wrap: anywhere; }
 .status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); }
 .status p, .status form { margin: 0; }
 details { margin: var(--s2) 0 var(--s3); }
-ul.plain { margin: 0 0 var(--s4); padding: 0; list-style: none; }
-ul.plain li { padding: var(--s3) 0; border-bottom: 1px solid var(--border); }
-ul.plain li:last-child { border-bottom: 0; }
 
 /* ---------- Buttons ---------- */
 button, a.button {
@@ -803,8 +798,8 @@ button, a.button {
   cursor: pointer;
 }
 button:hover, a.button:hover { color: var(--on-accent); background: var(--accent-strong); border-color: var(--accent-strong); }
-button.secondary { color: var(--accent); background: var(--surface); border-color: var(--line); box-shadow: none; }
-button.secondary:hover { color: var(--accent-strong); background: var(--accent-soft); border-color: var(--accent); }
+button.secondary, a.button.secondary { color: var(--accent); background: var(--surface); border-color: var(--line); box-shadow: none; }
+button.secondary:hover, a.button.secondary:hover { color: var(--accent-strong); background: var(--accent-soft); border-color: var(--accent); }
 button.danger { color: var(--bad); background: var(--surface); border-color: color-mix(in srgb, var(--bad) 60%, var(--line)); box-shadow: none; }
 button.danger:hover { color: var(--bad); background: var(--bad-soft); border-color: var(--bad); }
 button.wide { width: 100%; }
@@ -1059,11 +1054,59 @@ fieldset.has-help > legend { float: left; margin: 0; }
 /* Add a project: the manual field, then suggestions as rows. */
 .add-card .inline { margin-bottom: var(--s2); }
 .notice-link { margin-top: var(--s1); }
-.suggestions li { display: grid; gap: var(--s1); }
-.suggestion-name { font-family: var(--font-mono); font-weight: 650; }
-.suggestion-name .badge { margin-left: .25rem; color: var(--good); background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 30%, transparent); font-family: var(--font-body); }
-.suggestion-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); margin: 0; }
 .install-link { margin-top: var(--s3); }
+
+/* Add many: the suggestions are one form, and a filter narrows the list first. Each row is a tile that a tap anywhere on
+   it ticks: the name is its label, stretched over the tile (the link and the "?" stay above it), and a ticked tile
+   shows it. The buttons stay at the bottom of the screen while the list scrolls. */
+.filter { margin: var(--s3) 0 var(--s2); }
+.filter-note { margin: 0 0 var(--s3); color: var(--muted); }
+.picks { gap: var(--s2); margin-bottom: var(--s3); }
+.picks > legend { margin: 0; font-family: var(--font-round); font-size: 1.02rem; }
+.picks details { margin: 0; }
+ul.suggestions { display: grid; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+details > ul.suggestions { margin-top: var(--s1); }
+ul.suggestions li {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: var(--s1);
+  padding: var(--s3) var(--s3) var(--s3) calc(var(--s3) + 1.25rem + var(--s2));  /* the box has the left gutter */
+  background: var(--raised);
+  border: 1.5px solid transparent;
+  border-radius: var(--r-md);
+}
+ul.suggestions li:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+ul.suggestions li:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+ul.suggestions li:has(input:checked) .help { background: var(--surface); }
+.pick-line input { position: absolute; top: calc(var(--s3) + .1rem); left: var(--s3); }
+.suggestion-name { display: inline; margin: 0; font-family: var(--font-mono); font-weight: 650; overflow-wrap: anywhere; cursor: pointer; }
+.suggestion-name::after { content: ""; position: absolute; inset: 0; }  /* the whole tile is the label's target */
+.repo-link { position: relative; font-weight: 600; text-decoration: none; }
+.repo-link::before { content: ""; position: absolute; inset: -.7rem -.55rem; }  /* a 44 px target */
+.repo-link::after { content: "\2197"; color: var(--muted); font-size: .9em; }
+.repo-link:hover::after { color: var(--accent-strong); }
+.pick-line .badge { margin-left: .25rem; color: var(--good); background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 30%, transparent); font-family: var(--font-body); }
+.suggestion-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); margin: 0; }
+.pick-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: 0 -10px 18px -14px var(--shade), var(--shadow);
+}
+.pick-bar button { flex: 1 1 auto; padding-inline: var(--s3); }
+@media (min-width: 48rem) {
+  ul.suggestions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pick-bar button { flex: 0 0 auto; padding-inline: 1.2rem; }
+}
+html:has(.pick-bar) { scroll-padding-bottom: 12rem; }  /* a field that takes focus is never behind the bar */
 
 /* ---------- Sign-in pages ---------- */
 .signed-out main { display: grid; align-content: start; }
@@ -1172,6 +1215,7 @@ fieldset.has-help > legend { float: left; margin: 0; }
 .github-card .form-actions a.button { min-width: 0; text-align: center; }
 .github-card .hint { margin-top: 0; }
 .github-card .line + .hint { margin-top: var(--s2); }  /* who must be signed in, just under the confirmation */
+.github-card .hint + .hint { margin-top: var(--s2); }  /* where GitHub goes after the installation, under what to choose there */
 .github-card .status-line { margin-bottom: var(--s3); }
 .github-card .found { margin: 0 0 var(--s3); font-family: var(--font-round); font-size: 1.1rem; font-weight: 700; overflow-wrap: anywhere; }
 .github-card .change { margin: var(--s3) 0 0; }

@@ -53,6 +53,7 @@ class App:
     owner: str
     html_url: str
     pem: str
+    returns: bool = False  # GitHub brings the owner back to the web UI after an installation (its setup_url)
 
     @property
     def install_url(self) -> str:

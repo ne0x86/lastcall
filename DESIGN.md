@@ -385,6 +385,14 @@ Rules for engines:
    `lastcall github setup` both accept a name as people paste it (`@name`, or the address of the profile) and check it
    before asking GitHub. The confirm page says who has to be signed in on github.com: the account itself for a person,
    an owner of the organization (or someone allowed to manage its GitHub Apps) for an organization.
+   The manifest that the web UI sends also has a `setup_url`, `/github/installed`, and `setup_on_update`, so that GitHub
+   brings the owner back to lastcall after installing the App and after changing where it is installed. GitHub adds an
+   `installation_id` to that address, which anyone can forge, so lastcall reads none of GitHub's query parameters: it
+   only starts reading the repositories that the App is installed on, as the Projects page's own button does, and sends
+   the owner there to tick the ones that lastcall may work on. An App made this way keeps `returns` in its file, and the
+   GitHub App page opens the installation in the same tab; an App made before, or by `lastcall github setup` (its
+   temporary server stops once the App exists, so its manifest has no `setup_url`), opens it in a new tab and leaves a
+   button to press on coming back, which does the same.
    `lastcall github setup` serves the same one-button page from the command line, with `--org` to say it when GitHub
    does not answer.
 2. **Suggestions.** For each installed repository, lastcall works out whether it is worth activating and says why,
@@ -792,6 +800,19 @@ starts, and a notification that fails is logged and never stops lastcall. The we
 owner sets `LASTCALL_BIND`, such as to a VPN address. Behind a reverse proxy, `LASTCALL_TRUST_PROXY=1` makes lastcall
 read the client's address, scheme and host from the proxy's `X-Forwarded-*` headers, which the server drops otherwise,
 and `LASTCALL_WEB_ORIGIN` only adds origins that forms may come from.
+
+The suggestions on the projects page are one form that adds many projects at once. Each row has a checkbox, which its
+name ticks (a tap anywhere on the row does), and a small link to the repository on GitHub. Three buttons stay at the
+bottom of the screen while the list scrolls: Add selected, Add the suggested ones and Add all, the last two with the
+count that the list shows. A filter by name, which ignores case, narrows the list: it shows from the seventh suggestion
+on, or while one is set, says how many repositories match, sends the owner back to its own form (`#suggestions`) and
+opens the fold of the repositories that are not suggested, so that no match is hidden. The form carries the filter in a
+hidden field (`q`), so that the suggested ones and all of them are those that the owner sees. Adding many asks GitHub
+nothing: `POST /projects/add-many` takes only repositories of the stored suggestions that are not projects yet, whatever
+the case they come in, and adds them with the name that the suggestion has; it does nothing with any other value, and
+when nothing is left it adds nothing and answers with an error. The address where GitHub brings the owner back after the
+installation starts a reading of the suggestions, so that the list is there on arrival. Adding by an address, which asks
+GitHub whether the App is installed there, stays for a repository that is not in the list.
 
 A project with merge on approve or the watch on shows a notice on its card while GitHub says that the App's installation
 cannot read checks and commit statuses (an App made before v0.7.2 cannot): the two steps, which are to set them to

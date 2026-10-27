@@ -30,8 +30,11 @@ LOOKUP_SECONDS = 10  # the owner lookup sits in a page load: a slow GitHub gets 
 Exchange = Callable[[str], dict[str, Any]]
 
 
-def manifest(owner: str, redirect_url: str) -> dict[str, Any]:
-    return {
+def manifest(owner: str, redirect_url: str, setup_url: str | None = None) -> dict[str, Any]:
+    """The App's manifest. `redirect_url` is where GitHub comes back once the App is created. With a `setup_url`,
+    GitHub also brings the owner back there after installing the App, and after changing what it is installed on
+    (`setup_on_update`). It adds an `installation_id` to that address, which anyone can forge: never rely on it."""
+    values: dict[str, Any] = {
         "name": f"lastcall-{owner}"[:34],  # GitHub App names: 34 characters at most, unique on GitHub
         "url": HOMEPAGE,
         "description": "Small, verified pull requests from the AI quota you already pay for.",
@@ -41,6 +44,10 @@ def manifest(owner: str, redirect_url: str) -> dict[str, Any]:
         "default_permissions": PERMISSIONS,
         "default_events": [],
     }
+    if setup_url:
+        values["setup_url"] = setup_url
+        values["setup_on_update"] = True
+    return values
 
 
 def form_action(owner: str, org: bool, state: str) -> str:
@@ -164,6 +171,7 @@ class _Handler(BaseHTTPRequestHandler):
                 str(data["owner"]["login"]),  # for a person, whoever was signed in on GitHub
                 str(data["html_url"]),
                 str(data["pem"]),
+                returns=False,  # this page stops once the App exists, and its manifest has no setup_url
             )
         except (GitHubError, KeyError, TypeError, ValueError) as e:
             self._page(502, f"<p>GitHub did not hand over the App: {html.escape(str(e))}</p>")
