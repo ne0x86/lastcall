@@ -7,7 +7,7 @@ FROM zricethezav/gitleaks:v8.30.1 AS gitleaks
 FROM ghcr.io/google/osv-scanner:v2.7.0 AS osv
 FROM hadolint/hadolint:v2.15.1 AS hadolint
 
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 ARG CLAUDE_CODE_VERSION=2.1.285
 ARG CODEX_VERSION=0.163.0
 ARG OPENCODE_VERSION=1.19.4
